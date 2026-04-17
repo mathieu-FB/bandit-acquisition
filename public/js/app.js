@@ -732,6 +732,15 @@ document.addEventListener('DOMContentLoaded', () => {
   loadObjectives();
   loadDashboard();
 
+  // Auto-refresh dashboard every 5 minutes
+  setInterval(() => {
+    const onDashboard = document.querySelector('.tab-btn[data-tab="dashboard"]').classList.contains('active');
+    if (onDashboard) {
+      loadObjectives();
+      loadDashboard();
+    }
+  }, 5 * 60 * 1000);
+
   document.getElementById('btnApply').addEventListener('click', () => {
     document.querySelectorAll('.quick-ranges .btn').forEach(b => b.classList.remove('active'));
     loadDashboard();
