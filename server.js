@@ -17,7 +17,15 @@ app.use(express.json());
 // ============================================================
 
 function formatDate(d) {
-  return d.toISOString().split('T')[0];
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+// Convert a UTC date string to Paris local date (YYYY-MM-DD)
+function toParisDate(utcStr) {
+  return new Date(utcStr).toLocaleDateString('en-CA', { timeZone: 'Europe/Paris' });
 }
 
 function buildDateRange(query) {
@@ -189,7 +197,7 @@ function computeDailyShopifyMetrics(orders) {
   const daily = {};
   const validOrders = orders.filter(o => o.financial_status !== 'voided');
   validOrders.forEach(o => {
-    const day = o.created_at.split('T')[0];
+    const day = toParisDate(o.created_at);
     if (!daily[day]) daily[day] = { sales: 0, orders: 0 };
     daily[day].sales += orderNetSalesHT(o);
     if (o.financial_status !== 'refunded') {
@@ -505,7 +513,7 @@ async function ensureCached(startStr, endStr) {
   // Split Shopify orders by day
   const shopifyByDay = {};
   (shopifyOrders || []).forEach(order => {
-    const day = order.created_at.split('T')[0];
+    const day = toParisDate(order.created_at);
     if (!shopifyByDay[day]) shopifyByDay[day] = [];
     shopifyByDay[day].push(order);
   });
