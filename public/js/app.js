@@ -226,7 +226,7 @@ function createSparkline(canvasId, dailyData, color, formatter) {
 // LINE CHARTS (MULTI-CHANNEL) — always show all channels
 // ============================================================
 
-function createChannelLineChart(canvasId, legendId, dailyData, channelTotals, formatter) {
+function createChannelLineChart(canvasId, legendId, dailyData, channelTotals, formatter, showPercent) {
   const ctx = document.getElementById(canvasId);
   if (!ctx) return;
 
@@ -297,17 +297,22 @@ function createChannelLineChart(canvasId, legendId, dailyData, channelTotals, fo
     },
   });
 
-  // Legend with totals
+  // Legend with totals (+ optional %)
   const legendEl = document.getElementById(legendId);
   if (legendEl && channelTotals) {
+    const grandTotal = showPercent ? Object.values(channelTotals).reduce((s, v) => s + (v || 0), 0) : 0;
     legendEl.innerHTML = Object.entries(CHANNEL_COLORS)
-      .map(([ch, color]) => `
-        <div class="legend-item">
-          <div class="legend-dot" style="background:${color}"></div>
-          <span class="legend-label">${CHANNEL_LABELS[ch]}</span>
-          <span class="legend-value">${formatter(channelTotals[ch] || 0)}</span>
-        </div>
-      `).join('');
+      .map(([ch, color]) => {
+        const val = channelTotals[ch] || 0;
+        const pct = showPercent && grandTotal > 0 ? ` (${(val / grandTotal * 100).toFixed(0)}%)` : '';
+        return `
+          <div class="legend-item">
+            <div class="legend-dot" style="background:${color}"></div>
+            <span class="legend-label">${CHANNEL_LABELS[ch]}</span>
+            <span class="legend-value">${formatter(val)}${pct}</span>
+          </div>
+        `;
+      }).join('');
   }
 }
 
@@ -526,7 +531,8 @@ async function loadDashboard() {
       'chart-spendByChannel', 'legend-spend',
       charts.dailySpendByChannel,
       { meta: channels.meta.spend, google: channels.google.spend, tiktok: channels.tiktok.spend },
-      fmtCurrency
+      fmtCurrency,
+      true
     );
 
     createChannelLineChart(
