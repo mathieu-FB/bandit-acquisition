@@ -5,7 +5,7 @@
 const CHANNEL_COLORS = {
   meta: '#1877f2',
   google: '#ea4335',
-  tiktok: '#000000',
+  tiktok: '#00b8a9',
 };
 const CHANNEL_LABELS = { meta: 'Meta', google: 'Google', tiktok: 'TikTok' };
 
