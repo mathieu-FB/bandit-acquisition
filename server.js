@@ -650,6 +650,15 @@ app.get('/api/status', (req, res) => {
 });
 
 // ============================================================
+// TIKTOK OAUTH CALLBACK
+// ============================================================
+
+app.get('/api/tiktok/callback', (req, res) => {
+  const authCode = req.query.auth_code || req.query.code;
+  res.send(`<h2>TikTok Auth Code</h2><p>Copie ce code et lance :</p><pre>node tiktok-auth.js ${authCode}</pre>`);
+});
+
+// ============================================================
 // DAILY REPORT — manual trigger + preview
 // ============================================================
 
