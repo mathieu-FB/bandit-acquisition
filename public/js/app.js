@@ -54,12 +54,12 @@ function setQuickRange(range) {
 
   let start;
   if (range === 'mtd') {
-    start = new Date(end.getFullYear(), end.getMonth(), 1);
+    start = new Date(now.getFullYear(), now.getMonth(), 1);
   } else if (range === 'qtd') {
-    const qMonth = Math.floor(end.getMonth() / 3) * 3;
-    start = new Date(end.getFullYear(), qMonth, 1);
+    const qMonth = Math.floor(now.getMonth() / 3) * 3;
+    start = new Date(now.getFullYear(), qMonth, 1);
   } else if (range === 'ytd') {
-    start = new Date(end.getFullYear(), 0, 1);
+    start = new Date(now.getFullYear(), 0, 1);
   } else {
     // numeric days (e.g. 7)
     const days = parseInt(range);
