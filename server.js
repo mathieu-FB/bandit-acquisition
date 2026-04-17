@@ -954,11 +954,11 @@ app.get('/api/meta/analysis', async (req, res) => {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!token) return res.status(400).json({ error: 'Meta non configuré' });
 
-    // Default: last 14 days
+    const days = parseInt(req.query.days) || 15;
     const end = new Date();
     end.setDate(end.getDate() - 1);
     const start = new Date(end);
-    start.setDate(start.getDate() - 13);
+    start.setDate(start.getDate() - days + 1);
     const startStr = formatDate(start);
     const endStr = formatDate(end);
 

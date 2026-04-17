@@ -724,6 +724,23 @@ body {
   margin: 0 auto;
 }
 
+.meta-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.meta-period-btns {
+  display: flex;
+  gap: 4px;
+}
+
+.meta-period-label {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
 .meta-loading {
   display: flex;
   flex-direction: column;

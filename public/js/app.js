@@ -588,18 +588,21 @@ async function loadDashboard() {
 // META ANALYSIS
 // ============================================================
 
-let metaAnalysisLoaded = false;
+let metaAnalysisDays = 15;
+let metaAnalysisLoadedDays = null;
 
-async function loadMetaAnalysis() {
-  if (metaAnalysisLoaded) return;
+async function loadMetaAnalysis(forceDays) {
+  const days = forceDays || metaAnalysisDays;
+  if (metaAnalysisLoadedDays === days) return;
 
   const loading = document.getElementById('metaLoading');
   const results = document.getElementById('metaResults');
   loading.style.display = 'flex';
+  loading.innerHTML = '<div class="spinner"></div><p>Analyse Meta en cours... (peut prendre 30s)</p>';
   results.style.display = 'none';
 
   try {
-    const res = await fetch('/api/meta/analysis');
+    const res = await fetch(`/api/meta/analysis?days=${days}`);
     const data = await res.json();
 
     if (data.error) {
@@ -654,9 +657,12 @@ async function loadMetaAnalysis() {
     // 5. Global Analysis
     document.getElementById('metaGlobalAnalysis').innerHTML = renderMarkdown(data.analysis.globalAnalysis || 'Analyse non disponible.');
 
+    // Show period
+    document.getElementById('metaPeriodLabel').textContent = `${data.period.start} → ${data.period.end}`;
+
     loading.style.display = 'none';
     results.style.display = 'block';
-    metaAnalysisLoaded = true;
+    metaAnalysisLoadedDays = days;
 
   } catch (err) {
     console.error('Meta analysis error:', err);
@@ -733,7 +739,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('btnRefresh').addEventListener('click', () => {
     if (document.querySelector('.tab-btn[data-tab="meta-analysis"]').classList.contains('active')) {
-      metaAnalysisLoaded = false;
+      metaAnalysisLoadedDays = null;
       loadMetaAnalysis();
     } else {
       loadDashboard();
@@ -748,6 +754,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+  });
+
+  document.querySelectorAll('[data-meta-days]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const days = parseInt(btn.dataset.metaDays);
+      metaAnalysisDays = days;
+      metaAnalysisLoadedDays = null;
+      document.querySelectorAll('[data-meta-days]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      loadMetaAnalysis(days);
+    });
   });
 
   document.querySelectorAll('.date-input').forEach(input => {
