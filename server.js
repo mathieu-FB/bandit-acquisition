@@ -454,6 +454,173 @@ function aggregateTikTokData(rawData) {
 }
 
 // ============================================================
+// DAILY CACHE — stores per-day data to avoid re-fetching
+// ============================================================
+
+const dailyCache = {}; // { "2026-01-01": { shopify, meta, google, tiktok } }
+let lastCacheInvalidation = null;
+
+function invalidateYesterdayCache() {
+  const today = formatDate(new Date());
+  if (lastCacheInvalidation !== today) {
+    const y = new Date();
+    y.setDate(y.getDate() - 1);
+    delete dailyCache[formatDate(y)];
+    // Also delete today if somehow cached
+    delete dailyCache[today];
+    lastCacheInvalidation = today;
+    console.log(`[Cache] Invalidated yesterday (${formatDate(y)}). ${Object.keys(dailyCache).length} days in cache.`);
+  }
+}
+
+async function ensureCached(startStr, endStr) {
+  invalidateYesterdayCache();
+
+  const uncached = [];
+  const d = new Date(startStr + 'T12:00:00');
+  const end = new Date(endStr + 'T12:00:00');
+  const today = formatDate(new Date());
+
+  while (d <= end) {
+    const day = formatDate(d);
+    if (!dailyCache[day] && day !== today) {
+      uncached.push(day);
+    }
+    d.setDate(d.getDate() + 1);
+  }
+
+  if (uncached.length === 0) return;
+
+  const fetchStart = uncached[0];
+  const fetchEnd = uncached[uncached.length - 1];
+  console.log(`[Cache] Fetching ${uncached.length} days: ${fetchStart} → ${fetchEnd}`);
+
+  const [shopifyOrders, metaRaw, googleRaw, tiktokRaw] = await Promise.all([
+    fetchAllShopifyOrders(fetchStart, fetchEnd),
+    fetchMetaAdsData(fetchStart, fetchEnd),
+    fetchGoogleAdsData(fetchStart, fetchEnd),
+    fetchTikTokAdsData(fetchStart, fetchEnd),
+  ]);
+
+  // Split Shopify orders by day
+  const shopifyByDay = {};
+  (shopifyOrders || []).forEach(order => {
+    const day = order.created_at.split('T')[0];
+    if (!shopifyByDay[day]) shopifyByDay[day] = [];
+    shopifyByDay[day].push(order);
+  });
+
+  const metaAgg = aggregateMetaData(metaRaw);
+  const googleAgg = aggregateGoogleData(googleRaw);
+  const tiktokAgg = aggregateTikTokData(tiktokRaw);
+
+  uncached.forEach(day => {
+    const dayOrders = shopifyByDay[day] || [];
+    const valid = dayOrders.filter(o => o.financial_status !== 'voided');
+    const countable = valid.filter(o => o.financial_status !== 'refunded');
+
+    const customers = {};
+    countable.forEach(o => {
+      if (o.customer?.id) {
+        if (!customers[o.customer.id]) {
+          customers[o.customer.id] = { orders: 0, netSales: 0, globalCount: o.customer.orders_count || 1 };
+        }
+        customers[o.customer.id].orders++;
+        customers[o.customer.id].netSales += orderNetSalesHT(o);
+      }
+    });
+
+    dailyCache[day] = {
+      shopify: {
+        netSales: valid.reduce((s, o) => s + orderNetSalesHT(o), 0),
+        orders: countable.length,
+        discounts: valid.reduce((s, o) => s + parseFloat(o.total_discounts || 0), 0),
+        customers,
+      },
+      meta: metaAgg.daily[day] || { spend: 0, impressions: 0, clicks: 0, purchases: 0, revenue: 0 },
+      google: googleAgg.daily[day] || { spend: 0, impressions: 0, clicks: 0, conversions: 0, revenue: 0 },
+      tiktok: tiktokAgg.daily[day] || { spend: 0, impressions: 0, clicks: 0, purchases: 0, revenue: 0 },
+    };
+  });
+
+  console.log(`[Cache] Done. ${Object.keys(dailyCache).length} days cached.`);
+}
+
+function aggregateFromCache(startStr, endStr) {
+  const allDates = [];
+  const d = new Date(startStr + 'T12:00:00');
+  const end = new Date(endStr + 'T12:00:00');
+  while (d <= end) {
+    allDates.push(formatDate(d));
+    d.setDate(d.getDate() + 1);
+  }
+
+  let netSales = 0, totalOrders = 0, totalDiscounts = 0;
+  const mergedCustomers = {};
+
+  const metaTotals = { spend: 0, impressions: 0, clicks: 0, purchases: 0, revenue: 0 };
+  const googleTotals = { spend: 0, impressions: 0, clicks: 0, conversions: 0, revenue: 0 };
+  const tiktokTotals = { spend: 0, impressions: 0, clicks: 0, purchases: 0, revenue: 0 };
+
+  const metaDaily = {}, googleDaily = {}, tiktokDaily = {}, shopifyDaily = {};
+
+  allDates.forEach(day => {
+    const c = dailyCache[day];
+    if (!c) return;
+
+    netSales += c.shopify.netSales;
+    totalOrders += c.shopify.orders;
+    totalDiscounts += c.shopify.discounts;
+    shopifyDaily[day] = { sales: c.shopify.netSales, orders: c.shopify.orders };
+
+    if (c.shopify.customers) {
+      Object.entries(c.shopify.customers).forEach(([id, data]) => {
+        if (!mergedCustomers[id]) mergedCustomers[id] = { orders: 0, netSales: 0, globalCount: data.globalCount };
+        mergedCustomers[id].orders += data.orders;
+        mergedCustomers[id].netSales += data.netSales;
+      });
+    }
+
+    ['spend', 'impressions', 'clicks', 'purchases', 'revenue'].forEach(k => { metaTotals[k] += c.meta[k] || 0; });
+    ['spend', 'impressions', 'clicks', 'conversions', 'revenue'].forEach(k => { googleTotals[k] += c.google[k] || 0; });
+    ['spend', 'impressions', 'clicks', 'purchases', 'revenue'].forEach(k => { tiktokTotals[k] += c.tiktok[k] || 0; });
+
+    metaDaily[day] = c.meta;
+    googleDaily[day] = c.google;
+    tiktokDaily[day] = c.tiktok;
+  });
+
+  // Repeat rate
+  let repeatCount = 0, repeatNetSales = 0;
+  const unique = Object.keys(mergedCustomers).length;
+  Object.values(mergedCustomers).forEach(cust => {
+    if (cust.orders > 1 || cust.globalCount > 1) {
+      repeatCount++;
+      repeatNetSales += cust.netSales;
+    }
+  });
+
+  const aov = totalOrders > 0 ? netSales / totalOrders : 0;
+  const repeatRate = unique > 0 ? (repeatCount / unique) * 100 : 0;
+
+  const metaCpm = metaTotals.impressions > 0 ? (metaTotals.spend / metaTotals.impressions) * 1000 : 0;
+  const metaRoas = metaTotals.spend > 0 ? metaTotals.revenue / metaTotals.spend : 0;
+  const googleCpm = googleTotals.impressions > 0 ? (googleTotals.spend / googleTotals.impressions) * 1000 : 0;
+  const googleRoas = googleTotals.spend > 0 ? googleTotals.revenue / googleTotals.spend : 0;
+  const tiktokCpm = tiktokTotals.impressions > 0 ? (tiktokTotals.spend / tiktokTotals.impressions) * 1000 : 0;
+  const tiktokRoas = tiktokTotals.spend > 0 ? tiktokTotals.revenue / tiktokTotals.spend : 0;
+
+  return {
+    shopify: { netSales, totalOrders, totalDiscounts, aov, repeatRate, repeatNetSales },
+    meta: { ...metaTotals, cpm: metaCpm, roas: metaRoas, daily: metaDaily },
+    google: { ...googleTotals, cpm: googleCpm, roas: googleRoas, daily: googleDaily },
+    tiktok: { ...tiktokTotals, cpm: tiktokCpm, roas: tiktokRoas, daily: tiktokDaily },
+    shopifyDaily,
+    allDates,
+  };
+}
+
+// ============================================================
 // MAIN DASHBOARD ENDPOINT
 // ============================================================
 
@@ -461,95 +628,44 @@ app.get('/api/dashboard', async (req, res) => {
   try {
     const dates = buildDateRange(req.query);
 
-    // Fetch all data sources in parallel — current + comparison periods
-    const [
-      metaCurrent, metaComp,
-      googleCurrent, googleComp,
-      tiktokCurrent, tiktokComp,
-      shopifyCurrentOrders, shopifyCompOrders,
-    ] = await Promise.all([
-      fetchMetaAdsData(dates.start, dates.end),
-      fetchMetaAdsData(dates.compStart, dates.compEnd),
-      fetchGoogleAdsData(dates.start, dates.end),
-      fetchGoogleAdsData(dates.compStart, dates.compEnd),
-      fetchTikTokAdsData(dates.start, dates.end),
-      fetchTikTokAdsData(dates.compStart, dates.compEnd),
-      fetchAllShopifyOrders(dates.start, dates.end),
-      fetchAllShopifyOrders(dates.compStart, dates.compEnd),
+    // Ensure both periods are cached, then aggregate from cache
+    await Promise.all([
+      ensureCached(dates.start, dates.end),
+      ensureCached(dates.compStart, dates.compEnd),
     ]);
 
-    // Aggregate per channel
-    const meta = aggregateMetaData(metaCurrent);
-    const metaPrev = aggregateMetaData(metaComp);
-    const google = aggregateGoogleData(googleCurrent);
-    const googlePrev = aggregateGoogleData(googleComp);
-    const tiktok = aggregateTikTokData(tiktokCurrent);
-    const tiktokPrev = aggregateTikTokData(tiktokComp);
+    const current = aggregateFromCache(dates.start, dates.end);
+    const comp = aggregateFromCache(dates.compStart, dates.compEnd);
 
-    // Shopify metrics
-    const shopify = computeShopifyMetrics(shopifyCurrentOrders);
-    const shopifyPrev = computeShopifyMetrics(shopifyCompOrders);
-    const shopifyDaily = computeDailyShopifyMetrics(shopifyCurrentOrders);
+    const { shopify, meta, google, tiktok, shopifyDaily, allDates } = current;
+    const shopifyPrev = comp.shopify;
 
-    // Totals
     const totalSpend = meta.spend + google.spend + tiktok.spend;
-    const totalSpendPrev = metaPrev.spend + googlePrev.spend + tiktokPrev.spend;
-
-    const totalAdRevenue = meta.revenue + google.revenue + tiktok.revenue;
-    const totalAdRevenuePrev = metaPrev.revenue + googlePrev.revenue + tiktokPrev.revenue;
-
-    const totalImpressions = meta.impressions + google.impressions + tiktok.impressions;
-    const totalClicks = meta.clicks + google.clicks + tiktok.clicks;
+    const totalSpendPrev = comp.meta.spend + comp.google.spend + comp.tiktok.spend;
     const totalPurchases = (meta.purchases || 0) + (google.conversions || 0) + (tiktok.purchases || 0);
-    const totalPurchasesPrev = (metaPrev.purchases || 0) + (googlePrev.conversions || 0) + (tiktokPrev.purchases || 0);
+    const totalPurchasesPrev = (comp.meta.purchases || 0) + (comp.google.conversions || 0) + (comp.tiktok.purchases || 0);
 
-    // KPI computations
     const percentMarketing = shopify.netSales > 0 ? (totalSpend / shopify.netSales) * 100 : 0;
     const percentMarketingPrev = shopifyPrev.netSales > 0 ? (totalSpendPrev / shopifyPrev.netSales) * 100 : 0;
-
     const blendedCac = totalPurchases > 0 ? totalSpend / totalPurchases : 0;
     const blendedCacPrev = totalPurchasesPrev > 0 ? totalSpendPrev / totalPurchasesPrev : 0;
-
     const blendedRoas = totalSpend > 0 ? shopify.netSales / totalSpend : 0;
     const blendedRoasPrev = totalSpendPrev > 0 ? shopifyPrev.netSales / totalSpendPrev : 0;
 
-    const blendedCpm = totalImpressions > 0 ? (totalSpend / totalImpressions) * 1000 : 0;
-
-    // Build daily series for charts
-    const allDates = [];
-    const d = new Date(dates.start);
-    const endD = new Date(dates.end);
-    while (d <= endD) {
-      allDates.push(formatDate(d));
-      d.setDate(d.getDate() + 1);
-    }
-
+    // Build daily chart series
     const dailySpendByChannel = allDates.map(day => ({
-      date: day,
-      meta: meta.daily[day]?.spend || 0,
-      google: google.daily[day]?.spend || 0,
-      tiktok: tiktok.daily[day]?.spend || 0,
+      date: day, meta: meta.daily[day]?.spend || 0, google: google.daily[day]?.spend || 0, tiktok: tiktok.daily[day]?.spend || 0,
     }));
 
     const dailyRoasByChannel = allDates.map(day => {
-      const ms = meta.daily[day]?.spend || 0;
-      const mr = meta.daily[day]?.revenue || 0;
-      const gs = google.daily[day]?.spend || 0;
-      const gr = google.daily[day]?.revenue || 0;
-      const ts = tiktok.daily[day]?.spend || 0;
-      const tr = tiktok.daily[day]?.revenue || 0;
-      return {
-        date: day,
-        meta: ms > 0 ? mr / ms : 0,
-        google: gs > 0 ? gr / gs : 0,
-        tiktok: ts > 0 ? tr / ts : 0,
-      };
+      const ms = meta.daily[day]?.spend || 0, mr = meta.daily[day]?.revenue || 0;
+      const gs = google.daily[day]?.spend || 0, gr = google.daily[day]?.revenue || 0;
+      const ts = tiktok.daily[day]?.spend || 0, tr = tiktok.daily[day]?.revenue || 0;
+      return { date: day, meta: ms > 0 ? mr / ms : 0, google: gs > 0 ? gr / gs : 0, tiktok: ts > 0 ? tr / ts : 0 };
     });
 
     const dailyCpmByChannel = allDates.map(day => {
-      const mi = meta.daily[day]?.impressions || 0;
-      const gi = google.daily[day]?.impressions || 0;
-      const ti = tiktok.daily[day]?.impressions || 0;
+      const mi = meta.daily[day]?.impressions || 0, gi = google.daily[day]?.impressions || 0, ti = tiktok.daily[day]?.impressions || 0;
       return {
         date: day,
         meta: mi > 0 ? ((meta.daily[day]?.spend || 0) / mi) * 1000 : 0,
@@ -558,33 +674,18 @@ app.get('/api/dashboard', async (req, res) => {
       };
     });
 
-    const dailySales = allDates.map(day => ({
-      date: day,
-      sales: shopifyDaily[day]?.sales || 0,
-      orders: shopifyDaily[day]?.orders || 0,
-    }));
-
+    const dailySales = allDates.map(day => ({ date: day, sales: shopifyDaily[day]?.sales || 0, orders: shopifyDaily[day]?.orders || 0 }));
     const dailyMarketingCosts = allDates.map(day => ({
-      date: day,
-      total: (meta.daily[day]?.spend || 0) + (google.daily[day]?.spend || 0) + (tiktok.daily[day]?.spend || 0),
+      date: day, total: (meta.daily[day]?.spend || 0) + (google.daily[day]?.spend || 0) + (tiktok.daily[day]?.spend || 0),
     }));
-
     const dailyPercentMarketing = allDates.map(day => {
       const sales = shopifyDaily[day]?.sales || 0;
       const spend = (meta.daily[day]?.spend || 0) + (google.daily[day]?.spend || 0) + (tiktok.daily[day]?.spend || 0);
-      return {
-        date: day,
-        percent: sales > 0 ? (spend / sales) * 100 : 0,
-      };
+      return { date: day, percent: sales > 0 ? (spend / sales) * 100 : 0 };
     });
 
     res.json({
-      dates: {
-        start: dates.start,
-        end: dates.end,
-        compStart: dates.compStart,
-        compEnd: dates.compEnd,
-      },
+      dates: { start: dates.start, end: dates.end, compStart: dates.compStart, compEnd: dates.compEnd },
       kpis: {
         netSales: { current: shopify.netSales, previous: shopifyPrev.netSales },
         marketingCosts: { current: totalSpend, previous: totalSpendPrev },
@@ -596,39 +697,14 @@ app.get('/api/dashboard', async (req, res) => {
         repeatNetSales: { current: shopify.repeatNetSales, previous: shopifyPrev.repeatNetSales },
         blendedCac: { current: blendedCac, previous: blendedCacPrev },
         blendedRoas: { current: blendedRoas, previous: blendedRoasPrev },
-        blendedCpm: { current: blendedCpm, previous: 0 },
+        blendedCpm: { current: 0, previous: 0 },
       },
       channels: {
-        meta: {
-          spend: meta.spend,
-          roas: meta.roas,
-          cpm: meta.cpm,
-          impressions: meta.impressions,
-          clicks: meta.clicks,
-        },
-        google: {
-          spend: google.spend,
-          roas: google.roas,
-          cpm: google.cpm,
-          impressions: google.impressions,
-          clicks: google.clicks,
-        },
-        tiktok: {
-          spend: tiktok.spend,
-          roas: tiktok.roas,
-          cpm: tiktok.cpm,
-          impressions: tiktok.impressions,
-          clicks: tiktok.clicks,
-        },
+        meta: { spend: meta.spend, roas: meta.roas, cpm: meta.cpm, impressions: meta.impressions, clicks: meta.clicks },
+        google: { spend: google.spend, roas: google.roas, cpm: google.cpm, impressions: google.impressions, clicks: google.clicks },
+        tiktok: { spend: tiktok.spend, roas: tiktok.roas, cpm: tiktok.cpm, impressions: tiktok.impressions, clicks: tiktok.clicks },
       },
-      charts: {
-        dailySpendByChannel,
-        dailyRoasByChannel,
-        dailyCpmByChannel,
-        dailySales,
-        dailyMarketingCosts,
-        dailyPercentMarketing,
-      },
+      charts: { dailySpendByChannel, dailyRoasByChannel, dailyCpmByChannel, dailySales, dailyMarketingCosts, dailyPercentMarketing },
     });
   } catch (err) {
     console.error('Dashboard error:', err);
@@ -669,75 +745,39 @@ app.get('/api/objectives', async (req, res) => {
   try {
     const now = new Date();
     const year = now.getFullYear();
-    const month = now.getMonth() + 1; // 1-based
-    const today = now.getDate();
-
-    const obj = getObjective(year, month);
-    if (!obj) {
-      return res.json({ configured: false });
-    }
-
-    // Month-to-date: 1st of month to yesterday
+    const month = now.getMonth() + 1;
     const yesterday = new Date(now);
     yesterday.setDate(yesterday.getDate() - 1);
+
+    const obj = getObjective(year, month);
+    if (!obj) return res.json({ configured: false });
+
     const monthStart = `${year}-${String(month).padStart(2, '0')}-01`;
     const monthEnd = formatDate(yesterday);
-
-    // Quarter-to-date
     const qMonths = Object.keys(obj.quarterObj.months).map(Number).sort((a, b) => a - b);
     const quarterStart = `${year}-${String(qMonths[0]).padStart(2, '0')}-01`;
 
-    // Days in month / elapsed
     const daysInMonth = new Date(year, month, 0).getDate();
     const daysElapsedMonth = yesterday.getDate();
-
-    // Days in quarter / elapsed
     const quarterStartDate = new Date(`${quarterStart}T00:00:00`);
-    const quarterEndDate = new Date(year, qMonths[qMonths.length - 1], 0); // last day of last month
+    const quarterEndDate = new Date(year, qMonths[qMonths.length - 1], 0);
     const totalDaysQuarter = Math.round((quarterEndDate - quarterStartDate) / (1000 * 60 * 60 * 24)) + 1;
     const daysElapsedQuarter = Math.round((yesterday - quarterStartDate) / (1000 * 60 * 60 * 24)) + 1;
 
-    // Fetch Shopify + Ads data for MTD
-    const [shopifyMTD, metaMTD, googleMTD, tiktokMTD] = await Promise.all([
-      fetchAllShopifyOrders(monthStart, monthEnd),
-      fetchMetaAdsData(monthStart, monthEnd),
-      fetchGoogleAdsData(monthStart, monthEnd),
-      fetchTikTokAdsData(monthStart, monthEnd),
-    ]);
+    // Use cache for QTD (which includes MTD)
+    await ensureCached(quarterStart, monthEnd);
 
-    const shopifyMetricsMTD = computeShopifyMetrics(shopifyMTD);
-    const metaAggMTD = aggregateMetaData(metaMTD);
-    const googleAggMTD = aggregateGoogleData(googleMTD);
-    const tiktokAggMTD = aggregateTikTokData(tiktokMTD);
-    const spendMTD = metaAggMTD.spend + googleAggMTD.spend + tiktokAggMTD.spend;
-    const ratioMTD = shopifyMetricsMTD.netSales > 0 ? (spendMTD / shopifyMetricsMTD.netSales) * 100 : 0;
-
-    // Projections (linear)
-    const projectedCA_month = daysElapsedMonth > 0 ? (shopifyMetricsMTD.netSales / daysElapsedMonth) * daysInMonth : 0;
+    const mtd = aggregateFromCache(monthStart, monthEnd);
+    const spendMTD = mtd.meta.spend + mtd.google.spend + mtd.tiktok.spend;
+    const ratioMTD = mtd.shopify.netSales > 0 ? (spendMTD / mtd.shopify.netSales) * 100 : 0;
+    const projectedCA_month = daysElapsedMonth > 0 ? (mtd.shopify.netSales / daysElapsedMonth) * daysInMonth : 0;
     const projectedSpend_month = daysElapsedMonth > 0 ? (spendMTD / daysElapsedMonth) * daysInMonth : 0;
     const projectedRatio_month = projectedCA_month > 0 ? (projectedSpend_month / projectedCA_month) * 100 : 0;
 
-    // QTD — if quarter started this month, QTD = MTD. Otherwise fetch from quarter start.
-    let shopifyMetricsQTD, spendQTD;
-    if (qMonths[0] === month) {
-      shopifyMetricsQTD = shopifyMetricsMTD;
-      spendQTD = spendMTD;
-    } else {
-      const [shopifyQTD, metaQTD, googleQTD, tiktokQTD] = await Promise.all([
-        fetchAllShopifyOrders(quarterStart, monthEnd),
-        fetchMetaAdsData(quarterStart, monthEnd),
-        fetchGoogleAdsData(quarterStart, monthEnd),
-        fetchTikTokAdsData(quarterStart, monthEnd),
-      ]);
-      shopifyMetricsQTD = computeShopifyMetrics(shopifyQTD);
-      const metaAggQTD = aggregateMetaData(metaQTD);
-      const googleAggQTD = aggregateGoogleData(googleQTD);
-      const tiktokAggQTD = aggregateTikTokData(tiktokQTD);
-      spendQTD = metaAggQTD.spend + googleAggQTD.spend + tiktokAggQTD.spend;
-    }
-
-    const ratioQTD = shopifyMetricsQTD.netSales > 0 ? (spendQTD / shopifyMetricsQTD.netSales) * 100 : 0;
-    const projectedCA_quarter = daysElapsedQuarter > 0 ? (shopifyMetricsQTD.netSales / daysElapsedQuarter) * totalDaysQuarter : 0;
+    const qtd = aggregateFromCache(quarterStart, monthEnd);
+    const spendQTD = qtd.meta.spend + qtd.google.spend + qtd.tiktok.spend;
+    const ratioQTD = qtd.shopify.netSales > 0 ? (spendQTD / qtd.shopify.netSales) * 100 : 0;
+    const projectedCA_quarter = daysElapsedQuarter > 0 ? (qtd.shopify.netSales / daysElapsedQuarter) * totalDaysQuarter : 0;
     const projectedSpend_quarter = daysElapsedQuarter > 0 ? (spendQTD / daysElapsedQuarter) * totalDaysQuarter : 0;
     const projectedRatio_quarter = projectedCA_quarter > 0 ? (projectedSpend_quarter / projectedCA_quarter) * 100 : 0;
 
@@ -747,29 +787,19 @@ app.get('/api/objectives', async (req, res) => {
       configured: true,
       month: {
         label: monthNames[month] + ' ' + year,
-        objectiveCA: obj.monthObj.ca,
-        objectiveRatio: obj.monthObj.ratio,
-        currentCA: shopifyMetricsMTD.netSales,
-        currentSpend: spendMTD,
-        currentRatio: ratioMTD,
-        projectedCA: projectedCA_month,
-        projectedRatio: projectedRatio_month,
-        progressCA: (shopifyMetricsMTD.netSales / obj.monthObj.ca) * 100,
-        daysElapsed: daysElapsedMonth,
-        daysTotal: daysInMonth,
+        objectiveCA: obj.monthObj.ca, objectiveRatio: obj.monthObj.ratio,
+        currentCA: mtd.shopify.netSales, currentSpend: spendMTD, currentRatio: ratioMTD,
+        projectedCA: projectedCA_month, projectedRatio: projectedRatio_month,
+        progressCA: (mtd.shopify.netSales / obj.monthObj.ca) * 100,
+        daysElapsed: daysElapsedMonth, daysTotal: daysInMonth,
       },
       quarter: {
         label: obj.quarter + ' ' + year,
-        objectiveCA: obj.quarterObj.ca,
-        objectiveRatio: obj.quarterObj.ratio,
-        currentCA: shopifyMetricsQTD.netSales,
-        currentSpend: spendQTD,
-        currentRatio: ratioQTD,
-        projectedCA: projectedCA_quarter,
-        projectedRatio: projectedRatio_quarter,
-        progressCA: (shopifyMetricsQTD.netSales / obj.quarterObj.ca) * 100,
-        daysElapsed: daysElapsedQuarter,
-        daysTotal: totalDaysQuarter,
+        objectiveCA: obj.quarterObj.ca, objectiveRatio: obj.quarterObj.ratio,
+        currentCA: qtd.shopify.netSales, currentSpend: spendQTD, currentRatio: ratioQTD,
+        projectedCA: projectedCA_quarter, projectedRatio: projectedRatio_quarter,
+        progressCA: (qtd.shopify.netSales / obj.quarterObj.ca) * 100,
+        daysElapsed: daysElapsedQuarter, daysTotal: totalDaysQuarter,
       },
     });
   } catch (err) {
