@@ -434,7 +434,8 @@ function aggregateTikTokData(rawData) {
     totalPurchases += purchases;
     totalRevenue += revenue;
 
-    const day = dims.stat_time_day;
+    // TikTok returns "2026-04-16 00:00:00" — normalize to "2026-04-16"
+    const day = (dims.stat_time_day || '').split(' ')[0];
     if (day) {
       daily[day] = { spend, impressions, clicks, purchases, revenue };
     }
