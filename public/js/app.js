@@ -20,20 +20,19 @@ function formatDateISO(d) {
 }
 
 function setDefaultDates() {
+  // Default: yesterday only
   const now = new Date();
   const end = new Date(now);
   end.setDate(end.getDate() - 1);
-  const start = new Date(end);
-  start.setDate(start.getDate() - 6);
+  const start = new Date(end); // same day = yesterday
 
   document.getElementById('dateStart').value = formatDateISO(start);
   document.getElementById('dateEnd').value = formatDateISO(end);
 
-  // Comparison: previous 7 days
+  // Comparison: day before yesterday
   const compEnd = new Date(start);
   compEnd.setDate(compEnd.getDate() - 1);
   const compStart = new Date(compEnd);
-  compStart.setDate(compStart.getDate() - 6);
 
   document.getElementById('compStart').value = formatDateISO(compStart);
   document.getElementById('compEnd').value = formatDateISO(compEnd);
@@ -109,6 +108,20 @@ function computeChange(current, previous) {
 }
 
 // ============================================================
+// SHARED TOOLTIP CONFIG
+// ============================================================
+
+const TOOLTIP_CONFIG = {
+  backgroundColor: '#1a1d26',
+  titleFont: { size: 12, family: 'Inter', weight: '600' },
+  bodyFont: { size: 11, family: 'Inter' },
+  padding: 12,
+  cornerRadius: 8,
+  displayColors: true,
+  boxPadding: 4,
+};
+
+// ============================================================
 // RENDER KPI CARD
 // ============================================================
 
@@ -135,21 +148,27 @@ function renderKPI(id, current, previous, formatter, invertColors) {
 }
 
 // ============================================================
-// MINI SPARKLINE CHARTS
+// MINI SPARKLINE CHARTS (with tooltip on hover)
 // ============================================================
 
-function createSparkline(canvasId, data, color) {
+function createSparkline(canvasId, dailyData, color, formatter) {
   const ctx = document.getElementById(canvasId);
   if (!ctx) return;
 
   if (chartInstances[canvasId]) chartInstances[canvasId].destroy();
 
+  const labels = dailyData.map(d => {
+    const date = new Date(d.date);
+    return date.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' });
+  });
+  const values = dailyData.map(d => d.value);
+
   chartInstances[canvasId] = new Chart(ctx, {
     type: 'line',
     data: {
-      labels: data.map((_, i) => i),
+      labels,
       datasets: [{
-        data: data,
+        data: values,
         borderColor: color || '#6c5ce7',
         borderWidth: 2,
         fill: {
@@ -158,16 +177,30 @@ function createSparkline(canvasId, data, color) {
         },
         tension: 0.4,
         pointRadius: 0,
-        pointHitRadius: 0,
+        pointHoverRadius: 4,
+        pointHoverBackgroundColor: color || '#6c5ce7',
+        pointHitRadius: 20,
       }],
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      plugins: { legend: { display: false }, tooltip: { enabled: false } },
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          ...TOOLTIP_CONFIG,
+          displayColors: false,
+          callbacks: {
+            label: function(ctx) {
+              return formatter ? formatter(ctx.parsed.y) : ctx.parsed.y;
+            },
+          },
+        },
+      },
       scales: {
         x: { display: false },
-        y: { display: false, beginAtZero: true },
+        y: { display: false },
       },
       animation: { duration: 600 },
     },
@@ -175,10 +208,10 @@ function createSparkline(canvasId, data, color) {
 }
 
 // ============================================================
-// LINE CHARTS (MULTI-CHANNEL)
+// LINE CHARTS (MULTI-CHANNEL) — always show all channels
 // ============================================================
 
-function createChannelLineChart(canvasId, legendId, dailyData, valueKey, channelTotals, formatter) {
+function createChannelLineChart(canvasId, legendId, dailyData, channelTotals, formatter) {
   const ctx = document.getElementById(canvasId);
   if (!ctx) return;
 
@@ -186,26 +219,26 @@ function createChannelLineChart(canvasId, legendId, dailyData, valueKey, channel
 
   const labels = dailyData.map(d => {
     const date = new Date(d.date);
-    return date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+    return date.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' });
   });
 
+  // Always create a dataset for each channel (even if 0)
   const datasets = [];
   Object.entries(CHANNEL_COLORS).forEach(([channel, color]) => {
     const data = dailyData.map(d => d[channel] || 0);
-    const hasData = data.some(v => v > 0);
-    if (hasData) {
-      datasets.push({
-        label: CHANNEL_LABELS[channel],
-        data,
-        borderColor: color,
-        backgroundColor: color + '20',
-        borderWidth: 2,
-        tension: 0.3,
-        pointRadius: 2,
-        pointHoverRadius: 5,
-        pointBackgroundColor: color,
-      });
-    }
+    datasets.push({
+      label: CHANNEL_LABELS[channel],
+      data,
+      borderColor: color,
+      backgroundColor: color + '20',
+      borderWidth: 2.5,
+      tension: 0.3,
+      pointRadius: dailyData.length === 1 ? 5 : 3,
+      pointHoverRadius: 6,
+      pointBackgroundColor: color,
+      pointBorderColor: '#fff',
+      pointBorderWidth: 1,
+    });
   });
 
   chartInstances[canvasId] = new Chart(ctx, {
@@ -221,14 +254,11 @@ function createChannelLineChart(canvasId, legendId, dailyData, valueKey, channel
       plugins: {
         legend: { display: false },
         tooltip: {
-          backgroundColor: '#1a1d26',
-          titleFont: { size: 12, family: 'Inter' },
-          bodyFont: { size: 11, family: 'Inter' },
-          padding: 10,
-          cornerRadius: 8,
+          ...TOOLTIP_CONFIG,
           callbacks: {
+            title: function(items) { return items[0]?.label || ''; },
             label: function(ctx) {
-              return `${ctx.dataset.label}: ${formatter(ctx.parsed.y)}`;
+              return ` ${ctx.dataset.label}: ${formatter(ctx.parsed.y)}`;
             },
           },
         },
@@ -246,30 +276,28 @@ function createChannelLineChart(canvasId, legendId, dailyData, valueKey, channel
             callback: function(val) { return formatter(val); },
             maxTicksLimit: 5,
           },
-          beginAtZero: true,
         },
       },
       animation: { duration: 800 },
     },
   });
 
-  // Legend
+  // Legend with totals
   const legendEl = document.getElementById(legendId);
   if (legendEl && channelTotals) {
     legendEl.innerHTML = Object.entries(CHANNEL_COLORS)
-      .filter(([ch]) => channelTotals[ch] !== undefined)
       .map(([ch, color]) => `
         <div class="legend-item">
           <div class="legend-dot" style="background:${color}"></div>
           <span class="legend-label">${CHANNEL_LABELS[ch]}</span>
-          <span class="legend-value">${formatter(channelTotals[ch])}</span>
+          <span class="legend-value">${formatter(channelTotals[ch] || 0)}</span>
         </div>
       `).join('');
   }
 }
 
 // ============================================================
-// BAR CHART (Marketing costs daily)
+// BAR CHART (Marketing costs daily) — scale adapts to data
 // ============================================================
 
 function createBarChart(canvasId, dailyData, color) {
@@ -280,15 +308,21 @@ function createBarChart(canvasId, dailyData, color) {
 
   const labels = dailyData.map(d => {
     const date = new Date(d.date);
-    return date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+    return date.toLocaleDateString('fr-FR', { weekday: 'short', day: 'numeric', month: 'short' });
   });
+
+  const values = dailyData.map(d => d.total);
+  const maxVal = Math.max(...values);
+  const minVal = Math.min(...values);
+  // Give 10% padding below min so bars aren't squished
+  const suggestedMin = minVal > 0 ? Math.floor(minVal * 0.85) : 0;
 
   chartInstances[canvasId] = new Chart(ctx, {
     type: 'bar',
     data: {
       labels,
       datasets: [{
-        data: dailyData.map(d => d.total),
+        data: values,
         backgroundColor: color || '#6c5ce7',
         borderRadius: 4,
         borderSkipped: false,
@@ -297,14 +331,12 @@ function createBarChart(canvasId, dailyData, color) {
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: { display: false },
         tooltip: {
-          backgroundColor: '#1a1d26',
-          titleFont: { size: 12, family: 'Inter' },
-          bodyFont: { size: 11, family: 'Inter' },
-          padding: 10,
-          cornerRadius: 8,
+          ...TOOLTIP_CONFIG,
+          displayColors: false,
           callbacks: {
             label: function(ctx) { return fmtCurrency(ctx.parsed.y); },
           },
@@ -317,15 +349,13 @@ function createBarChart(canvasId, dailyData, color) {
         },
         y: {
           grid: { color: '#f0f0f0' },
+          suggestedMin: suggestedMin,
           ticks: {
             font: { size: 10, family: 'Inter' },
             color: '#9ca3af',
-            callback: function(val) {
-              return val >= 1000 ? (val / 1000).toFixed(1) + 'K' : val;
-            },
+            callback: function(val) { return fmtCurrency(val); },
             maxTicksLimit: 5,
           },
-          beginAtZero: true,
         },
       },
       animation: { duration: 800 },
@@ -397,16 +427,19 @@ async function loadDashboard() {
     renderKPI('repeatNetSales', kpis.repeatNetSales.current, kpis.repeatNetSales.previous, fmtCurrency, false);
     renderKPI('blendedCac', kpis.blendedCac.current, kpis.blendedCac.previous, fmtCurrency, true);
 
-    // Sparklines
-    createSparkline('chart-netSales', charts.dailySales.map(d => d.sales), '#6c5ce7');
-    createBarChart('chart-marketingCosts', charts.dailyMarketingCosts, '#3b82f6');
-    createSparkline('chart-percentMarketing', charts.dailyPercentMarketing.map(d => d.percent), '#ff5a5f');
+    // Sparklines (with date + value for tooltips)
+    const salesData = charts.dailySales.map(d => ({ date: d.date, value: d.sales }));
+    const costData = charts.dailyMarketingCosts.map(d => ({ date: d.date, value: d.total }));
+    const pctData = charts.dailyPercentMarketing.map(d => ({ date: d.date, value: d.percent }));
 
-    // Channel charts
+    createSparkline('chart-netSales', salesData, '#6c5ce7', fmtCurrency);
+    createBarChart('chart-marketingCosts', charts.dailyMarketingCosts, '#3b82f6');
+    createSparkline('chart-percentMarketing', pctData, '#ff5a5f', fmtPercent);
+
+    // Channel charts — always show all 3 channels
     createChannelLineChart(
       'chart-spendByChannel', 'legend-spend',
       charts.dailySpendByChannel,
-      null,
       { meta: channels.meta.spend, google: channels.google.spend, tiktok: channels.tiktok.spend },
       fmtCurrency
     );
@@ -414,7 +447,6 @@ async function loadDashboard() {
     createChannelLineChart(
       'chart-roasByChannel', 'legend-roas',
       charts.dailyRoasByChannel,
-      null,
       { meta: channels.meta.roas, google: channels.google.roas, tiktok: channels.tiktok.roas },
       fmtMultiplier
     );
@@ -422,7 +454,6 @@ async function loadDashboard() {
     createChannelLineChart(
       'chart-cpmByChannel', 'legend-cpm',
       charts.dailyCpmByChannel,
-      null,
       { meta: channels.meta.cpm, google: channels.google.cpm, tiktok: channels.tiktok.cpm },
       fmtCurrency
     );
@@ -442,10 +473,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setDefaultDates();
   loadStatus();
 
-  // Highlight 7j by default
-  const btn7 = document.querySelector('.quick-ranges .btn[data-range="7"]');
-  if (btn7) btn7.classList.add('active');
-
+  // No quick range highlighted by default (yesterday mode)
   loadDashboard();
 
   document.getElementById('btnApply').addEventListener('click', () => {
@@ -462,5 +490,10 @@ document.addEventListener('DOMContentLoaded', () => {
       const days = parseInt(btn.dataset.range);
       setQuickRange(days);
     });
+  });
+
+  // Make date inputs fully clickable (not just the calendar icon)
+  document.querySelectorAll('.date-input').forEach(input => {
+    input.addEventListener('click', function() { this.showPicker(); });
   });
 });
