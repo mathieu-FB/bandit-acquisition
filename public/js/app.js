@@ -585,6 +585,138 @@ async function loadDashboard() {
 }
 
 // ============================================================
+// META ANALYSIS
+// ============================================================
+
+let metaAnalysisLoaded = false;
+
+async function loadMetaAnalysis() {
+  if (metaAnalysisLoaded) return;
+
+  const loading = document.getElementById('metaLoading');
+  const results = document.getElementById('metaResults');
+  loading.style.display = 'flex';
+  results.style.display = 'none';
+
+  try {
+    const res = await fetch('/api/meta/analysis');
+    const data = await res.json();
+
+    if (data.error) {
+      loading.innerHTML = `<p style="color:var(--red)">Erreur: ${data.error}</p>`;
+      return;
+    }
+
+    // 1. Top 5 Ads
+    const topAdsEl = document.getElementById('metaTopAds');
+    topAdsEl.innerHTML = data.topAds.map(ad => `
+      <div class="meta-ad-card">
+        <div class="meta-ad-visual">
+          ${ad.thumbnailUrl || ad.imageUrl
+            ? `<img src="${ad.thumbnailUrl || ad.imageUrl}" alt="${ad.name}" />`
+            : `<div class="meta-ad-no-img">Pas de visuel</div>`}
+        </div>
+        <div class="meta-ad-info">
+          <h4 class="meta-ad-name">${ad.name}</h4>
+          <div class="meta-ad-campaign">${ad.campaignName}</div>
+          <div class="meta-ad-metrics">
+            <div class="meta-metric"><span class="meta-metric-val">${ad.roas.toFixed(2)}x</span><span class="meta-metric-label">ROAS</span></div>
+            <div class="meta-metric"><span class="meta-metric-val">${ad.spend.toFixed(0)}€</span><span class="meta-metric-label">Spend</span></div>
+            <div class="meta-metric"><span class="meta-metric-val">${ad.revenue.toFixed(0)}€</span><span class="meta-metric-label">Revenue</span></div>
+            <div class="meta-metric"><span class="meta-metric-val">${ad.purchases}</span><span class="meta-metric-label">Achats</span></div>
+            <div class="meta-metric"><span class="meta-metric-val">${ad.cpa.toFixed(0)}€</span><span class="meta-metric-label">CPA</span></div>
+            <div class="meta-metric"><span class="meta-metric-val">${ad.ctr.toFixed(2)}%</span><span class="meta-metric-label">CTR</span></div>
+            <div class="meta-metric"><span class="meta-metric-val">${ad.cpm.toFixed(1)}€</span><span class="meta-metric-label">CPM</span></div>
+            <div class="meta-metric"><span class="meta-metric-val">${ad.frequency.toFixed(1)}</span><span class="meta-metric-label">Freq.</span></div>
+          </div>
+        </div>
+      </div>
+    `).join('');
+
+    // Analysis for top ads
+    if (data.analysis.topAdsAnalysis) {
+      const analysisDiv = document.createElement('div');
+      analysisDiv.className = 'meta-analysis-content';
+      analysisDiv.innerHTML = renderMarkdown(data.analysis.topAdsAnalysis);
+      topAdsEl.after(analysisDiv);
+    }
+
+    // 2. New Ads Proposals
+    document.getElementById('metaNewAdsProposals').innerHTML = renderMarkdown(data.analysis.newAdsProposals || 'Analyse non disponible.');
+
+    // 3. Top Adsets
+    document.getElementById('metaTopAdsets').innerHTML = renderAdsetCards(data.topAdsets);
+    document.getElementById('metaScalingAnalysis').innerHTML = renderMarkdown(data.analysis.scalingAnalysis || 'Analyse non disponible.');
+
+    // 4. Worst Adsets
+    document.getElementById('metaWorstAdsets').innerHTML = renderAdsetCards(data.worstAdsets);
+
+    // 5. Global Analysis
+    document.getElementById('metaGlobalAnalysis').innerHTML = renderMarkdown(data.analysis.globalAnalysis || 'Analyse non disponible.');
+
+    loading.style.display = 'none';
+    results.style.display = 'block';
+    metaAnalysisLoaded = true;
+
+  } catch (err) {
+    console.error('Meta analysis error:', err);
+    loading.innerHTML = `<p style="color:var(--red)">Erreur de chargement</p>`;
+  }
+}
+
+function renderAdsetCards(adsets) {
+  return adsets.map(as => `
+    <div class="meta-adset-card">
+      <div class="meta-adset-header">
+        <h4>${as.name}</h4>
+        <span class="meta-adset-campaign">${as.campaignName}</span>
+      </div>
+      <div class="meta-ad-metrics">
+        <div class="meta-metric"><span class="meta-metric-val">${as.roas.toFixed(2)}x</span><span class="meta-metric-label">ROAS</span></div>
+        <div class="meta-metric"><span class="meta-metric-val">${as.spend.toFixed(0)}€</span><span class="meta-metric-label">Spend</span></div>
+        <div class="meta-metric"><span class="meta-metric-val">${as.revenue.toFixed(0)}€</span><span class="meta-metric-label">Revenue</span></div>
+        <div class="meta-metric"><span class="meta-metric-val">${as.purchases}</span><span class="meta-metric-label">Achats</span></div>
+        <div class="meta-metric"><span class="meta-metric-val">${as.cpa.toFixed(0)}€</span><span class="meta-metric-label">CPA</span></div>
+        <div class="meta-metric"><span class="meta-metric-val">${as.ctr.toFixed(2)}%</span><span class="meta-metric-label">CTR</span></div>
+        <div class="meta-metric"><span class="meta-metric-val">${as.cpm.toFixed(1)}€</span><span class="meta-metric-label">CPM</span></div>
+        <div class="meta-metric"><span class="meta-metric-val">${as.frequency.toFixed(1)}</span><span class="meta-metric-label">Freq.</span></div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderMarkdown(md) {
+  if (!md) return '';
+  return md
+    .replace(/## (.*)/g, '<h3>$1</h3>')
+    .replace(/### (.*)/g, '<h4>$1</h4>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\n- /g, '\n<li>')
+    .replace(/<li>([^<]*?)(?=\n|$)/g, '<li>$1</li>')
+    .replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>')
+    .replace(/<\/ul>\s*<ul>/g, '')
+    .replace(/\n{2,}/g, '</p><p>')
+    .replace(/\n/g, '<br>')
+    .replace(/^/, '<p>').replace(/$/, '</p>')
+    .replace(/<p><h/g, '<h').replace(/<\/h([34])><\/p>/g, '</h$1>')
+    .replace(/<p><ul>/g, '<ul>').replace(/<\/ul><\/p>/g, '</ul>');
+}
+
+// ============================================================
+// TABS
+// ============================================================
+
+function switchTab(tabId) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
+  document.querySelector(`.tab-btn[data-tab="${tabId}"]`).classList.add('active');
+  document.getElementById(`tab-${tabId}`).classList.add('active');
+
+  if (tabId === 'meta-analysis') loadMetaAnalysis();
+}
+
+// ============================================================
 // EVENT LISTENERS
 // ============================================================
 
@@ -592,8 +724,6 @@ document.addEventListener('DOMContentLoaded', () => {
   setDefaultDates();
   loadStatus();
   loadObjectives();
-
-  // No quick range highlighted by default (yesterday mode)
   loadDashboard();
 
   document.getElementById('btnApply').addEventListener('click', () => {
@@ -602,7 +732,12 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   document.getElementById('btnRefresh').addEventListener('click', () => {
-    loadDashboard();
+    if (document.querySelector('.tab-btn[data-tab="meta-analysis"]').classList.contains('active')) {
+      metaAnalysisLoaded = false;
+      loadMetaAnalysis();
+    } else {
+      loadDashboard();
+    }
   });
 
   document.querySelectorAll('.quick-ranges .btn').forEach(btn => {
@@ -611,7 +746,10 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
-  // Make date inputs fully clickable (not just the calendar icon)
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+  });
+
   document.querySelectorAll('.date-input').forEach(input => {
     input.addEventListener('click', function() { this.showPicker(); });
   });

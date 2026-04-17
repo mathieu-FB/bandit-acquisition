@@ -54,11 +54,20 @@
     </div>
   </div>
 
+  <!-- TAB NAVIGATION -->
+  <nav class="tab-nav">
+    <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
+    <button class="tab-btn" data-tab="meta-analysis">Meta Analysis</button>
+  </nav>
+
   <!-- LOADING OVERLAY -->
   <div class="loading-overlay" id="loadingOverlay">
     <div class="spinner"></div>
     <p>Chargement des données...</p>
   </div>
+
+  <!-- TAB: DASHBOARD -->
+  <div class="tab-content active" id="tab-dashboard">
 
   <!-- OBJECTIVES -->
   <section class="objectives" id="objectivesSection" style="display:none;">
@@ -316,6 +325,54 @@
       </div>
     </section>
   </main>
+  </div><!-- /tab-dashboard -->
+
+  <!-- TAB: META ANALYSIS -->
+  <div class="tab-content" id="tab-meta-analysis">
+    <div class="meta-page">
+
+      <!-- META LOADING -->
+      <div class="meta-loading" id="metaLoading">
+        <div class="spinner"></div>
+        <p>Analyse Meta en cours... (peut prendre 30s)</p>
+      </div>
+
+      <div class="meta-results" id="metaResults" style="display:none;">
+
+        <!-- 1. TOP 5 ADS -->
+        <section class="meta-section">
+          <h2 class="meta-section-title">Top 5 Ads — Performers</h2>
+          <div class="meta-ads-grid" id="metaTopAds"></div>
+        </section>
+
+        <!-- 2. NEW ADS PROPOSALS -->
+        <section class="meta-section">
+          <h2 class="meta-section-title">Propositions de nouvelles publicités</h2>
+          <div class="meta-analysis-content" id="metaNewAdsProposals"></div>
+        </section>
+
+        <!-- 3. TOP ADSETS + SCALING -->
+        <section class="meta-section">
+          <h2 class="meta-section-title">Top Adsets — Comment les scaler</h2>
+          <div class="meta-adsets-grid" id="metaTopAdsets"></div>
+          <div class="meta-analysis-content" id="metaScalingAnalysis"></div>
+        </section>
+
+        <!-- 4. WORST ADSETS -->
+        <section class="meta-section">
+          <h2 class="meta-section-title">Worst Performing Adsets</h2>
+          <div class="meta-adsets-grid" id="metaWorstAdsets"></div>
+        </section>
+
+        <!-- 5. GLOBAL ANALYSIS -->
+        <section class="meta-section">
+          <h2 class="meta-section-title">Analyse globale du compte</h2>
+          <div class="meta-analysis-content" id="metaGlobalAnalysis"></div>
+        </section>
+
+      </div>
+    </div>
+  </div><!-- /tab-meta-analysis -->
 
   <script src="js/app.js"></script>
 </body>

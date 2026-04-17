@@ -837,6 +837,223 @@ app.get('/api/objectives', async (req, res) => {
 });
 
 // ============================================================
+// META ANALYSIS — Deep ad & adset analysis with Claude
+// ============================================================
+
+const Anthropic = require('@anthropic-ai/sdk').default;
+
+async function fetchMetaAdInsights(start, end, limit, sort) {
+  const token = process.env.META_ACCESS_TOKEN;
+  const accountId = process.env.META_AD_ACCOUNT_ID;
+  if (!token || !accountId) return [];
+
+  const url = `https://graph.facebook.com/v19.0/${accountId}/insights?` +
+    new URLSearchParams({
+      access_token: token,
+      fields: 'ad_id,ad_name,adset_name,campaign_name,spend,impressions,clicks,cpm,cpc,ctr,actions,action_values,reach,frequency',
+      time_range: JSON.stringify({ since: start, until: end }),
+      level: 'ad',
+      sort: JSON.stringify([sort]),
+      limit: String(limit),
+    }).toString();
+
+  const res = await fetch(url);
+  if (!res.ok) { console.error('Meta ad insights error:', await res.text()); return []; }
+  const json = await res.json();
+  return json.data || [];
+}
+
+async function fetchMetaAdsetInsights(start, end) {
+  const token = process.env.META_ACCESS_TOKEN;
+  const accountId = process.env.META_AD_ACCOUNT_ID;
+  if (!token || !accountId) return [];
+
+  const url = `https://graph.facebook.com/v19.0/${accountId}/insights?` +
+    new URLSearchParams({
+      access_token: token,
+      fields: 'adset_id,adset_name,campaign_name,spend,impressions,clicks,cpm,cpc,ctr,actions,action_values,reach,frequency',
+      time_range: JSON.stringify({ since: start, until: end }),
+      level: 'adset',
+      limit: '50',
+    }).toString();
+
+  const res = await fetch(url);
+  if (!res.ok) { console.error('Meta adset insights error:', await res.text()); return []; }
+  const json = await res.json();
+  return json.data || [];
+}
+
+async function fetchAdCreative(adId) {
+  const token = process.env.META_ACCESS_TOKEN;
+  try {
+    const url = `https://graph.facebook.com/v19.0/${adId}?fields=creative{thumbnail_url,title,body,image_url,object_story_spec}&access_token=${token}`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const json = await res.json();
+    return json.creative || null;
+  } catch { return null; }
+}
+
+function parseMetaInsightRow(row) {
+  const spend = parseFloat(row.spend || 0);
+  const impressions = parseInt(row.impressions || 0);
+  const clicks = parseInt(row.clicks || 0);
+  const cpm = parseFloat(row.cpm || 0);
+  const cpc = parseFloat(row.cpc || 0);
+  const ctr = parseFloat(row.ctr || 0);
+  const reach = parseInt(row.reach || 0);
+  const frequency = parseFloat(row.frequency || 0);
+  let purchases = 0, revenue = 0;
+  if (row.actions) {
+    const pa = row.actions.find(a => a.action_type === 'purchase' || a.action_type === 'omni_purchase');
+    if (pa) purchases = parseInt(pa.value || 0);
+  }
+  if (row.action_values) {
+    const ra = row.action_values.find(a => a.action_type === 'purchase' || a.action_type === 'omni_purchase');
+    if (ra) revenue = parseFloat(ra.value || 0);
+  }
+  const roas = spend > 0 ? revenue / spend : 0;
+  const cpa = purchases > 0 ? spend / purchases : 0;
+  return { spend, impressions, clicks, cpm, cpc, ctr, reach, frequency, purchases, revenue, roas, cpa };
+}
+
+app.get('/api/meta/analysis', async (req, res) => {
+  try {
+    const token = process.env.META_ACCESS_TOKEN;
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!token) return res.status(400).json({ error: 'Meta non configuré' });
+
+    // Default: last 14 days
+    const end = new Date();
+    end.setDate(end.getDate() - 1);
+    const start = new Date(end);
+    start.setDate(start.getDate() - 13);
+    const startStr = formatDate(start);
+    const endStr = formatDate(end);
+
+    // Fetch ads (top by spend) and adsets in parallel
+    const [topAdsRaw, adsetRaw] = await Promise.all([
+      fetchMetaAdInsights(startStr, endStr, 20, 'spend_descending'),
+      fetchMetaAdsetInsights(startStr, endStr),
+    ]);
+
+    // Parse ads, sort by ROAS, pick top 5
+    const allAds = topAdsRaw.map(row => ({
+      id: row.ad_id,
+      name: row.ad_name,
+      adsetName: row.adset_name,
+      campaignName: row.campaign_name,
+      ...parseMetaInsightRow(row),
+    })).filter(a => a.spend >= 5);
+
+    // Top 5 by ROAS (with minimum spend threshold)
+    const topAds = [...allAds].sort((a, b) => b.roas - a.roas).slice(0, 5);
+
+    // Fetch creatives for top 5 (with thumbnail)
+    const creatives = await Promise.all(topAds.map(ad => fetchAdCreative(ad.id)));
+    topAds.forEach((ad, i) => {
+      const c = creatives[i];
+      ad.thumbnailUrl = c?.thumbnail_url || null;
+      ad.imageUrl = c?.image_url || null;
+      ad.creativeTitle = c?.title || '';
+      ad.creativeBody = c?.body || '';
+    });
+
+    // Parse adsets
+    const allAdsets = adsetRaw.map(row => ({
+      id: row.adset_id,
+      name: row.adset_name,
+      campaignName: row.campaign_name,
+      ...parseMetaInsightRow(row),
+    })).filter(a => a.spend >= 5);
+
+    const topAdsets = [...allAdsets].sort((a, b) => b.roas - a.roas).slice(0, 5);
+    const worstAdsets = [...allAdsets].sort((a, b) => a.roas - b.roas).slice(0, 5);
+
+    // Account-level summary
+    const accountTotals = {
+      spend: allAds.reduce((s, a) => s + a.spend, 0),
+      revenue: allAds.reduce((s, a) => s + a.revenue, 0),
+      purchases: allAds.reduce((s, a) => s + a.purchases, 0),
+      impressions: allAds.reduce((s, a) => s + a.impressions, 0),
+      clicks: allAds.reduce((s, a) => s + a.clicks, 0),
+      reach: allAdsets.reduce((s, a) => s + a.reach, 0),
+    };
+    accountTotals.roas = accountTotals.spend > 0 ? accountTotals.revenue / accountTotals.spend : 0;
+    accountTotals.cpa = accountTotals.purchases > 0 ? accountTotals.spend / accountTotals.purchases : 0;
+    accountTotals.cpm = accountTotals.impressions > 0 ? (accountTotals.spend / accountTotals.impressions) * 1000 : 0;
+    accountTotals.ctr = accountTotals.impressions > 0 ? (accountTotals.clicks / accountTotals.impressions) * 100 : 0;
+
+    // Claude analysis
+    let analysis = { topAdsAnalysis: '', newAdsProposals: '', scalingAnalysis: '', globalAnalysis: '' };
+    if (apiKey) {
+      const anthropic = new Anthropic({ apiKey });
+
+      const fmtAd = (ad, i) => `#${i+1} "${ad.name}" — Spend: ${ad.spend.toFixed(0)}€, Revenue: ${ad.revenue.toFixed(0)}€, ROAS: ${ad.roas.toFixed(2)}, CPA: ${ad.cpa.toFixed(0)}€, CPM: ${ad.cpm.toFixed(1)}€, CTR: ${ad.ctr.toFixed(2)}%, Purchases: ${ad.purchases}, Impressions: ${ad.impressions}, Reach: ${ad.reach}, Frequency: ${ad.frequency.toFixed(1)}`;
+      const fmtAdset = (as, i) => `#${i+1} "${as.name}" (${as.campaignName}) — Spend: ${as.spend.toFixed(0)}€, Revenue: ${as.revenue.toFixed(0)}€, ROAS: ${as.roas.toFixed(2)}, CPA: ${as.cpa.toFixed(0)}€, CPM: ${as.cpm.toFixed(1)}€, CTR: ${as.ctr.toFixed(2)}%, Purchases: ${as.purchases}, Reach: ${as.reach}, Frequency: ${as.frequency.toFixed(1)}`;
+
+      const prompt = `Tu es un senior data analyst / growth strategist spécialisé Meta Ads pour des marques DTC e-commerce. Tu analyses le compte Meta de French Bandit (accessoires premium pour chiens).
+
+Période : ${startStr} → ${endStr} (14 derniers jours)
+
+=== DONNÉES COMPTE ===
+Spend total: ${accountTotals.spend.toFixed(0)}€ | Revenue: ${accountTotals.revenue.toFixed(0)}€ | ROAS: ${accountTotals.roas.toFixed(2)} | CPA: ${accountTotals.cpa.toFixed(0)}€ | CPM: ${accountTotals.cpm.toFixed(1)}€ | CTR: ${accountTotals.ctr.toFixed(2)}% | Purchases: ${accountTotals.purchases} | Reach: ${accountTotals.reach}
+
+=== TOP 5 ADS (par ROAS) ===
+${topAds.map(fmtAd).join('\n')}
+
+=== TOP 5 ADSETS (par ROAS) ===
+${topAdsets.map(fmtAdset).join('\n')}
+
+=== WORST 5 ADSETS (pire ROAS) ===
+${worstAdsets.map(fmtAdset).join('\n')}
+
+=== INSTRUCTIONS ===
+Réponds en JSON strict avec ces 4 champs (valeurs = strings avec du Markdown) :
+
+{
+  "topAdsAnalysis": "Analyse détaillée de chaque top ad. Pour chaque ad : pourquoi elle performe, quels signaux regarder (CTR vs CPM, fréquence, saturation). Identifie les patterns communs aux top performers. Donne des recommandations actionnables pour chaque ad (augmenter budget, dupliquer, tester variantes).",
+
+  "newAdsProposals": "Propose 3 nouvelles publicités basées sur les patterns des top performers. Pour chaque proposition donne :\\n- Concept et angle\\n- Hook (première phrase / accroche)\\n- Body text complet\\n- Format recommandé (vidéo/image/carrousel)\\n- Audience suggérée\\n- Budget test recommandé",
+
+  "scalingAnalysis": "Pour chaque top adset, donne un plan de scaling précis : augmentation de budget recommandée (%), fréquence actuelle vs seuil de saturation, stratégie de duplication, audiences lookalike à tester, signaux de fatigue à surveiller. Sois très concret avec des chiffres.",
+
+  "globalAnalysis": "Analyse macro du compte : santé globale, tendances, répartition du budget, efficacité par campagne, risques identifiés (dépendance à un seul ad, saturation audience, CPM en hausse...). Donne 3 quick wins et 3 recommandations stratégiques à moyen terme."
+}
+
+IMPORTANT: Réponds UNIQUEMENT avec le JSON, pas de texte avant/après. Le contenu doit être en français. Utilise du Markdown (## pour les titres, **gras**, - pour les listes). Sois précis, factuel, avec des chiffres.`;
+
+      try {
+        const response = await anthropic.messages.create({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 4000,
+          messages: [{ role: 'user', content: prompt }],
+        });
+        const text = response.content[0].text.trim();
+        // Parse JSON (might be wrapped in ```json```)
+        const jsonStr = text.replace(/^```json\s*/i, '').replace(/\s*```$/, '');
+        analysis = JSON.parse(jsonStr);
+      } catch (e) {
+        console.error('Claude analysis error:', e.message);
+        analysis.globalAnalysis = 'Erreur lors de la génération de l\'analyse.';
+      }
+    }
+
+    res.json({
+      period: { start: startStr, end: endStr },
+      topAds,
+      topAdsets,
+      worstAdsets,
+      accountTotals,
+      analysis,
+    });
+  } catch (err) {
+    console.error('Meta analysis error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
 // STATUS / HEALTH CHECK
 // ============================================================
 
