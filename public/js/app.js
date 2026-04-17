@@ -452,6 +452,11 @@ async function loadObjectives() {
     if (data.day) {
       const d = data.day;
       document.getElementById('obj-day-label').textContent = d.label;
+      const nowH = new Date();
+      const hours = nowH.getHours();
+      const mins = String(nowH.getMinutes()).padStart(2, '0');
+      const dayTimePct = Math.round(((hours * 60 + nowH.getMinutes()) / 1440) * 100);
+      document.getElementById('obj-day-time').textContent = `${hours}h${mins} (${dayTimePct}%)`;
       document.getElementById('obj-day-ca').textContent = fmtK(d.currentCA);
       document.getElementById('obj-day-ca-target').textContent = fmtK(d.dailyCATarget);
       const dayPct = Math.min(d.progressCA, 100);
