@@ -460,30 +460,30 @@ function aggregateTikTokData(rawData) {
 const dailyCache = {}; // { "2026-01-01": { shopify, meta, google, tiktok } }
 let lastCacheInvalidation = null;
 
-function invalidateYesterdayCache() {
+function invalidateFreshDays() {
   const today = formatDate(new Date());
+  // Always clear today (data still incoming)
+  delete dailyCache[today];
   if (lastCacheInvalidation !== today) {
+    // New day — also invalidate yesterday (final numbers may have changed)
     const y = new Date();
     y.setDate(y.getDate() - 1);
     delete dailyCache[formatDate(y)];
-    // Also delete today if somehow cached
-    delete dailyCache[today];
     lastCacheInvalidation = today;
-    console.log(`[Cache] Invalidated yesterday (${formatDate(y)}). ${Object.keys(dailyCache).length} days in cache.`);
+    console.log(`[Cache] New day: invalidated today + yesterday. ${Object.keys(dailyCache).length} days in cache.`);
   }
 }
 
 async function ensureCached(startStr, endStr) {
-  invalidateYesterdayCache();
+  invalidateFreshDays();
 
   const uncached = [];
   const d = new Date(startStr + 'T12:00:00');
   const end = new Date(endStr + 'T12:00:00');
-  const today = formatDate(new Date());
 
   while (d <= end) {
     const day = formatDate(d);
-    if (!dailyCache[day] && day !== today) {
+    if (!dailyCache[day]) {
       uncached.push(day);
     }
     d.setDate(d.getDate() + 1);
@@ -753,7 +753,6 @@ app.get('/api/objectives', async (req, res) => {
     if (!obj) return res.json({ configured: false });
 
     const monthStart = `${year}-${String(month).padStart(2, '0')}-01`;
-    const monthEnd = formatDate(yesterday);
     const qMonths = Object.keys(obj.quarterObj.months).map(Number).sort((a, b) => a - b);
     const quarterStart = `${year}-${String(qMonths[0]).padStart(2, '0')}-01`;
 
@@ -764,17 +763,26 @@ app.get('/api/objectives', async (req, res) => {
     const totalDaysQuarter = Math.round((quarterEndDate - quarterStartDate) / (1000 * 60 * 60 * 24)) + 1;
     const daysElapsedQuarter = Math.round((yesterday - quarterStartDate) / (1000 * 60 * 60 * 24)) + 1;
 
-    // Use cache for QTD (which includes MTD)
-    await ensureCached(quarterStart, monthEnd);
+    // Use cache for QTD (which includes MTD) + yesterday
+    const yesterdayStr = formatDate(yesterday);
+    await ensureCached(quarterStart, yesterdayStr);
 
-    const mtd = aggregateFromCache(monthStart, monthEnd);
+    // Daily stats (yesterday)
+    const dayData = aggregateFromCache(yesterdayStr, yesterdayStr);
+    const daySpend = dayData.meta.spend + dayData.google.spend + dayData.tiktok.spend;
+    const dayCA = dayData.shopify.netSales;
+    const dayRatio = dayCA > 0 ? (daySpend / dayCA) * 100 : 0;
+    const dailyCATarget = obj.monthObj.ca / daysInMonth;
+    const dayProgressCA = dailyCATarget > 0 ? (dayCA / dailyCATarget) * 100 : 0;
+
+    const mtd = aggregateFromCache(monthStart, yesterdayStr);
     const spendMTD = mtd.meta.spend + mtd.google.spend + mtd.tiktok.spend;
     const ratioMTD = mtd.shopify.netSales > 0 ? (spendMTD / mtd.shopify.netSales) * 100 : 0;
     const projectedCA_month = daysElapsedMonth > 0 ? (mtd.shopify.netSales / daysElapsedMonth) * daysInMonth : 0;
     const projectedSpend_month = daysElapsedMonth > 0 ? (spendMTD / daysElapsedMonth) * daysInMonth : 0;
     const projectedRatio_month = projectedCA_month > 0 ? (projectedSpend_month / projectedCA_month) * 100 : 0;
 
-    const qtd = aggregateFromCache(quarterStart, monthEnd);
+    const qtd = aggregateFromCache(quarterStart, yesterdayStr);
     const spendQTD = qtd.meta.spend + qtd.google.spend + qtd.tiktok.spend;
     const ratioQTD = qtd.shopify.netSales > 0 ? (spendQTD / qtd.shopify.netSales) * 100 : 0;
     const projectedCA_quarter = daysElapsedQuarter > 0 ? (qtd.shopify.netSales / daysElapsedQuarter) * totalDaysQuarter : 0;
@@ -783,8 +791,20 @@ app.get('/api/objectives', async (req, res) => {
 
     const monthNames = ['', 'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
 
+    const dayNames = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
+    const dayLabel = `${dayNames[yesterday.getDay()]} ${yesterday.getDate()} ${monthNames[yesterday.getMonth() + 1]}`;
+
     res.json({
       configured: true,
+      day: {
+        label: dayLabel,
+        currentCA: dayCA,
+        currentSpend: daySpend,
+        currentRatio: dayRatio,
+        dailyCATarget,
+        progressCA: dayProgressCA,
+        objectiveRatio: obj.monthObj.ratio,
+      },
       month: {
         label: monthNames[month] + ' ' + year,
         objectiveCA: obj.monthObj.ca, objectiveRatio: obj.monthObj.ratio,

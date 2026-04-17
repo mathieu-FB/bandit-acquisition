@@ -16,21 +16,23 @@ let chartInstances = {};
 // ============================================================
 
 function formatDateISO(d) {
-  return d.toISOString().split('T')[0];
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 function setDefaultDates() {
-  // Default: yesterday only
+  // Default: today
   const now = new Date();
+  const start = new Date(now);
   const end = new Date(now);
-  end.setDate(end.getDate() - 1);
-  const start = new Date(end); // same day = yesterday
 
   document.getElementById('dateStart').value = formatDateISO(start);
   document.getElementById('dateEnd').value = formatDateISO(end);
 
-  // Comparison: day before yesterday
-  const compEnd = new Date(start);
+  // Comparison: yesterday
+  const compEnd = new Date(now);
   compEnd.setDate(compEnd.getDate() - 1);
   const compStart = new Date(compEnd);
 
@@ -49,8 +51,7 @@ function getSelectedDates() {
 
 function setQuickRange(range) {
   const now = new Date();
-  const end = new Date(now);
-  end.setDate(end.getDate() - 1); // yesterday
+  const end = new Date(now); // today
 
   let start;
   if (range === 'mtd') {
@@ -446,6 +447,28 @@ async function loadObjectives() {
     }
 
     section.style.display = 'block';
+
+    // Day card
+    if (data.day) {
+      const d = data.day;
+      document.getElementById('obj-day-label').textContent = d.label;
+      document.getElementById('obj-day-ca').textContent = fmtK(d.currentCA);
+      document.getElementById('obj-day-ca-target').textContent = fmtK(d.dailyCATarget);
+      const dayPct = Math.min(d.progressCA, 100);
+      document.getElementById('obj-day-ca-bar').style.width = dayPct + '%';
+      const dayBadge = document.getElementById('obj-day-ca-pct');
+      dayBadge.textContent = d.progressCA.toFixed(0) + '%';
+      dayBadge.style.color = d.progressCA >= 100 ? '#00c48c' : '#ff5a5f';
+
+      document.getElementById('obj-day-ratio').textContent = d.currentRatio.toFixed(1) + '%';
+      document.getElementById('obj-day-ratio-target').textContent = d.objectiveRatio + '%';
+      const dayRatioIndicator = document.getElementById('obj-day-ratio-indicator');
+      const dayRatioPct = Math.min((d.currentRatio / 50) * 100, 100);
+      dayRatioIndicator.style.left = dayRatioPct + '%';
+      dayRatioIndicator.style.borderColor = d.currentRatio <= d.objectiveRatio ? '#00c48c' : '#ff5a5f';
+      document.getElementById('obj-day-ratio-line').style.left = (d.objectiveRatio / 50 * 100) + '%';
+    }
+
     renderObjectivePeriod('month', data.month);
     renderObjectivePeriod('quarter', data.quarter);
   } catch (e) {
