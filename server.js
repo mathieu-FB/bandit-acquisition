@@ -842,19 +842,20 @@ app.get('/api/objectives', async (req, res) => {
 
 const Anthropic = require('@anthropic-ai/sdk').default;
 
-async function fetchMetaAdInsights(start, end, limit, sort) {
+async function fetchMetaAdInsights(start, end) {
   const token = process.env.META_ACCESS_TOKEN;
   const accountId = process.env.META_AD_ACCOUNT_ID;
   if (!token || !accountId) return [];
 
+  // Fetch in smaller batches — first get spend + actions (light query)
   const url = `https://graph.facebook.com/v19.0/${accountId}/insights?` +
     new URLSearchParams({
       access_token: token,
-      fields: 'ad_id,ad_name,adset_name,campaign_name,spend,impressions,clicks,cpm,cpc,ctr,actions,action_values,reach,frequency',
+      fields: 'ad_id,ad_name,adset_name,campaign_name,spend,impressions,clicks,actions,action_values,reach,frequency',
       time_range: JSON.stringify({ since: start, until: end }),
       level: 'ad',
-      sort: JSON.stringify([sort]),
-      limit: String(limit),
+      limit: '100',
+      filtering: JSON.stringify([{ field: 'spend', operator: 'GREATER_THAN', value: '5' }]),
     }).toString();
 
   const res = await fetch(url);
@@ -886,12 +887,42 @@ async function fetchMetaAdsetInsights(start, end) {
 async function fetchAdCreative(adId) {
   const token = process.env.META_ACCESS_TOKEN;
   try {
-    const url = `https://graph.facebook.com/v19.0/${adId}?fields=creative{thumbnail_url,title,body,image_url,object_story_spec}&access_token=${token}`;
+    // Get ad with creative fields including image_hash-based URL
+    const url = `https://graph.facebook.com/v19.0/${adId}?fields=creative{id,title,body,thumbnail_url,image_url,object_story_spec,asset_feed_spec}&access_token=${token}`;
     const res = await fetch(url);
-    if (!res.ok) return null;
+    if (!res.ok) { console.error(`[Meta] Ad creative ${adId}: ${res.status}`); return null; }
     const json = await res.json();
-    return json.creative || null;
-  } catch { return null; }
+    const creative = json.creative || {};
+    let imageUrl = creative.image_url || creative.thumbnail_url || null;
+
+    // Try extracting image from object_story_spec
+    if (!imageUrl && creative.object_story_spec) {
+      const spec = creative.object_story_spec;
+      if (spec.link_data?.image_hash || spec.link_data?.picture) {
+        imageUrl = spec.link_data.picture || null;
+      }
+      if (!imageUrl && spec.video_data?.image_url) {
+        imageUrl = spec.video_data.image_url;
+      }
+    }
+
+    // Fallback: fetch the creative ID directly for thumbnail
+    if (!imageUrl && creative.id) {
+      const crUrl = `https://graph.facebook.com/v19.0/${creative.id}?fields=thumbnail_url,image_url,effective_instagram_media_id&access_token=${token}`;
+      const crRes = await fetch(crUrl);
+      if (crRes.ok) {
+        const crJson = await crRes.json();
+        imageUrl = crJson.thumbnail_url || crJson.image_url || null;
+      }
+    }
+
+    return {
+      thumbnail_url: imageUrl,
+      image_url: imageUrl,
+      title: creative.title || '',
+      body: creative.body || '',
+    };
+  } catch (e) { console.error(`[Meta] Creative error ${adId}:`, e.message); return null; }
 }
 
 function parseMetaInsightRow(row) {
@@ -933,7 +964,7 @@ app.get('/api/meta/analysis', async (req, res) => {
 
     // Fetch ads (top by spend) and adsets in parallel
     const [topAdsRaw, adsetRaw] = await Promise.all([
-      fetchMetaAdInsights(startStr, endStr, 20, 'spend_descending'),
+      fetchMetaAdInsights(startStr, endStr),
       fetchMetaAdsetInsights(startStr, endStr),
     ]);
 
