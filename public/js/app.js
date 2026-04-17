@@ -389,7 +389,8 @@ function fmtK(val) {
 
 function renderObjectivePeriod(prefix, data) {
   document.getElementById(`obj-${prefix}-label`).textContent = data.label;
-  document.getElementById(`obj-${prefix}-days`).textContent = `J${data.daysElapsed}/${data.daysTotal}`;
+  const timePct = Math.round((data.daysElapsed / data.daysTotal) * 100);
+  document.getElementById(`obj-${prefix}-days`).textContent = `J${data.daysElapsed}/${data.daysTotal} (${timePct}%)`;
 
   // CA progress
   document.getElementById(`obj-${prefix}-ca`).textContent = fmtK(data.currentCA);
