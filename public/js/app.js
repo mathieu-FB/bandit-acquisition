@@ -364,6 +364,70 @@ function createBarChart(canvasId, dailyData, color) {
 }
 
 // ============================================================
+// OBJECTIVES
+// ============================================================
+
+function fmtK(val) {
+  if (val >= 1000) return (val / 1000).toFixed(val >= 10000 ? 0 : 1) + 'K €';
+  return fmtCurrency(val);
+}
+
+function renderObjectivePeriod(prefix, data) {
+  document.getElementById(`obj-${prefix}-label`).textContent = data.label;
+  document.getElementById(`obj-${prefix}-days`).textContent = `J${data.daysElapsed}/${data.daysTotal}`;
+
+  // CA progress
+  document.getElementById(`obj-${prefix}-ca`).textContent = fmtK(data.currentCA);
+  document.getElementById(`obj-${prefix}-ca-target`).textContent = fmtK(data.objectiveCA);
+  const pctCA = Math.min(data.progressCA, 100);
+  document.getElementById(`obj-${prefix}-ca-bar`).style.width = pctCA + '%';
+
+  const projPct = Math.min((data.projectedCA / data.objectiveCA) * 100, 100);
+  const projBar = document.getElementById(`obj-${prefix}-ca-proj`);
+  projBar.style.width = projPct + '%';
+  projBar.style.opacity = '0.25';
+
+  const projEl = document.getElementById(`obj-${prefix}-ca-proj-val`);
+  projEl.textContent = fmtK(data.projectedCA);
+  projEl.style.color = data.projectedCA >= data.objectiveCA ? '#00c48c' : '#ff5a5f';
+
+  // Ratio
+  document.getElementById(`obj-${prefix}-ratio`).textContent = data.currentRatio.toFixed(1) + '%';
+  document.getElementById(`obj-${prefix}-ratio-target`).textContent = data.objectiveRatio + '%';
+
+  const ratioIndicator = document.getElementById(`obj-${prefix}-ratio-indicator`);
+  const ratioPct = Math.min((data.currentRatio / 50) * 100, 100); // scale 0-50%
+  ratioIndicator.style.width = ratioPct + '%';
+  ratioIndicator.style.background = data.currentRatio <= data.objectiveRatio ? '#00c48c' : '#ff5a5f';
+
+  const ratioLine = document.getElementById(`obj-${prefix}-ratio-line`);
+  ratioLine.style.left = (data.objectiveRatio / 50 * 100) + '%';
+
+  const projRatioEl = document.getElementById(`obj-${prefix}-ratio-proj-val`);
+  projRatioEl.textContent = data.projectedRatio.toFixed(1) + '%';
+  projRatioEl.style.color = data.projectedRatio <= data.objectiveRatio ? '#00c48c' : '#ff5a5f';
+}
+
+async function loadObjectives() {
+  try {
+    const res = await fetch('/api/objectives');
+    const data = await res.json();
+    const section = document.getElementById('objectivesSection');
+
+    if (!data.configured) {
+      section.style.display = 'none';
+      return;
+    }
+
+    section.style.display = 'block';
+    renderObjectivePeriod('month', data.month);
+    renderObjectivePeriod('quarter', data.quarter);
+  } catch (e) {
+    console.error('Objectives load failed:', e);
+  }
+}
+
+// ============================================================
 // STATUS DOTS
 // ============================================================
 
@@ -472,6 +536,7 @@ async function loadDashboard() {
 document.addEventListener('DOMContentLoaded', () => {
   setDefaultDates();
   loadStatus();
+  loadObjectives();
 
   // No quick range highlighted by default (yesterday mode)
   loadDashboard();

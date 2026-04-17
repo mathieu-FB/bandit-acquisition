@@ -60,6 +60,82 @@
     <p>Chargement des données...</p>
   </div>
 
+  <!-- OBJECTIVES -->
+  <section class="objectives" id="objectivesSection" style="display:none;">
+    <div class="objectives-inner">
+      <!-- MONTHLY -->
+      <div class="obj-card" id="obj-month">
+        <div class="obj-header">
+          <h3 id="obj-month-label">—</h3>
+          <span class="obj-days" id="obj-month-days"></span>
+        </div>
+        <div class="obj-kpis">
+          <div class="obj-kpi">
+            <div class="obj-kpi-label">CA HT</div>
+            <div class="obj-kpi-values">
+              <span class="obj-current" id="obj-month-ca">—</span>
+              <span class="obj-sep">/</span>
+              <span class="obj-target" id="obj-month-ca-target">—</span>
+            </div>
+            <div class="obj-progress-bar">
+              <div class="obj-progress-fill" id="obj-month-ca-bar"></div>
+              <div class="obj-progress-projected" id="obj-month-ca-proj"></div>
+            </div>
+            <div class="obj-projection">Projection : <strong id="obj-month-ca-proj-val">—</strong></div>
+          </div>
+          <div class="obj-kpi">
+            <div class="obj-kpi-label">% Marketing</div>
+            <div class="obj-kpi-values">
+              <span class="obj-current" id="obj-month-ratio">—</span>
+              <span class="obj-sep">/ objectif</span>
+              <span class="obj-target" id="obj-month-ratio-target">—</span>
+            </div>
+            <div class="obj-ratio-gauge">
+              <div class="obj-ratio-indicator" id="obj-month-ratio-indicator"></div>
+              <div class="obj-ratio-target-line" id="obj-month-ratio-line"></div>
+            </div>
+            <div class="obj-projection">Projection : <strong id="obj-month-ratio-proj-val">—</strong></div>
+          </div>
+        </div>
+      </div>
+      <!-- QUARTERLY -->
+      <div class="obj-card" id="obj-quarter">
+        <div class="obj-header">
+          <h3 id="obj-quarter-label">—</h3>
+          <span class="obj-days" id="obj-quarter-days"></span>
+        </div>
+        <div class="obj-kpis">
+          <div class="obj-kpi">
+            <div class="obj-kpi-label">CA HT</div>
+            <div class="obj-kpi-values">
+              <span class="obj-current" id="obj-quarter-ca">—</span>
+              <span class="obj-sep">/</span>
+              <span class="obj-target" id="obj-quarter-ca-target">—</span>
+            </div>
+            <div class="obj-progress-bar">
+              <div class="obj-progress-fill" id="obj-quarter-ca-bar"></div>
+              <div class="obj-progress-projected" id="obj-quarter-ca-proj"></div>
+            </div>
+            <div class="obj-projection">Projection : <strong id="obj-quarter-ca-proj-val">—</strong></div>
+          </div>
+          <div class="obj-kpi">
+            <div class="obj-kpi-label">% Marketing</div>
+            <div class="obj-kpi-values">
+              <span class="obj-current" id="obj-quarter-ratio">—</span>
+              <span class="obj-sep">/ objectif</span>
+              <span class="obj-target" id="obj-quarter-ratio-target">—</span>
+            </div>
+            <div class="obj-ratio-gauge">
+              <div class="obj-ratio-indicator" id="obj-quarter-ratio-indicator"></div>
+              <div class="obj-ratio-target-line" id="obj-quarter-ratio-line"></div>
+            </div>
+            <div class="obj-projection">Projection : <strong id="obj-quarter-ratio-proj-val">—</strong></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <!-- DASHBOARD -->
   <main class="dashboard">
     <!-- ROW 1: Main KPIs -->

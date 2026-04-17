@@ -637,6 +637,148 @@ app.get('/api/dashboard', async (req, res) => {
 });
 
 // ============================================================
+// OBJECTIVES — Monthly & Quarterly targets
+// ============================================================
+
+const OBJECTIVES = {
+  2026: {
+    Q2: {
+      ca: 424000,
+      ratio: 30,
+      months: {
+        4: { ca: 128000, ratio: 30 },  // April
+        5: { ca: 144000, ratio: 30 },  // May
+        6: { ca: 152000, ratio: 30 },  // June
+      },
+    },
+  },
+};
+
+function getObjective(year, month) {
+  const yearObj = OBJECTIVES[year];
+  if (!yearObj) return null;
+  for (const [qKey, q] of Object.entries(yearObj)) {
+    if (q.months && q.months[month]) {
+      return { quarter: qKey, quarterObj: q, monthObj: q.months[month] };
+    }
+  }
+  return null;
+}
+
+app.get('/api/objectives', async (req, res) => {
+  try {
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth() + 1; // 1-based
+    const today = now.getDate();
+
+    const obj = getObjective(year, month);
+    if (!obj) {
+      return res.json({ configured: false });
+    }
+
+    // Month-to-date: 1st of month to yesterday
+    const yesterday = new Date(now);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const monthStart = `${year}-${String(month).padStart(2, '0')}-01`;
+    const monthEnd = formatDate(yesterday);
+
+    // Quarter-to-date
+    const qMonths = Object.keys(obj.quarterObj.months).map(Number).sort((a, b) => a - b);
+    const quarterStart = `${year}-${String(qMonths[0]).padStart(2, '0')}-01`;
+
+    // Days in month / elapsed
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const daysElapsedMonth = yesterday.getDate();
+
+    // Days in quarter / elapsed
+    const quarterStartDate = new Date(`${quarterStart}T00:00:00`);
+    const quarterEndDate = new Date(year, qMonths[qMonths.length - 1], 0); // last day of last month
+    const totalDaysQuarter = Math.round((quarterEndDate - quarterStartDate) / (1000 * 60 * 60 * 24)) + 1;
+    const daysElapsedQuarter = Math.round((yesterday - quarterStartDate) / (1000 * 60 * 60 * 24)) + 1;
+
+    // Fetch Shopify + Ads data for MTD
+    const [shopifyMTD, metaMTD, googleMTD, tiktokMTD] = await Promise.all([
+      fetchAllShopifyOrders(monthStart, monthEnd),
+      fetchMetaAdsData(monthStart, monthEnd),
+      fetchGoogleAdsData(monthStart, monthEnd),
+      fetchTikTokAdsData(monthStart, monthEnd),
+    ]);
+
+    const shopifyMetricsMTD = computeShopifyMetrics(shopifyMTD);
+    const metaAggMTD = aggregateMetaData(metaMTD);
+    const googleAggMTD = aggregateGoogleData(googleMTD);
+    const tiktokAggMTD = aggregateTikTokData(tiktokMTD);
+    const spendMTD = metaAggMTD.spend + googleAggMTD.spend + tiktokAggMTD.spend;
+    const ratioMTD = shopifyMetricsMTD.netSales > 0 ? (spendMTD / shopifyMetricsMTD.netSales) * 100 : 0;
+
+    // Projections (linear)
+    const projectedCA_month = daysElapsedMonth > 0 ? (shopifyMetricsMTD.netSales / daysElapsedMonth) * daysInMonth : 0;
+    const projectedSpend_month = daysElapsedMonth > 0 ? (spendMTD / daysElapsedMonth) * daysInMonth : 0;
+    const projectedRatio_month = projectedCA_month > 0 ? (projectedSpend_month / projectedCA_month) * 100 : 0;
+
+    // QTD — if quarter started this month, QTD = MTD. Otherwise fetch from quarter start.
+    let shopifyMetricsQTD, spendQTD;
+    if (qMonths[0] === month) {
+      shopifyMetricsQTD = shopifyMetricsMTD;
+      spendQTD = spendMTD;
+    } else {
+      const [shopifyQTD, metaQTD, googleQTD, tiktokQTD] = await Promise.all([
+        fetchAllShopifyOrders(quarterStart, monthEnd),
+        fetchMetaAdsData(quarterStart, monthEnd),
+        fetchGoogleAdsData(quarterStart, monthEnd),
+        fetchTikTokAdsData(quarterStart, monthEnd),
+      ]);
+      shopifyMetricsQTD = computeShopifyMetrics(shopifyQTD);
+      const metaAggQTD = aggregateMetaData(metaQTD);
+      const googleAggQTD = aggregateGoogleData(googleQTD);
+      const tiktokAggQTD = aggregateTikTokData(tiktokQTD);
+      spendQTD = metaAggQTD.spend + googleAggQTD.spend + tiktokAggQTD.spend;
+    }
+
+    const ratioQTD = shopifyMetricsQTD.netSales > 0 ? (spendQTD / shopifyMetricsQTD.netSales) * 100 : 0;
+    const projectedCA_quarter = daysElapsedQuarter > 0 ? (shopifyMetricsQTD.netSales / daysElapsedQuarter) * totalDaysQuarter : 0;
+    const projectedSpend_quarter = daysElapsedQuarter > 0 ? (spendQTD / daysElapsedQuarter) * totalDaysQuarter : 0;
+    const projectedRatio_quarter = projectedCA_quarter > 0 ? (projectedSpend_quarter / projectedCA_quarter) * 100 : 0;
+
+    const monthNames = ['', 'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
+
+    res.json({
+      configured: true,
+      month: {
+        label: monthNames[month] + ' ' + year,
+        objectiveCA: obj.monthObj.ca,
+        objectiveRatio: obj.monthObj.ratio,
+        currentCA: shopifyMetricsMTD.netSales,
+        currentSpend: spendMTD,
+        currentRatio: ratioMTD,
+        projectedCA: projectedCA_month,
+        projectedRatio: projectedRatio_month,
+        progressCA: (shopifyMetricsMTD.netSales / obj.monthObj.ca) * 100,
+        daysElapsed: daysElapsedMonth,
+        daysTotal: daysInMonth,
+      },
+      quarter: {
+        label: obj.quarter + ' ' + year,
+        objectiveCA: obj.quarterObj.ca,
+        objectiveRatio: obj.quarterObj.ratio,
+        currentCA: shopifyMetricsQTD.netSales,
+        currentSpend: spendQTD,
+        currentRatio: ratioQTD,
+        projectedCA: projectedCA_quarter,
+        projectedRatio: projectedRatio_quarter,
+        progressCA: (shopifyMetricsQTD.netSales / obj.quarterObj.ca) * 100,
+        daysElapsed: daysElapsedQuarter,
+        daysTotal: totalDaysQuarter,
+      },
+    });
+  } catch (err) {
+    console.error('Objectives error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
 // STATUS / HEALTH CHECK
 // ============================================================
 

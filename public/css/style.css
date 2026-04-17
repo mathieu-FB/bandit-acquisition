@@ -479,3 +479,178 @@ body {
   font-size: 13px;
   font-style: italic;
 }
+
+/* ============================================================
+   OBJECTIVES SECTION
+   ============================================================ */
+
+.objectives {
+  background: var(--card-bg);
+  border-bottom: 1px solid var(--border);
+  padding: 20px 32px;
+}
+
+.objectives-inner {
+  max-width: 1400px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+@media (max-width: 900px) {
+  .objectives-inner {
+    grid-template-columns: 1fr;
+  }
+  .objectives { padding: 16px; }
+}
+
+.obj-card {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.obj-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.obj-header h3 {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.obj-days {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted);
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 2px 10px;
+}
+
+.obj-kpis {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.obj-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.obj-kpi-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+}
+
+.obj-kpi-values {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.obj-current {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.obj-sep {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.obj-target {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+/* Progress bar (CA) */
+.obj-progress-bar {
+  position: relative;
+  height: 8px;
+  background: var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.obj-progress-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 4px;
+  transition: width 0.6s ease;
+}
+
+.obj-progress-projected {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  background: var(--accent);
+  opacity: 0.2;
+  border-radius: 4px;
+  transition: width 0.6s ease;
+}
+
+.obj-projection {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.obj-projection strong {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+/* Ratio gauge */
+.obj-ratio-gauge {
+  position: relative;
+  height: 8px;
+  background: linear-gradient(90deg, var(--green) 0%, #ffe066 50%, var(--red) 100%);
+  border-radius: 4px;
+  overflow: visible;
+}
+
+.obj-ratio-indicator {
+  position: absolute;
+  top: -3px;
+  width: 14px;
+  height: 14px;
+  background: var(--card-bg);
+  border: 2px solid var(--text);
+  border-radius: 50%;
+  transform: translateX(-50%);
+  transition: left 0.6s ease;
+  z-index: 2;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+}
+
+.obj-ratio-target-line {
+  position: absolute;
+  top: -4px;
+  width: 2px;
+  height: 16px;
+  background: var(--text);
+  transform: translateX(-50%);
+  z-index: 1;
+  opacity: 0.4;
+}
