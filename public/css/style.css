@@ -581,6 +581,21 @@ body {
   color: var(--text-muted);
 }
 
+/* Progress row (bar + %) */
+.obj-progress-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.obj-pct {
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+  min-width: 36px;
+  text-align: right;
+}
+
 /* Progress bar (CA) */
 .obj-progress-bar {
   position: relative;
@@ -588,6 +603,7 @@ body {
   background: var(--border);
   border-radius: 4px;
   overflow: hidden;
+  flex: 1;
 }
 
 .obj-progress-fill {
@@ -628,29 +644,30 @@ body {
   background: linear-gradient(90deg, var(--green) 0%, #ffe066 50%, var(--red) 100%);
   border-radius: 4px;
   overflow: visible;
+  margin: 6px 0;
 }
 
 .obj-ratio-indicator {
   position: absolute;
-  top: -3px;
-  width: 14px;
-  height: 14px;
+  top: 50%;
+  width: 16px;
+  height: 16px;
   background: var(--card-bg);
-  border: 2px solid var(--text);
+  border: 2.5px solid var(--text);
   border-radius: 50%;
-  transform: translateX(-50%);
+  transform: translate(-50%, -50%);
   transition: left 0.6s ease;
   z-index: 2;
-  box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.2);
 }
 
 .obj-ratio-target-line {
   position: absolute;
-  top: -4px;
+  top: 50%;
   width: 2px;
-  height: 16px;
+  height: 20px;
   background: var(--text);
-  transform: translateX(-50%);
+  transform: translate(-50%, -50%);
   z-index: 1;
-  opacity: 0.4;
+  opacity: 0.35;
 }

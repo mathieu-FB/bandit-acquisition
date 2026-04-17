@@ -47,27 +47,42 @@ function getSelectedDates() {
   };
 }
 
-function setQuickRange(days) {
+function setQuickRange(range) {
   const now = new Date();
   const end = new Date(now);
-  end.setDate(end.getDate() - 1);
-  const start = new Date(end);
-  start.setDate(start.getDate() - days + 1);
+  end.setDate(end.getDate() - 1); // yesterday
+
+  let start;
+  if (range === 'mtd') {
+    start = new Date(end.getFullYear(), end.getMonth(), 1);
+  } else if (range === 'qtd') {
+    const qMonth = Math.floor(end.getMonth() / 3) * 3;
+    start = new Date(end.getFullYear(), qMonth, 1);
+  } else if (range === 'ytd') {
+    start = new Date(end.getFullYear(), 0, 1);
+  } else {
+    // numeric days (e.g. 7)
+    const days = parseInt(range);
+    start = new Date(end);
+    start.setDate(start.getDate() - days + 1);
+  }
 
   document.getElementById('dateStart').value = formatDateISO(start);
   document.getElementById('dateEnd').value = formatDateISO(end);
 
+  // Comparison: same duration ending the day before start
+  const duration = Math.round((end - start) / (1000 * 60 * 60 * 24)) + 1;
   const compEnd = new Date(start);
   compEnd.setDate(compEnd.getDate() - 1);
   const compStart = new Date(compEnd);
-  compStart.setDate(compStart.getDate() - days + 1);
+  compStart.setDate(compStart.getDate() - duration + 1);
 
   document.getElementById('compStart').value = formatDateISO(compStart);
   document.getElementById('compEnd').value = formatDateISO(compEnd);
 
   // Highlight active button
   document.querySelectorAll('.quick-ranges .btn').forEach(b => b.classList.remove('active'));
-  const btn = document.querySelector(`.quick-ranges .btn[data-range="${days}"]`);
+  const btn = document.querySelector(`.quick-ranges .btn[data-range="${range}"]`);
   if (btn) btn.classList.add('active');
 
   loadDashboard();
@@ -382,6 +397,11 @@ function renderObjectivePeriod(prefix, data) {
   const pctCA = Math.min(data.progressCA, 100);
   document.getElementById(`obj-${prefix}-ca-bar`).style.width = pctCA + '%';
 
+  // % badge
+  const pctBadge = document.getElementById(`obj-${prefix}-ca-pct`);
+  pctBadge.textContent = data.progressCA.toFixed(0) + '%';
+  pctBadge.style.color = data.progressCA >= 100 ? '#00c48c' : data.progressCA >= (data.daysElapsed / data.daysTotal * 100) * 0.85 ? 'var(--text-secondary)' : '#ff5a5f';
+
   const projPct = Math.min((data.projectedCA / data.objectiveCA) * 100, 100);
   const projBar = document.getElementById(`obj-${prefix}-ca-proj`);
   projBar.style.width = projPct + '%';
@@ -397,8 +417,8 @@ function renderObjectivePeriod(prefix, data) {
 
   const ratioIndicator = document.getElementById(`obj-${prefix}-ratio-indicator`);
   const ratioPct = Math.min((data.currentRatio / 50) * 100, 100); // scale 0-50%
-  ratioIndicator.style.width = ratioPct + '%';
-  ratioIndicator.style.background = data.currentRatio <= data.objectiveRatio ? '#00c48c' : '#ff5a5f';
+  ratioIndicator.style.left = ratioPct + '%';
+  ratioIndicator.style.borderColor = data.currentRatio <= data.objectiveRatio ? '#00c48c' : '#ff5a5f';
 
   const ratioLine = document.getElementById(`obj-${prefix}-ratio-line`);
   ratioLine.style.left = (data.objectiveRatio / 50 * 100) + '%';
@@ -552,8 +572,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.querySelectorAll('.quick-ranges .btn').forEach(btn => {
     btn.addEventListener('click', () => {
-      const days = parseInt(btn.dataset.range);
-      setQuickRange(days);
+      setQuickRange(btn.dataset.range);
     });
   });
 

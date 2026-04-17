@@ -41,10 +41,10 @@
       </div>
       <button class="btn btn-primary" id="btnApply">Appliquer</button>
       <div class="quick-ranges">
-        <button class="btn btn-ghost" data-range="7">7j</button>
-        <button class="btn btn-ghost" data-range="14">14j</button>
-        <button class="btn btn-ghost" data-range="30">30j</button>
-        <button class="btn btn-ghost" data-range="90">90j</button>
+        <button class="btn btn-ghost" data-range="7">7J</button>
+        <button class="btn btn-ghost" data-range="mtd">MTD</button>
+        <button class="btn btn-ghost" data-range="qtd">QTD</button>
+        <button class="btn btn-ghost" data-range="ytd">YTD</button>
       </div>
     </div>
     <div class="toolbar-right">
@@ -77,9 +77,12 @@
               <span class="obj-sep">/</span>
               <span class="obj-target" id="obj-month-ca-target">—</span>
             </div>
-            <div class="obj-progress-bar">
-              <div class="obj-progress-fill" id="obj-month-ca-bar"></div>
-              <div class="obj-progress-projected" id="obj-month-ca-proj"></div>
+            <div class="obj-progress-row">
+              <div class="obj-progress-bar">
+                <div class="obj-progress-fill" id="obj-month-ca-bar"></div>
+                <div class="obj-progress-projected" id="obj-month-ca-proj"></div>
+              </div>
+              <span class="obj-pct" id="obj-month-ca-pct">—</span>
             </div>
             <div class="obj-projection">Projection : <strong id="obj-month-ca-proj-val">—</strong></div>
           </div>
@@ -112,9 +115,12 @@
               <span class="obj-sep">/</span>
               <span class="obj-target" id="obj-quarter-ca-target">—</span>
             </div>
-            <div class="obj-progress-bar">
-              <div class="obj-progress-fill" id="obj-quarter-ca-bar"></div>
-              <div class="obj-progress-projected" id="obj-quarter-ca-proj"></div>
+            <div class="obj-progress-row">
+              <div class="obj-progress-bar">
+                <div class="obj-progress-fill" id="obj-quarter-ca-bar"></div>
+                <div class="obj-progress-projected" id="obj-quarter-ca-proj"></div>
+              </div>
+              <span class="obj-pct" id="obj-quarter-ca-pct">—</span>
             </div>
             <div class="obj-projection">Projection : <strong id="obj-quarter-ca-proj-val">—</strong></div>
           </div>
