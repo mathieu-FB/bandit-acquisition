@@ -1313,101 +1313,140 @@ async function getAmazonAdsAccessToken() {
   return json.access_token;
 }
 
-async function fetchAmazonAdSpend(start, end) {
-  const token = await getAmazonAdsAccessToken();
-  const profileId = process.env.AMAZON_ADS_PROFILE_ID;
-  if (!token || !profileId) return null;
+// Amazon Ads spend — background fetch + persistent cache
+let amazonAdSpendCache = { spend: null, lastUpdate: 0, reportId: null, fetching: false };
 
-  // Use yesterday as end date max (today's data not ready)
-  const yesterday = formatDate(new Date(Date.now() - 86400000));
-  const reportEnd = end > yesterday ? yesterday : end;
+// Load cached ad spend from file
+function loadAdSpendCache() {
+  try {
+    const file = path.join(AMAZON_DATA_DIR, 'amazon-adspend.json');
+    if (fs.existsSync(file)) {
+      const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+      amazonAdSpendCache.spend = data.spend;
+      amazonAdSpendCache.lastUpdate = data.lastUpdate || 0;
+      console.log(`[Amazon Ads] Loaded cached spend: ${data.spend}`);
+    }
+  } catch (err) { console.error('[Amazon Ads] Cache load error:', err.message); }
+}
+loadAdSpendCache();
 
-  // Step 1: Request async report
-  const reportUrl = 'https://advertising-api-eu.amazon.com/reporting/reports';
-  const reportRes = await fetch(reportUrl, {
-    method: 'POST',
-    headers: {
-      'Amazon-Advertising-API-ClientId': process.env.AMAZON_ADS_CLIENT_ID,
-      'Amazon-Advertising-API-Scope': profileId,
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/vnd.createasyncreportrequest.v3+json',
-    },
-    body: JSON.stringify({
-      startDate: start,
-      endDate: reportEnd,
-      configuration: {
-        adProduct: 'SPONSORED_PRODUCTS',
-        groupBy: ['campaign'],
-        columns: ['spend'],
-        reportTypeId: 'spCampaigns',
-        timeUnit: 'SUMMARY',
-        format: 'GZIP_JSON',
-      },
-    }),
-  });
+function saveAdSpendCache() {
+  try {
+    if (!fs.existsSync(AMAZON_DATA_DIR)) fs.mkdirSync(AMAZON_DATA_DIR, { recursive: true });
+    fs.writeFileSync(path.join(AMAZON_DATA_DIR, 'amazon-adspend.json'), JSON.stringify({
+      spend: amazonAdSpendCache.spend,
+      lastUpdate: amazonAdSpendCache.lastUpdate,
+    }));
+  } catch (err) { console.error('[Amazon Ads] Cache save error:', err.message); }
+}
 
-  if (!reportRes.ok) {
-    const errBody = await reportRes.text();
-    console.error('[Amazon Ads] Report request error:', reportRes.status, errBody);
-    return null;
-  }
+// Background: request report, poll, download, update cache
+async function refreshAmazonAdSpend() {
+  if (amazonAdSpendCache.fetching) return;
+  amazonAdSpendCache.fetching = true;
 
-  const reportData = await reportRes.json();
-  const reportId = reportData.reportId;
-  console.log('[Amazon Ads] Report requested:', reportId);
+  try {
+    const token = await getAmazonAdsAccessToken();
+    const profileId = process.env.AMAZON_ADS_PROFILE_ID;
+    if (!token || !profileId) { amazonAdSpendCache.fetching = false; return; }
 
-  // Step 2: Poll for report completion (max 60s)
-  let downloadUrl = null;
-  for (let attempt = 0; attempt < 12; attempt++) {
-    await new Promise(r => setTimeout(r, 5000));
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth() + 1;
+    const start = `${year}-${String(month).padStart(2, '0')}-01`;
+    const yesterday = formatDate(new Date(Date.now() - 86400000));
 
-    const statusRes = await fetch(`https://advertising-api-eu.amazon.com/reporting/reports/${reportId}`, {
+    // Step 1: Request report
+    const reportRes = await fetch('https://advertising-api-eu.amazon.com/reporting/reports', {
+      method: 'POST',
       headers: {
         'Amazon-Advertising-API-ClientId': process.env.AMAZON_ADS_CLIENT_ID,
         'Amazon-Advertising-API-Scope': profileId,
         Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/vnd.createasyncreportrequest.v3+json',
       },
+      body: JSON.stringify({
+        startDate: start,
+        endDate: yesterday,
+        configuration: {
+          adProduct: 'SPONSORED_PRODUCTS',
+          groupBy: ['campaign'],
+          columns: ['spend'],
+          reportTypeId: 'spCampaigns',
+          timeUnit: 'SUMMARY',
+          format: 'GZIP_JSON',
+        },
+      }),
     });
-    if (!statusRes.ok) continue;
-    const statusData = await statusRes.json();
-    console.log('[Amazon Ads] Report status:', statusData.status);
 
-    if (statusData.status === 'COMPLETED') {
-      downloadUrl = statusData.url;
-      break;
-    } else if (statusData.status === 'FAILURE') {
-      console.error('[Amazon Ads] Report failed:', statusData.failureReason);
-      return null;
+    if (!reportRes.ok) {
+      console.error('[Amazon Ads] Report request error:', reportRes.status, await reportRes.text());
+      amazonAdSpendCache.fetching = false;
+      return;
+    }
+
+    const reportData = await reportRes.json();
+    const reportId = reportData.reportId;
+    console.log('[Amazon Ads] Report requested:', reportId);
+
+    // Step 2: Poll (max 2 min)
+    let downloadUrl = null;
+    for (let attempt = 0; attempt < 24; attempt++) {
+      await new Promise(r => setTimeout(r, 5000));
+      const statusRes = await fetch(`https://advertising-api-eu.amazon.com/reporting/reports/${reportId}`, {
+        headers: {
+          'Amazon-Advertising-API-ClientId': process.env.AMAZON_ADS_CLIENT_ID,
+          'Amazon-Advertising-API-Scope': profileId,
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (!statusRes.ok) continue;
+      const statusData = await statusRes.json();
+      console.log('[Amazon Ads] Report status:', statusData.status);
+      if (statusData.status === 'COMPLETED') { downloadUrl = statusData.url; break; }
+      if (statusData.status === 'FAILURE') { console.error('[Amazon Ads] Report failed:', statusData.failureReason); break; }
+    }
+
+    if (!downloadUrl) { console.error('[Amazon Ads] Report timed out'); amazonAdSpendCache.fetching = false; return; }
+
+    // Step 3: Download + decompress
+    const dlRes = await fetch(downloadUrl);
+    if (!dlRes.ok) { amazonAdSpendCache.fetching = false; return; }
+    const buffer = await dlRes.buffer();
+
+    let reportJson;
+    try {
+      const decompressed = zlib.gunzipSync(buffer);
+      reportJson = JSON.parse(decompressed.toString());
+    } catch {
+      try { reportJson = JSON.parse(buffer.toString()); } catch { reportJson = []; }
+    }
+
+    let totalSpend = 0;
+    (Array.isArray(reportJson) ? reportJson : []).forEach(row => {
+      totalSpend += parseFloat(row.spend || row.cost || 0);
+    });
+
+    amazonAdSpendCache.spend = totalSpend;
+    amazonAdSpendCache.lastUpdate = Date.now();
+    saveAdSpendCache();
+    console.log(`[Amazon Ads] Spend updated: ${totalSpend}€`);
+  } catch (err) {
+    console.error('[Amazon Ads] Refresh error:', err.message);
+  } finally {
+    amazonAdSpendCache.fetching = false;
+  }
+}
+
+// Returns cached spend immediately, triggers background refresh if stale (>30 min)
+function fetchAmazonAdSpend() {
+  if (isAmazonAdsConfigured()) {
+    const stale = Date.now() - amazonAdSpendCache.lastUpdate > 30 * 60 * 1000;
+    if (stale && !amazonAdSpendCache.fetching) {
+      refreshAmazonAdSpend(); // fire and forget
     }
   }
-
-  if (!downloadUrl) {
-    console.error('[Amazon Ads] Report timed out');
-    return null;
-  }
-
-  // Step 3: Download report (GZIP compressed)
-  const dlRes = await fetch(downloadUrl);
-  if (!dlRes.ok) { console.error('[Amazon Ads] Download error:', dlRes.status); return null; }
-  const buffer = await dlRes.buffer();
-
-  let reportJson;
-  try {
-    const decompressed = zlib.gunzipSync(buffer);
-    reportJson = JSON.parse(decompressed.toString());
-  } catch {
-    // Maybe not gzipped, try direct parse
-    try { reportJson = JSON.parse(buffer.toString()); } catch { reportJson = []; }
-  }
-  console.log('[Amazon Ads] Report downloaded:', (reportJson.length || 0), 'rows');
-
-  // Sum up spend from all campaigns
-  let totalSpend = 0;
-  (Array.isArray(reportJson) ? reportJson : []).forEach(row => {
-    totalSpend += parseFloat(row.spend || row.cost || 0);
-  });
-
-  return totalSpend;
+  return amazonAdSpendCache.spend || 0;
 }
 
 function isAmazonConfigured() {
@@ -1461,11 +1500,9 @@ app.get('/api/amazon/dashboard', async (req, res) => {
       daysElapsedQuarter = Math.round((now - quarterStartDate) / (1000 * 60 * 60 * 24)) + 1;
     }
 
-    // Fetch sales data
-    const [salesQTD, adSpend] = await Promise.all([
-      fetchAmazonSalesMetrics(quarterStart, todayStr),
-      isAmazonAdsConfigured() ? fetchAmazonAdSpend(quarterStart, todayStr) : null,
-    ]);
+    // Fetch sales data + get cached ad spend
+    const salesQTD = await fetchAmazonSalesMetrics(quarterStart, todayStr);
+    const adSpend = isAmazonAdsConfigured() ? fetchAmazonAdSpend() : 0;
 
     // Aggregate sales by day
     let totalCA = 0, totalOrders = 0;
@@ -2027,4 +2064,10 @@ cron.schedule('1 0 * * *', async () => {
 app.listen(PORT, () => {
   console.log(`Bandit Acquisition Dashboard running on http://localhost:${PORT}`);
   console.log(`Daily report scheduled at 00:01 (Europe/Paris)`);
+
+  // Refresh Amazon Ad spend on startup (background)
+  if (isAmazonAdsConfigured()) {
+    console.log('[Amazon Ads] Starting initial ad spend refresh...');
+    refreshAmazonAdSpend();
+  }
 });
