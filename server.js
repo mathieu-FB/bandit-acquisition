@@ -1793,6 +1793,59 @@ IMPORTANT: Réponds UNIQUEMENT avec le JSON, pas de texte avant/après. Le conte
 // STATUS / HEALTH CHECK
 // ============================================================
 
+// Debug Ads endpoint
+app.get('/api/amazon/debug-ads', async (req, res) => {
+  try {
+    const token = await getAmazonAdsAccessToken();
+    if (!token) return res.json({ error: 'Failed to get Ads access token', hasClientId: !!process.env.AMAZON_ADS_CLIENT_ID, hasSecret: !!process.env.AMAZON_ADS_CLIENT_SECRET, hasRefresh: !!process.env.AMAZON_ADS_REFRESH_TOKEN });
+
+    const profileId = process.env.AMAZON_ADS_PROFILE_ID;
+
+    // Test: list profiles
+    const profilesRes = await fetch('https://advertising-api-eu.amazon.com/v2/profiles', {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Amazon-Advertising-API-ClientId': process.env.AMAZON_ADS_CLIENT_ID,
+      },
+    });
+    const profiles = await profilesRes.json();
+
+    // Test: request a report
+    const now = new Date();
+    const start = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+    const end = formatDate(new Date(now.getTime() - 86400000)); // yesterday
+
+    const reportRes = await fetch('https://advertising-api-eu.amazon.com/reporting/reports', {
+      method: 'POST',
+      headers: {
+        'Amazon-Advertising-API-ClientId': process.env.AMAZON_ADS_CLIENT_ID,
+        'Amazon-Advertising-API-Scope': profileId,
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/vnd.createasyncreportrequest.v3+json',
+      },
+      body: JSON.stringify({
+        name: 'Debug SP Report',
+        startDate: start,
+        endDate: end,
+        configuration: {
+          adProduct: 'SPONSORED_PRODUCTS',
+          groupBy: ['campaign'],
+          columns: ['spend', 'sales14d', 'impressions', 'clicks', 'purchases14d'],
+          reportTypeId: 'spCampaigns',
+          timeUnit: 'SUMMARY',
+          format: 'JSON',
+        },
+      }),
+    });
+    const reportStatus = reportRes.status;
+    const reportBody = await reportRes.text();
+
+    res.json({ tokenOk: true, profileId, profilesCount: profiles.length, profiles: profiles.map(p => ({ id: p.profileId, name: p.accountInfo?.name, marketplace: p.accountInfo?.marketplaceStringId })), reportStatus, reportBody: reportBody.substring(0, 1000) });
+  } catch (err) {
+    res.json({ error: err.message });
+  }
+});
+
 // Debug endpoint — temporary
 app.get('/api/amazon/debug', async (req, res) => {
   try {
