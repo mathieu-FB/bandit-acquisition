@@ -1146,61 +1146,63 @@ async function fetchAmazonSalesMetrics(start, end) {
   return json.payload || [];
 }
 
+// Cache for top products (refreshed every 30 min)
+let amazonTopProductsCache = null;
+let amazonTopProductsCacheKey = null;
+let amazonTopProductsCacheExpiry = 0;
+
 async function fetchAmazonTopProducts(start, end) {
+  const cacheKey = `${start}_${end}`;
+  if (amazonTopProductsCache && amazonTopProductsCacheKey === cacheKey && Date.now() < amazonTopProductsCacheExpiry) {
+    return amazonTopProductsCache;
+  }
+
   const token = await getAmazonAccessToken();
   const marketplaceId = process.env.AMAZON_MARKETPLACE_ID || 'A13V1IB3VIYZZH';
   if (!token) return [];
 
-  // 1. Fetch orders
-  const orders = [];
-  let nextToken = null;
-  let page = 0;
-  do {
-    // CreatedBefore must be at least 2 minutes before now
-    const twoMinAgo = new Date(Date.now() - 3 * 60 * 1000).toISOString();
-    const createdBefore = `${end}T23:59:59Z` < twoMinAgo ? `${end}T23:59:59Z` : twoMinAgo;
-    const params = nextToken
-      ? { NextToken: nextToken }
-      : {
-          MarketplaceIds: marketplaceId,
-          CreatedAfter: `${start}T00:00:00Z`,
-          CreatedBefore: createdBefore,
-          OrderStatuses: 'Shipped,Unshipped',
-          MaxResultsPerPage: '100',
-        };
-    const url = `https://sellingpartnerapi-eu.amazon.com/orders/v0/orders?` +
-      new URLSearchParams(params).toString();
-    const res = await fetch(url, {
-      headers: { 'x-amz-access-token': token, 'Content-Type': 'application/json' },
-    });
-    if (!res.ok) { console.error('[Amazon] Orders error:', res.status, await res.text()); break; }
-    const json = await res.json();
-    orders.push(...(json.payload?.Orders || []));
-    nextToken = json.payload?.NextToken || null;
-    page++;
-  } while (nextToken && page < 5); // max 500 orders
+  // 1. Fetch orders (max 100 most recent)
+  const twoMinAgo = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+  const createdBefore = `${end}T23:59:59Z` < twoMinAgo ? `${end}T23:59:59Z` : twoMinAgo;
+  const url = `https://sellingpartnerapi-eu.amazon.com/orders/v0/orders?` +
+    new URLSearchParams({
+      MarketplaceIds: marketplaceId,
+      CreatedAfter: `${start}T00:00:00Z`,
+      CreatedBefore: createdBefore,
+      OrderStatuses: 'Shipped,Unshipped',
+      MaxResultsPerPage: '100',
+    }).toString();
+
+  const res = await fetch(url, {
+    headers: { 'x-amz-access-token': token, 'Content-Type': 'application/json' },
+  });
+  if (!res.ok) { console.error('[Amazon] Orders error:', res.status, await res.text()); return []; }
+  const json = await res.json();
+  const orders = json.payload?.Orders || [];
 
   console.log(`[Amazon] Fetched ${orders.length} orders for top products`);
 
-  // 2. Fetch order items for each order (with rate limit pause)
-  const productAgg = {}; // { asin: { name, units, ca } }
-  for (let i = 0; i < orders.length; i++) {
-    const orderId = orders[i].AmazonOrderId;
-    try {
-      const itemsUrl = `https://sellingpartnerapi-eu.amazon.com/orders/v0/orders/${orderId}/orderItems`;
-      const itemsRes = await fetch(itemsUrl, {
-        headers: { 'x-amz-access-token': token, 'Content-Type': 'application/json' },
-      });
-      if (!itemsRes.ok) {
-        if (itemsRes.status === 429) {
-          // Rate limited — wait and retry
-          await new Promise(r => setTimeout(r, 2000));
-          i--; continue;
-        }
-        continue;
-      }
-      const itemsJson = await itemsRes.json();
-      (itemsJson.payload?.OrderItems || []).forEach(item => {
+  // 2. Fetch order items in parallel batches of 5
+  const productAgg = {};
+  let retries = 0;
+
+  for (let i = 0; i < orders.length; i += 5) {
+    const batch = orders.slice(i, i + 5);
+    const results = await Promise.all(batch.map(async (order) => {
+      const itemsUrl = `https://sellingpartnerapi-eu.amazon.com/orders/v0/orders/${order.AmazonOrderId}/orderItems`;
+      try {
+        const itemsRes = await fetch(itemsUrl, {
+          headers: { 'x-amz-access-token': token, 'Content-Type': 'application/json' },
+        });
+        if (itemsRes.status === 429) return null; // rate limited
+        if (!itemsRes.ok) return null;
+        return await itemsRes.json();
+      } catch { return null; }
+    }));
+
+    results.forEach(r => {
+      if (!r) { retries++; return; }
+      (r.payload?.OrderItems || []).forEach(item => {
         const asin = item.ASIN || 'unknown';
         const name = item.Title || asin;
         const qty = parseInt(item.QuantityOrdered || 0);
@@ -1209,17 +1211,25 @@ async function fetchAmazonTopProducts(start, end) {
         productAgg[asin].units += qty;
         productAgg[asin].ca += price;
       });
-      // Small pause to respect rate limits (1 req / 200ms = 5/s)
-      if (i < orders.length - 1) await new Promise(r => setTimeout(r, 200));
-    } catch (err) {
-      console.error(`[Amazon] OrderItems error for ${orderId}:`, err.message);
-    }
+    });
+
+    // Pause between batches
+    if (i + 5 < orders.length) await new Promise(r => setTimeout(r, 1000));
   }
 
+  console.log(`[Amazon] Processed ${orders.length} orders, ${retries} rate-limited, ${Object.keys(productAgg).length} products found`);
+
   // 3. Sort by CA descending, return top 5
-  return Object.values(productAgg)
+  const result = Object.values(productAgg)
     .sort((a, b) => b.ca - a.ca)
     .slice(0, 5);
+
+  // Cache for 30 min
+  amazonTopProductsCache = result;
+  amazonTopProductsCacheKey = cacheKey;
+  amazonTopProductsCacheExpiry = Date.now() + 30 * 60 * 1000;
+
+  return result;
 }
 
 async function getAmazonAdsAccessToken() {
