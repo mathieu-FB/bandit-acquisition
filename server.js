@@ -1317,17 +1317,18 @@ async function fetchAmazonAdSpend(start, end) {
   const profileId = process.env.AMAZON_ADS_PROFILE_ID;
   if (!token || !profileId) return null;
 
-  // Sponsored Products campaigns report
-  const url = 'https://advertising-api-eu.amazon.com/sp/campaigns/report';
-  const res = await fetch(url, {
+  // Step 1: Request async report
+  const reportUrl = 'https://advertising-api-eu.amazon.com/reporting/reports';
+  const reportRes = await fetch(reportUrl, {
     method: 'POST',
     headers: {
       'Amazon-Advertising-API-ClientId': process.env.AMAZON_ADS_CLIENT_ID,
       'Amazon-Advertising-API-Scope': profileId,
       Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/vnd.sbcampaignresource.v4+json',
+      'Content-Type': 'application/vnd.createasyncreportrequest.v3+json',
     },
     body: JSON.stringify({
+      name: 'SP Campaigns Spend Report',
       startDate: start,
       endDate: end,
       configuration: {
@@ -1341,9 +1342,59 @@ async function fetchAmazonAdSpend(start, end) {
     }),
   });
 
-  if (!res.ok) { console.error('[Amazon Ads] Report error:', res.status); return null; }
-  const json = await res.json();
-  return json;
+  if (!reportRes.ok) {
+    const errBody = await reportRes.text();
+    console.error('[Amazon Ads] Report request error:', reportRes.status, errBody);
+    return null;
+  }
+
+  const reportData = await reportRes.json();
+  const reportId = reportData.reportId;
+  console.log('[Amazon Ads] Report requested:', reportId);
+
+  // Step 2: Poll for report completion (max 60s)
+  let downloadUrl = null;
+  for (let attempt = 0; attempt < 12; attempt++) {
+    await new Promise(r => setTimeout(r, 5000));
+
+    const statusRes = await fetch(`https://advertising-api-eu.amazon.com/reporting/reports/${reportId}`, {
+      headers: {
+        'Amazon-Advertising-API-ClientId': process.env.AMAZON_ADS_CLIENT_ID,
+        'Amazon-Advertising-API-Scope': profileId,
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    if (!statusRes.ok) continue;
+    const statusData = await statusRes.json();
+    console.log('[Amazon Ads] Report status:', statusData.status);
+
+    if (statusData.status === 'COMPLETED') {
+      downloadUrl = statusData.url;
+      break;
+    } else if (statusData.status === 'FAILURE') {
+      console.error('[Amazon Ads] Report failed:', statusData.failureReason);
+      return null;
+    }
+  }
+
+  if (!downloadUrl) {
+    console.error('[Amazon Ads] Report timed out');
+    return null;
+  }
+
+  // Step 3: Download report
+  const dlRes = await fetch(downloadUrl);
+  if (!dlRes.ok) { console.error('[Amazon Ads] Download error:', dlRes.status); return null; }
+  const reportJson = await dlRes.json();
+  console.log('[Amazon Ads] Report downloaded:', (reportJson.length || 0), 'rows');
+
+  // Sum up spend from all campaigns
+  let totalSpend = 0;
+  (Array.isArray(reportJson) ? reportJson : []).forEach(row => {
+    totalSpend += parseFloat(row.spend || row.cost || 0);
+  });
+
+  return totalSpend;
 }
 
 function isAmazonConfigured() {
@@ -1423,11 +1474,8 @@ app.get('/api/amazon/dashboard', async (req, res) => {
       });
     }
 
-    // Ad spend totals
-    let totalAdSpend = 0;
-    if (adSpend && Array.isArray(adSpend)) {
-      adSpend.forEach(row => { totalAdSpend += parseFloat(row.spend || 0); });
-    }
+    // Ad spend total (fetchAmazonAdSpend now returns a number)
+    const totalAdSpend = adSpend || 0;
 
     const tacosMTD = mtdCA > 0 ? (totalAdSpend / mtdCA) * 100 : 0;
     const tacosQTD = totalCA > 0 ? (totalAdSpend / totalCA) * 100 : 0;
