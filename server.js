@@ -3,6 +3,7 @@ const express = require('express');
 const fetch = require('node-fetch');
 const path = require('path');
 const fs = require('fs');
+const zlib = require('zlib');
 const cron = require('node-cron');
 const { GoogleAdsApi, fromMicros } = require('google-ads-api');
 const { sendReport } = require('./daily-report');
@@ -1317,6 +1318,10 @@ async function fetchAmazonAdSpend(start, end) {
   const profileId = process.env.AMAZON_ADS_PROFILE_ID;
   if (!token || !profileId) return null;
 
+  // Use yesterday as end date max (today's data not ready)
+  const yesterday = formatDate(new Date(Date.now() - 86400000));
+  const reportEnd = end > yesterday ? yesterday : end;
+
   // Step 1: Request async report
   const reportUrl = 'https://advertising-api-eu.amazon.com/reporting/reports';
   const reportRes = await fetch(reportUrl, {
@@ -1328,16 +1333,15 @@ async function fetchAmazonAdSpend(start, end) {
       'Content-Type': 'application/vnd.createasyncreportrequest.v3+json',
     },
     body: JSON.stringify({
-      name: 'SP Campaigns Spend Report',
       startDate: start,
-      endDate: end,
+      endDate: reportEnd,
       configuration: {
         adProduct: 'SPONSORED_PRODUCTS',
         groupBy: ['campaign'],
-        columns: ['spend', 'sales14d', 'impressions', 'clicks', 'purchases14d'],
+        columns: ['spend'],
         reportTypeId: 'spCampaigns',
         timeUnit: 'SUMMARY',
-        format: 'JSON',
+        format: 'GZIP_JSON',
       },
     }),
   });
@@ -1382,10 +1386,19 @@ async function fetchAmazonAdSpend(start, end) {
     return null;
   }
 
-  // Step 3: Download report
+  // Step 3: Download report (GZIP compressed)
   const dlRes = await fetch(downloadUrl);
   if (!dlRes.ok) { console.error('[Amazon Ads] Download error:', dlRes.status); return null; }
-  const reportJson = await dlRes.json();
+  const buffer = await dlRes.buffer();
+
+  let reportJson;
+  try {
+    const decompressed = zlib.gunzipSync(buffer);
+    reportJson = JSON.parse(decompressed.toString());
+  } catch {
+    // Maybe not gzipped, try direct parse
+    try { reportJson = JSON.parse(buffer.toString()); } catch { reportJson = []; }
+  }
   console.log('[Amazon Ads] Report downloaded:', (reportJson.length || 0), 'rows');
 
   // Sum up spend from all campaigns
@@ -1824,16 +1837,15 @@ app.get('/api/amazon/debug-ads', async (req, res) => {
         'Content-Type': 'application/vnd.createasyncreportrequest.v3+json',
       },
       body: JSON.stringify({
-        name: 'Debug SP Report',
         startDate: start,
         endDate: end,
         configuration: {
           adProduct: 'SPONSORED_PRODUCTS',
           groupBy: ['campaign'],
-          columns: ['spend', 'sales14d', 'impressions', 'clicks', 'purchases14d'],
+          columns: ['spend'],
           reportTypeId: 'spCampaigns',
           timeUnit: 'SUMMARY',
-          format: 'JSON',
+          format: 'GZIP_JSON',
         },
       }),
     });
