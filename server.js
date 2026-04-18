@@ -1813,6 +1813,61 @@ app.get('/api/tiktok/callback', (req, res) => {
   res.send(`<h2>TikTok Auth Code</h2><p>Copie ce code et lance :</p><pre>node tiktok-auth.js ${authCode}</pre>`);
 });
 
+// Amazon Ads OAuth callback — exchanges code for refresh token
+app.get('/api/amazon/callback', async (req, res) => {
+  const code = req.query.code;
+  if (!code) return res.send('<h2>Erreur</h2><p>Pas de code reçu.</p>');
+
+  const clientId = process.env.AMAZON_ADS_CLIENT_ID;
+  const clientSecret = process.env.AMAZON_ADS_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    return res.send(`<h2>Amazon Ads Auth Code</h2><p>Code reçu : <code>${code}</code></p><p>Configure AMAZON_ADS_CLIENT_ID et AMAZON_ADS_CLIENT_SECRET dans Railway, puis relance le flow OAuth.</p>`);
+  }
+
+  try {
+    const tokenRes = await fetch('https://api.amazon.com/auth/o2/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        redirect_uri: 'https://web-production-1b6dc.up.railway.app/api/amazon/callback',
+        client_id: clientId,
+        client_secret: clientSecret,
+      }).toString(),
+    });
+    const tokenData = await tokenRes.json();
+
+    if (tokenData.refresh_token) {
+      // Also fetch profile ID
+      let profileInfo = '';
+      try {
+        const profileRes = await fetch('https://advertising-api-eu.amazon.com/v2/profiles', {
+          headers: {
+            'Authorization': `Bearer ${tokenData.access_token}`,
+            'Amazon-Advertising-API-ClientId': clientId,
+          },
+        });
+        const profiles = await profileRes.json();
+        profileInfo = '<h3>Profiles trouvés :</h3><ul>' +
+          profiles.map(p => `<li><strong>${p.accountInfo?.name || p.profileId}</strong> — Profile ID: <code>${p.profileId}</code> (${p.accountInfo?.marketplaceStringId || ''})</li>`).join('') +
+          '</ul>';
+      } catch (e) { profileInfo = `<p>Erreur profiles: ${e.message}</p>`; }
+
+      res.send(`<h2>Amazon Ads — Authentification réussie</h2>
+        <p><strong>Refresh Token :</strong></p><pre style="background:#f0f0f0;padding:12px;border-radius:8px;word-break:break-all;">${tokenData.refresh_token}</pre>
+        <p>Ajoute ce refresh token dans Railway comme <code>AMAZON_ADS_REFRESH_TOKEN</code></p>
+        ${profileInfo}
+        <p>Ajoute le Profile ID souhaité dans Railway comme <code>AMAZON_ADS_PROFILE_ID</code></p>`);
+    } else {
+      res.send(`<h2>Erreur token</h2><pre>${JSON.stringify(tokenData, null, 2)}</pre>`);
+    }
+  } catch (err) {
+    res.send(`<h2>Erreur</h2><pre>${err.message}</pre>`);
+  }
+});
+
 // ============================================================
 // DAILY REPORT — manual trigger + preview
 // ============================================================
