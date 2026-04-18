@@ -1679,24 +1679,42 @@ app.get('/api/amazon/debug', async (req, res) => {
     const token = await getAmazonAccessToken();
     if (!token) return res.json({ error: 'Failed to get access token' });
 
+    const marketplaceId = process.env.AMAZON_MARKETPLACE_ID || 'A13V1IB3VIYZZH';
     const now = new Date();
     const todayStr = formatDate(now);
     const start = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
 
-    const url = `https://sellingpartnerapi-eu.amazon.com/sales/v1/orderMetrics?` +
+    // Test orders list
+    const ordersUrl = `https://sellingpartnerapi-eu.amazon.com/orders/v0/orders?` +
       new URLSearchParams({
-        marketplaceIds: process.env.AMAZON_MARKETPLACE_ID || 'A13V1IB3VIYZZH',
-        interval: `${start}T00:00:00+00:00--${todayStr}T23:59:59+00:00`,
-        granularity: 'Day',
+        MarketplaceIds: marketplaceId,
+        CreatedAfter: `${start}T00:00:00Z`,
+        CreatedBefore: `${todayStr}T23:59:59Z`,
+        OrderStatuses: 'Shipped,Unshipped',
+        MaxResultsPerPage: '5',
       }).toString();
 
-    const salesRes = await fetch(url, {
+    const ordersRes = await fetch(ordersUrl, {
       headers: { 'x-amz-access-token': token, 'Content-Type': 'application/json' },
     });
-    const statusCode = salesRes.status;
-    const body = await salesRes.text();
+    const ordersStatus = ordersRes.status;
+    const ordersBody = await ordersRes.text();
 
-    res.json({ tokenOk: true, url, statusCode, body: body.substring(0, 2000) });
+    // If orders work, test order items for first order
+    let itemsTest = null;
+    if (ordersStatus === 200) {
+      const ordersData = JSON.parse(ordersBody);
+      const firstOrder = ordersData.payload?.Orders?.[0];
+      if (firstOrder) {
+        const itemsUrl = `https://sellingpartnerapi-eu.amazon.com/orders/v0/orders/${firstOrder.AmazonOrderId}/orderItems`;
+        const itemsRes = await fetch(itemsUrl, {
+          headers: { 'x-amz-access-token': token, 'Content-Type': 'application/json' },
+        });
+        itemsTest = { status: itemsRes.status, body: (await itemsRes.text()).substring(0, 1000) };
+      }
+    }
+
+    res.json({ tokenOk: true, ordersStatus, ordersBody: ordersBody.substring(0, 500), itemsTest });
   } catch (err) {
     res.json({ error: err.message });
   }
