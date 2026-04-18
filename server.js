@@ -1134,7 +1134,7 @@ async function fetchAmazonSalesMetrics(start, end) {
   const url = `https://sellingpartnerapi-eu.amazon.com/sales/v1/orderMetrics?` +
     new URLSearchParams({
       marketplaceIds: marketplaceId,
-      interval: `${start}T00:00:00--${end}T23:59:59`,
+      interval: `${start}T00:00:00+00:00--${end}T23:59:59+00:00`,
       granularity: 'Day',
     }).toString();
 
@@ -1638,7 +1638,7 @@ app.get('/api/amazon/debug', async (req, res) => {
     const url = `https://sellingpartnerapi-eu.amazon.com/sales/v1/orderMetrics?` +
       new URLSearchParams({
         marketplaceIds: process.env.AMAZON_MARKETPLACE_ID || 'A13V1IB3VIYZZH',
-        interval: `${start}T00:00:00--${todayStr}T23:59:59`,
+        interval: `${start}T00:00:00+00:00--${todayStr}T23:59:59+00:00`,
         granularity: 'Day',
       }).toString();
 
