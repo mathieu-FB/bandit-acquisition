@@ -1149,25 +1149,74 @@ async function fetchAmazonSalesMetrics(start, end) {
 async function fetchAmazonTopProducts(start, end) {
   const token = await getAmazonAccessToken();
   const marketplaceId = process.env.AMAZON_MARKETPLACE_ID || 'A13V1IB3VIYZZH';
-  if (!token) return null;
+  if (!token) return [];
 
-  // Use Orders API to get product-level breakdown
-  // This is simplified — in production, you'd use Reports API for better aggregation
-  const url = `https://sellingpartnerapi-eu.amazon.com/orders/v0/orders?` +
-    new URLSearchParams({
-      MarketplaceIds: marketplaceId,
-      CreatedAfter: `${start}T00:00:00Z`,
-      CreatedBefore: `${end}T23:59:59Z`,
-      OrderStatuses: 'Shipped,Unshipped',
-      MaxResultsPerPage: '100',
-    }).toString();
+  // 1. Fetch orders
+  const orders = [];
+  let nextToken = null;
+  let page = 0;
+  do {
+    const params = nextToken
+      ? { NextToken: nextToken }
+      : {
+          MarketplaceIds: marketplaceId,
+          CreatedAfter: `${start}T00:00:00Z`,
+          CreatedBefore: `${end}T23:59:59Z`,
+          OrderStatuses: 'Shipped,Unshipped',
+          MaxResultsPerPage: '100',
+        };
+    const url = `https://sellingpartnerapi-eu.amazon.com/orders/v0/orders?` +
+      new URLSearchParams(params).toString();
+    const res = await fetch(url, {
+      headers: { 'x-amz-access-token': token, 'Content-Type': 'application/json' },
+    });
+    if (!res.ok) { console.error('[Amazon] Orders error:', res.status, await res.text()); break; }
+    const json = await res.json();
+    orders.push(...(json.payload?.Orders || []));
+    nextToken = json.payload?.NextToken || null;
+    page++;
+  } while (nextToken && page < 5); // max 500 orders
 
-  const res = await fetch(url, {
-    headers: { 'x-amz-access-token': token, 'Content-Type': 'application/json' },
-  });
-  if (!res.ok) { console.error('[Amazon] Orders error:', res.status); return null; }
-  const json = await res.json();
-  return json.payload?.Orders || [];
+  console.log(`[Amazon] Fetched ${orders.length} orders for top products`);
+
+  // 2. Fetch order items for each order (with rate limit pause)
+  const productAgg = {}; // { asin: { name, units, ca } }
+  for (let i = 0; i < orders.length; i++) {
+    const orderId = orders[i].AmazonOrderId;
+    try {
+      const itemsUrl = `https://sellingpartnerapi-eu.amazon.com/orders/v0/orders/${orderId}/orderItems`;
+      const itemsRes = await fetch(itemsUrl, {
+        headers: { 'x-amz-access-token': token, 'Content-Type': 'application/json' },
+      });
+      if (!itemsRes.ok) {
+        if (itemsRes.status === 429) {
+          // Rate limited — wait and retry
+          await new Promise(r => setTimeout(r, 2000));
+          i--; continue;
+        }
+        continue;
+      }
+      const itemsJson = await itemsRes.json();
+      (itemsJson.payload?.OrderItems || []).forEach(item => {
+        const asin = item.ASIN || 'unknown';
+        const name = item.Title || asin;
+        const qty = parseInt(item.QuantityOrdered || 0);
+        const price = parseFloat(item.ItemPrice?.Amount || 0);
+        if (!productAgg[asin]) productAgg[asin] = { name, asin, units: 0, ca: 0 };
+        productAgg[asin].units += qty;
+        productAgg[asin].ca += price;
+      });
+      // Small pause to respect rate limits (1 req / 200ms = 5/s)
+      if (i < orders.length - 1) await new Promise(r => setTimeout(r, 200));
+    } catch (err) {
+      console.error(`[Amazon] OrderItems error for ${orderId}:`, err.message);
+    }
+  }
+
+  // 3. Sort by CA descending, return top 5
+  return Object.values(productAgg)
+    .sort((a, b) => b.ca - a.ca)
+    .slice(0, 5);
 }
 
 async function getAmazonAdsAccessToken() {
@@ -1316,9 +1365,8 @@ app.get('/api/amazon/dashboard', async (req, res) => {
     const projectedCA_month = daysElapsedMonth > 0 ? (mtdCA / daysElapsedMonth) * daysInMonth : 0;
     const projectedCA_quarter = daysElapsedQuarter > 0 ? (totalCA / daysElapsedQuarter) * totalDaysQuarter : 0;
 
-    // Top products — placeholder until Orders API items are fetched
-    // Will need order items detail — for now return empty
-    const topProducts = [];
+    // Top 5 products by CA
+    const topProducts = await fetchAmazonTopProducts(monthStart, todayStr);
 
     const monthNames = ['', 'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
     const dayNames = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
