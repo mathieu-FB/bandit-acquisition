@@ -58,6 +58,7 @@
   <nav class="tab-nav">
     <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
     <button class="tab-btn" data-tab="meta-analysis">Meta Analysis</button>
+    <button class="tab-btn" data-tab="amazon">Amazon</button>
   </nav>
 
   <!-- LOADING OVERLAY -->
@@ -382,6 +383,170 @@
       </div>
     </div>
   </div><!-- /tab-meta-analysis -->
+
+  <!-- TAB: AMAZON -->
+  <div class="tab-content" id="tab-amazon">
+    <div class="amazon-page">
+
+      <!-- AMAZON NOT CONFIGURED -->
+      <div class="amazon-not-configured" id="amazonNotConfigured" style="display:none;">
+        <div class="card" style="text-align:center;padding:40px;">
+          <h3 style="margin-bottom:8px;">Amazon non configuré</h3>
+          <p style="color:var(--text-muted);font-size:14px;">Ajoute les variables SP-API et Amazon Ads dans les variables d'environnement pour activer cet onglet.</p>
+        </div>
+      </div>
+
+      <!-- AMAZON LOADING -->
+      <div class="amazon-loading" id="amazonLoading" style="display:none;">
+        <div class="spinner"></div>
+        <p>Chargement des données Amazon...</p>
+      </div>
+
+      <div class="amazon-results" id="amazonResults" style="display:none;">
+
+        <!-- OBJECTIVES -->
+        <section class="objectives" style="background:transparent;padding:0;border:none;margin-bottom:24px;">
+          <div class="objectives-inner">
+            <!-- DAY -->
+            <div class="obj-card obj-card-day" id="amz-obj-day">
+              <div class="obj-header">
+                <h3 id="amz-obj-day-label">—</h3>
+                <span class="obj-days" id="amz-obj-day-time"></span>
+              </div>
+              <div class="obj-kpis">
+                <div class="obj-kpi">
+                  <div class="obj-kpi-label">CA</div>
+                  <div class="obj-kpi-values">
+                    <span class="obj-current" id="amz-obj-day-ca">—</span>
+                    <span class="obj-sep">/ cible jour</span>
+                    <span class="obj-target" id="amz-obj-day-ca-target">—</span>
+                  </div>
+                  <div class="obj-progress-row">
+                    <div class="obj-progress-bar"><div class="obj-progress-fill" id="amz-obj-day-ca-bar"></div></div>
+                    <span class="obj-pct" id="amz-obj-day-ca-pct">—</span>
+                  </div>
+                </div>
+                <div class="obj-kpi">
+                  <div class="obj-kpi-label">TACOS</div>
+                  <div class="obj-kpi-values">
+                    <span class="obj-current" id="amz-obj-day-tacos">—</span>
+                    <span class="obj-sep">/ objectif</span>
+                    <span class="obj-target" id="amz-obj-day-tacos-target">—</span>
+                  </div>
+                  <div class="obj-ratio-gauge">
+                    <div class="obj-ratio-indicator" id="amz-obj-day-tacos-indicator"></div>
+                    <div class="obj-ratio-target-line" id="amz-obj-day-tacos-line"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <!-- MONTH -->
+            <div class="obj-card" id="amz-obj-month">
+              <div class="obj-header">
+                <h3 id="amz-obj-month-label">—</h3>
+                <span class="obj-days" id="amz-obj-month-days"></span>
+              </div>
+              <div class="obj-kpis">
+                <div class="obj-kpi">
+                  <div class="obj-kpi-label">CA</div>
+                  <div class="obj-kpi-values">
+                    <span class="obj-current" id="amz-obj-month-ca">—</span>
+                    <span class="obj-sep">/</span>
+                    <span class="obj-target" id="amz-obj-month-ca-target">—</span>
+                  </div>
+                  <div class="obj-progress-row">
+                    <div class="obj-progress-bar">
+                      <div class="obj-progress-fill" id="amz-obj-month-ca-bar"></div>
+                      <div class="obj-progress-projected" id="amz-obj-month-ca-proj"></div>
+                    </div>
+                    <span class="obj-pct" id="amz-obj-month-ca-pct">—</span>
+                  </div>
+                  <div class="obj-projection">Projection : <strong id="amz-obj-month-ca-proj-val">—</strong></div>
+                </div>
+                <div class="obj-kpi">
+                  <div class="obj-kpi-label">TACOS</div>
+                  <div class="obj-kpi-values">
+                    <span class="obj-current" id="amz-obj-month-tacos">—</span>
+                    <span class="obj-sep">/ objectif</span>
+                    <span class="obj-target" id="amz-obj-month-tacos-target">—</span>
+                  </div>
+                  <div class="obj-ratio-gauge">
+                    <div class="obj-ratio-indicator" id="amz-obj-month-tacos-indicator"></div>
+                    <div class="obj-ratio-target-line" id="amz-obj-month-tacos-line"></div>
+                  </div>
+                  <div class="obj-projection">Projection : <strong id="amz-obj-month-tacos-proj-val">—</strong></div>
+                </div>
+              </div>
+            </div>
+            <!-- QUARTER -->
+            <div class="obj-card" id="amz-obj-quarter">
+              <div class="obj-header">
+                <h3 id="amz-obj-quarter-label">—</h3>
+                <span class="obj-days" id="amz-obj-quarter-days"></span>
+              </div>
+              <div class="obj-kpis">
+                <div class="obj-kpi">
+                  <div class="obj-kpi-label">CA</div>
+                  <div class="obj-kpi-values">
+                    <span class="obj-current" id="amz-obj-quarter-ca">—</span>
+                    <span class="obj-sep">/</span>
+                    <span class="obj-target" id="amz-obj-quarter-ca-target">—</span>
+                  </div>
+                  <div class="obj-progress-row">
+                    <div class="obj-progress-bar">
+                      <div class="obj-progress-fill" id="amz-obj-quarter-ca-bar"></div>
+                      <div class="obj-progress-projected" id="amz-obj-quarter-ca-proj"></div>
+                    </div>
+                    <span class="obj-pct" id="amz-obj-quarter-ca-pct">—</span>
+                  </div>
+                  <div class="obj-projection">Projection : <strong id="amz-obj-quarter-ca-proj-val">—</strong></div>
+                </div>
+                <div class="obj-kpi">
+                  <div class="obj-kpi-label">TACOS</div>
+                  <div class="obj-kpi-values">
+                    <span class="obj-current" id="amz-obj-quarter-tacos">—</span>
+                    <span class="obj-sep">/ objectif</span>
+                    <span class="obj-target" id="amz-obj-quarter-tacos-target">—</span>
+                  </div>
+                  <div class="obj-ratio-gauge">
+                    <div class="obj-ratio-indicator" id="amz-obj-quarter-tacos-indicator"></div>
+                    <div class="obj-ratio-target-line" id="amz-obj-quarter-tacos-line"></div>
+                  </div>
+                  <div class="obj-projection">Projection : <strong id="amz-obj-quarter-tacos-proj-val">—</strong></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- KPIs ROW -->
+        <section class="grid grid-3" style="max-width:1400px;margin:0 auto 20px;">
+          <div class="card">
+            <div class="card-header"><h3>CA Amazon</h3></div>
+            <div class="card-value" id="amz-val-ca">—</div>
+            <div class="card-comparison" id="amz-comp-ca"></div>
+          </div>
+          <div class="card">
+            <div class="card-header"><h3>Commandes</h3></div>
+            <div class="card-value" id="amz-val-orders">—</div>
+            <div class="card-comparison" id="amz-comp-orders"></div>
+          </div>
+          <div class="card">
+            <div class="card-header"><h3>TACOS</h3></div>
+            <div class="card-value" id="amz-val-tacos">—</div>
+            <div class="card-comparison" id="amz-comp-tacos"></div>
+          </div>
+        </section>
+
+        <!-- TOP 5 PRODUCTS -->
+        <section style="max-width:1400px;margin:0 auto;">
+          <h2 class="meta-section-title">Top 5 Produits</h2>
+          <div class="amazon-products-table" id="amzTopProducts"></div>
+        </section>
+
+      </div>
+    </div>
+  </div><!-- /tab-amazon -->
 
   <script src="js/app.js"></script>
 </body>

@@ -730,9 +730,23 @@ const OBJECTIVES = {
       ca: 424000,
       ratio: 30,
       months: {
-        4: { ca: 128000, ratio: 30 },  // April
-        5: { ca: 144000, ratio: 30 },  // May
-        6: { ca: 152000, ratio: 30 },  // June
+        4: { ca: 128000, ratio: 30 },
+        5: { ca: 144000, ratio: 30 },
+        6: { ca: 152000, ratio: 30 },
+      },
+    },
+  },
+};
+
+const AMAZON_OBJECTIVES = {
+  2026: {
+    Q2: {
+      ca: 120000,
+      tacos: 20,
+      months: {
+        4: { ca: 40000, tacos: 20 },
+        5: { ca: 40000, tacos: 20 },
+        6: { ca: 40000, tacos: 20 },
       },
     },
   },
@@ -832,6 +846,278 @@ app.get('/api/objectives', async (req, res) => {
     });
   } catch (err) {
     console.error('Objectives error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// AMAZON SP-API + ADS API
+// ============================================================
+
+async function getAmazonAccessToken() {
+  const clientId = process.env.AMAZON_SP_CLIENT_ID;
+  const clientSecret = process.env.AMAZON_SP_CLIENT_SECRET;
+  const refreshToken = process.env.AMAZON_SP_REFRESH_TOKEN;
+  if (!clientId || !clientSecret || !refreshToken) return null;
+
+  const res = await fetch('https://api.amazon.com/auth/o2/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+      client_id: clientId,
+      client_secret: clientSecret,
+    }).toString(),
+  });
+  if (!res.ok) { console.error('[Amazon] Token error:', await res.text()); return null; }
+  const json = await res.json();
+  return json.access_token;
+}
+
+async function fetchAmazonSalesMetrics(start, end) {
+  const token = await getAmazonAccessToken();
+  const marketplaceId = process.env.AMAZON_MARKETPLACE_ID || 'A13V1IB3VIYZZH';
+  if (!token) return null;
+
+  const url = `https://sellingpartnerapi-eu.amazon.com/sales/v1/orderMetrics?` +
+    new URLSearchParams({
+      marketplaceIds: marketplaceId,
+      interval: `${start}T00:00:00--${end}T23:59:59`,
+      granularity: 'Day',
+    }).toString();
+
+  const res = await fetch(url, {
+    headers: { 'x-amz-access-token': token, 'Content-Type': 'application/json' },
+  });
+  if (!res.ok) { console.error('[Amazon] Sales error:', res.status, await res.text()); return null; }
+  const json = await res.json();
+  return json.payload || [];
+}
+
+async function fetchAmazonTopProducts(start, end) {
+  const token = await getAmazonAccessToken();
+  const marketplaceId = process.env.AMAZON_MARKETPLACE_ID || 'A13V1IB3VIYZZH';
+  if (!token) return null;
+
+  // Use Orders API to get product-level breakdown
+  // This is simplified — in production, you'd use Reports API for better aggregation
+  const url = `https://sellingpartnerapi-eu.amazon.com/orders/v0/orders?` +
+    new URLSearchParams({
+      MarketplaceIds: marketplaceId,
+      CreatedAfter: `${start}T00:00:00Z`,
+      CreatedBefore: `${end}T23:59:59Z`,
+      OrderStatuses: 'Shipped,Unshipped',
+      MaxResultsPerPage: '100',
+    }).toString();
+
+  const res = await fetch(url, {
+    headers: { 'x-amz-access-token': token, 'Content-Type': 'application/json' },
+  });
+  if (!res.ok) { console.error('[Amazon] Orders error:', res.status); return null; }
+  const json = await res.json();
+  return json.payload?.Orders || [];
+}
+
+async function getAmazonAdsAccessToken() {
+  const clientId = process.env.AMAZON_ADS_CLIENT_ID;
+  const clientSecret = process.env.AMAZON_ADS_CLIENT_SECRET;
+  const refreshToken = process.env.AMAZON_ADS_REFRESH_TOKEN;
+  if (!clientId || !clientSecret || !refreshToken) return null;
+
+  const res = await fetch('https://api.amazon.com/auth/o2/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'refresh_token',
+      refresh_token: refreshToken,
+      client_id: clientId,
+      client_secret: clientSecret,
+    }).toString(),
+  });
+  if (!res.ok) return null;
+  const json = await res.json();
+  return json.access_token;
+}
+
+async function fetchAmazonAdSpend(start, end) {
+  const token = await getAmazonAdsAccessToken();
+  const profileId = process.env.AMAZON_ADS_PROFILE_ID;
+  if (!token || !profileId) return null;
+
+  // Sponsored Products campaigns report
+  const url = 'https://advertising-api-eu.amazon.com/sp/campaigns/report';
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Amazon-Advertising-API-ClientId': process.env.AMAZON_ADS_CLIENT_ID,
+      'Amazon-Advertising-API-Scope': profileId,
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/vnd.sbcampaignresource.v4+json',
+    },
+    body: JSON.stringify({
+      startDate: start,
+      endDate: end,
+      configuration: {
+        adProduct: 'SPONSORED_PRODUCTS',
+        groupBy: ['campaign'],
+        columns: ['spend', 'sales14d', 'impressions', 'clicks', 'purchases14d'],
+        reportTypeId: 'spCampaigns',
+        timeUnit: 'SUMMARY',
+        format: 'JSON',
+      },
+    }),
+  });
+
+  if (!res.ok) { console.error('[Amazon Ads] Report error:', res.status); return null; }
+  const json = await res.json();
+  return json;
+}
+
+function isAmazonConfigured() {
+  return !!(process.env.AMAZON_SP_CLIENT_ID && process.env.AMAZON_SP_CLIENT_SECRET && process.env.AMAZON_SP_REFRESH_TOKEN);
+}
+
+function isAmazonAdsConfigured() {
+  return !!(process.env.AMAZON_ADS_CLIENT_ID && process.env.AMAZON_ADS_REFRESH_TOKEN && process.env.AMAZON_ADS_PROFILE_ID);
+}
+
+// Amazon objectives helper
+function getAmazonObjective(year, month) {
+  const yearObj = AMAZON_OBJECTIVES[year];
+  if (!yearObj) return null;
+  for (const [qKey, q] of Object.entries(yearObj)) {
+    if (q.months && q.months[month]) {
+      return { quarter: qKey, quarterObj: q, monthObj: q.months[month] };
+    }
+  }
+  return null;
+}
+
+app.get('/api/amazon/dashboard', async (req, res) => {
+  try {
+    if (!isAmazonConfigured()) {
+      return res.json({ configured: false });
+    }
+
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth() + 1;
+    const todayStr = formatDate(now);
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const daysElapsedMonth = now.getDate();
+
+    const obj = getAmazonObjective(year, month);
+    const monthStart = `${year}-${String(month).padStart(2, '0')}-01`;
+
+    // Quarter dates
+    let quarterStart = monthStart;
+    let totalDaysQuarter = daysInMonth;
+    let daysElapsedQuarter = daysElapsedMonth;
+    let qMonths = [month];
+
+    if (obj) {
+      qMonths = Object.keys(obj.quarterObj.months).map(Number).sort((a, b) => a - b);
+      quarterStart = `${year}-${String(qMonths[0]).padStart(2, '0')}-01`;
+      const quarterStartDate = new Date(`${quarterStart}T00:00:00`);
+      const quarterEndDate = new Date(year, qMonths[qMonths.length - 1], 0);
+      totalDaysQuarter = Math.round((quarterEndDate - quarterStartDate) / (1000 * 60 * 60 * 24)) + 1;
+      daysElapsedQuarter = Math.round((now - quarterStartDate) / (1000 * 60 * 60 * 24)) + 1;
+    }
+
+    // Fetch sales data
+    const [salesQTD, adSpend] = await Promise.all([
+      fetchAmazonSalesMetrics(quarterStart, todayStr),
+      isAmazonAdsConfigured() ? fetchAmazonAdSpend(quarterStart, todayStr) : null,
+    ]);
+
+    // Aggregate sales by day
+    let totalCA = 0, totalOrders = 0;
+    let mtdCA = 0, mtdOrders = 0;
+    let todayCA = 0, todayOrders = 0;
+    const dailyCA = {};
+
+    if (salesQTD && Array.isArray(salesQTD)) {
+      salesQTD.forEach(day => {
+        const date = (day.interval || '').split('T')[0] || (day.date || '');
+        const amount = parseFloat(day.totalSales?.amount || day.orderItemCount || 0);
+        const orders = parseInt(day.orderCount || day.unitCount || 0);
+        dailyCA[date] = { ca: amount, orders };
+        totalCA += amount;
+        totalOrders += orders;
+
+        if (date >= monthStart) { mtdCA += amount; mtdOrders += orders; }
+        if (date === todayStr) { todayCA = amount; todayOrders = orders; }
+      });
+    }
+
+    // Ad spend totals
+    let totalAdSpend = 0;
+    if (adSpend && Array.isArray(adSpend)) {
+      adSpend.forEach(row => { totalAdSpend += parseFloat(row.spend || 0); });
+    }
+
+    const tacosMTD = mtdCA > 0 ? (totalAdSpend / mtdCA) * 100 : 0;
+    const tacosQTD = totalCA > 0 ? (totalAdSpend / totalCA) * 100 : 0;
+    const tacosDay = todayCA > 0 ? 0 : 0; // Can't compute daily ads spend easily
+
+    // Projections
+    const projectedCA_month = daysElapsedMonth > 0 ? (mtdCA / daysElapsedMonth) * daysInMonth : 0;
+    const projectedCA_quarter = daysElapsedQuarter > 0 ? (totalCA / daysElapsedQuarter) * totalDaysQuarter : 0;
+
+    // Top products — placeholder until Orders API items are fetched
+    // Will need order items detail — for now return empty
+    const topProducts = [];
+
+    const monthNames = ['', 'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
+    const dayNames = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
+
+    res.json({
+      configured: true,
+      adsConfigured: isAmazonAdsConfigured(),
+      objectives: obj ? {
+        day: {
+          label: `${dayNames[now.getDay()]} ${now.getDate()} ${monthNames[month]}`,
+          currentCA: todayCA,
+          dailyCATarget: obj.monthObj.ca / daysInMonth,
+          progressCA: (todayCA / (obj.monthObj.ca / daysInMonth)) * 100,
+          tacos: tacosDay,
+          tacosTarget: obj.monthObj.tacos,
+        },
+        month: {
+          label: `${monthNames[month]} ${year}`,
+          objectiveCA: obj.monthObj.ca,
+          currentCA: mtdCA,
+          progressCA: (mtdCA / obj.monthObj.ca) * 100,
+          projectedCA: projectedCA_month,
+          tacos: tacosMTD,
+          tacosTarget: obj.monthObj.tacos,
+          projectedTacos: tacosMTD, // linear approx
+          daysElapsed: daysElapsedMonth,
+          daysTotal: daysInMonth,
+        },
+        quarter: {
+          label: `${obj.quarter} ${year}`,
+          objectiveCA: obj.quarterObj.ca,
+          currentCA: totalCA,
+          progressCA: (totalCA / obj.quarterObj.ca) * 100,
+          projectedCA: projectedCA_quarter,
+          tacos: tacosQTD,
+          tacosTarget: obj.quarterObj.tacos,
+          projectedTacos: tacosQTD,
+          daysElapsed: daysElapsedQuarter,
+          daysTotal: totalDaysQuarter,
+        },
+      } : null,
+      kpis: {
+        ca: mtdCA,
+        orders: mtdOrders,
+        tacos: tacosMTD,
+      },
+      topProducts,
+    });
+  } catch (err) {
+    console.error('Amazon dashboard error:', err);
     res.status(500).json({ error: err.message });
   }
 });
@@ -1094,6 +1380,7 @@ app.get('/api/status', (req, res) => {
     meta: !!(process.env.META_ACCESS_TOKEN && process.env.META_AD_ACCOUNT_ID),
     google: !!(process.env.GOOGLE_ADS_CLIENT_ID && process.env.GOOGLE_ADS_DEVELOPER_TOKEN && process.env.GOOGLE_ADS_CUSTOMER_ID && process.env.GOOGLE_ADS_REFRESH_TOKEN),
     tiktok: !!(process.env.TIKTOK_ACCESS_TOKEN && process.env.TIKTOK_ADVERTISER_ID),
+    amazon: isAmazonConfigured(),
   };
   res.json({ configured });
 });

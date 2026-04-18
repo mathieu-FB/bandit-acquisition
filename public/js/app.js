@@ -497,6 +497,7 @@ async function loadStatus() {
       { key: 'meta', label: 'Meta' },
       { key: 'google', label: 'Google' },
       { key: 'tiktok', label: 'TikTok' },
+      { key: 'amazon', label: 'Amazon' },
     ];
 
     sources.forEach(s => {
@@ -709,6 +710,162 @@ function renderMarkdown(md) {
 }
 
 // ============================================================
+// AMAZON DASHBOARD
+// ============================================================
+
+let amazonLoaded = false;
+
+async function loadAmazonDashboard(force) {
+  if (amazonLoaded && !force) return;
+
+  const loading = document.getElementById('amazonLoading');
+  const results = document.getElementById('amazonResults');
+  const notConfigured = document.getElementById('amazonNotConfigured');
+
+  loading.style.display = 'flex';
+  results.style.display = 'none';
+  notConfigured.style.display = 'none';
+
+  try {
+    const res = await fetch('/api/amazon/dashboard');
+    const data = await res.json();
+
+    if (!data.configured) {
+      loading.style.display = 'none';
+      notConfigured.style.display = 'block';
+      amazonLoaded = true;
+      return;
+    }
+
+    // Objectives
+    if (data.objectives) {
+      const obj = data.objectives;
+
+      // Day card
+      if (obj.day) {
+        const d = obj.day;
+        document.getElementById('amz-obj-day-label').textContent = d.label;
+        const nowH = new Date();
+        const hours = nowH.getHours();
+        const mins = String(nowH.getMinutes()).padStart(2, '0');
+        const dayTimePct = Math.round(((hours * 60 + nowH.getMinutes()) / 1440) * 100);
+        document.getElementById('amz-obj-day-time').textContent = `${hours}h${mins} (${dayTimePct}%)`;
+        document.getElementById('amz-obj-day-ca').textContent = fmtK(d.currentCA);
+        document.getElementById('amz-obj-day-ca-target').textContent = fmtK(d.dailyCATarget);
+        const dayPct = Math.min(d.progressCA, 100);
+        document.getElementById('amz-obj-day-ca-bar').style.width = dayPct + '%';
+        const dayBadge = document.getElementById('amz-obj-day-ca-pct');
+        dayBadge.textContent = d.progressCA.toFixed(0) + '%';
+        dayBadge.style.color = d.progressCA >= 100 ? '#00c48c' : '#ff5a5f';
+
+        document.getElementById('amz-obj-day-tacos').textContent = d.tacos.toFixed(1) + '%';
+        document.getElementById('amz-obj-day-tacos-target').textContent = d.tacosTarget + '%';
+        const dayTacosIndicator = document.getElementById('amz-obj-day-tacos-indicator');
+        const dayTacosPct = Math.min((d.tacos / 50) * 100, 100);
+        dayTacosIndicator.style.left = dayTacosPct + '%';
+        dayTacosIndicator.style.borderColor = d.tacos <= d.tacosTarget ? '#00c48c' : '#ff5a5f';
+        document.getElementById('amz-obj-day-tacos-line').style.left = (d.tacosTarget / 50 * 100) + '%';
+      }
+
+      // Month card
+      if (obj.month) {
+        renderAmzObjectivePeriod('month', obj.month);
+      }
+
+      // Quarter card
+      if (obj.quarter) {
+        renderAmzObjectivePeriod('quarter', obj.quarter);
+      }
+    }
+
+    // KPIs
+    document.getElementById('amz-val-ca').textContent = fmtCurrency(data.kpis.ca);
+    document.getElementById('amz-val-orders').textContent = fmtNumber(data.kpis.orders);
+    document.getElementById('amz-val-tacos').textContent = data.kpis.tacos.toFixed(1) + '%';
+
+    // Top Products
+    const productsEl = document.getElementById('amzTopProducts');
+    if (data.topProducts && data.topProducts.length > 0) {
+      const totalCA = data.topProducts.reduce((s, p) => s + (p.ca || 0), 0);
+      productsEl.innerHTML = `
+        <table>
+          <thead>
+            <tr>
+              <th>Produit</th>
+              <th>Units sold</th>
+              <th>CA</th>
+              <th>% du total</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${data.topProducts.map(p => `
+              <tr>
+                <td class="product-name">${p.name || p.asin || '—'}</td>
+                <td>${fmtNumber(p.units || 0)}</td>
+                <td>${fmtCurrency(p.ca || 0)}</td>
+                <td>${totalCA > 0 ? ((p.ca / totalCA) * 100).toFixed(1) : '0'}%</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    } else {
+      productsEl.innerHTML = '<div class="card" style="text-align:center;padding:24px;color:var(--text-muted);">Données produits non disponibles</div>';
+    }
+
+    loading.style.display = 'none';
+    results.style.display = 'block';
+    amazonLoaded = true;
+
+  } catch (err) {
+    console.error('Amazon dashboard error:', err);
+    loading.style.display = 'none';
+    notConfigured.style.display = 'block';
+  }
+}
+
+function renderAmzObjectivePeriod(prefix, data) {
+  document.getElementById(`amz-obj-${prefix}-label`).textContent = data.label;
+  const timePct = Math.round((data.daysElapsed / data.daysTotal) * 100);
+  document.getElementById(`amz-obj-${prefix}-days`).textContent = `J${data.daysElapsed}/${data.daysTotal} (${timePct}%)`;
+
+  // CA
+  document.getElementById(`amz-obj-${prefix}-ca`).textContent = fmtK(data.currentCA);
+  document.getElementById(`amz-obj-${prefix}-ca-target`).textContent = fmtK(data.objectiveCA);
+  const pctCA = Math.min(data.progressCA, 100);
+  document.getElementById(`amz-obj-${prefix}-ca-bar`).style.width = pctCA + '%';
+
+  const pctBadge = document.getElementById(`amz-obj-${prefix}-ca-pct`);
+  pctBadge.textContent = data.progressCA.toFixed(0) + '%';
+  pctBadge.style.color = data.progressCA >= 100 ? '#00c48c' : data.progressCA >= (data.daysElapsed / data.daysTotal * 100) * 0.85 ? 'var(--text-secondary)' : '#ff5a5f';
+
+  const projPct = Math.min((data.projectedCA / data.objectiveCA) * 100, 100);
+  const projBar = document.getElementById(`amz-obj-${prefix}-ca-proj`);
+  projBar.style.width = projPct + '%';
+  projBar.style.opacity = '0.25';
+
+  const projEl = document.getElementById(`amz-obj-${prefix}-ca-proj-val`);
+  projEl.textContent = fmtK(data.projectedCA);
+  projEl.style.color = data.projectedCA >= data.objectiveCA ? '#00c48c' : '#ff5a5f';
+
+  // TACOS
+  document.getElementById(`amz-obj-${prefix}-tacos`).textContent = data.tacos.toFixed(1) + '%';
+  document.getElementById(`amz-obj-${prefix}-tacos-target`).textContent = data.tacosTarget + '%';
+
+  const tacosIndicator = document.getElementById(`amz-obj-${prefix}-tacos-indicator`);
+  const tacosPct = Math.min((data.tacos / 50) * 100, 100);
+  tacosIndicator.style.left = tacosPct + '%';
+  tacosIndicator.style.borderColor = data.tacos <= data.tacosTarget ? '#00c48c' : '#ff5a5f';
+
+  const tacosLine = document.getElementById(`amz-obj-${prefix}-tacos-line`);
+  tacosLine.style.left = (data.tacosTarget / 50 * 100) + '%';
+
+  const projTacosEl = document.getElementById(`amz-obj-${prefix}-tacos-proj-val`);
+  projTacosEl.textContent = data.projectedTacos.toFixed(1) + '%';
+  projTacosEl.style.color = data.projectedTacos <= data.tacosTarget ? '#00c48c' : '#ff5a5f';
+}
+
+// ============================================================
 // TABS
 // ============================================================
 
@@ -720,6 +877,7 @@ function switchTab(tabId) {
   document.getElementById(`tab-${tabId}`).classList.add('active');
 
   if (tabId === 'meta-analysis') loadMetaAnalysis();
+  if (tabId === 'amazon') loadAmazonDashboard();
 }
 
 // ============================================================
@@ -750,6 +908,9 @@ document.addEventListener('DOMContentLoaded', () => {
     if (document.querySelector('.tab-btn[data-tab="meta-analysis"]').classList.contains('active')) {
       metaAnalysisLoadedDays = null;
       loadMetaAnalysis();
+    } else if (document.querySelector('.tab-btn[data-tab="amazon"]').classList.contains('active')) {
+      amazonLoaded = false;
+      loadAmazonDashboard(true);
     } else {
       loadDashboard();
     }

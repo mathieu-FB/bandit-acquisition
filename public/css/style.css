@@ -947,3 +947,88 @@ body {
   .meta-adsets-grid { grid-template-columns: 1fr; }
   .tab-nav { padding: 0 16px; }
 }
+
+/* ============================================================
+   AMAZON PAGE
+   ============================================================ */
+
+.amazon-page {
+  padding: 24px 32px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.amazon-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 0;
+}
+
+.amazon-loading p {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-top: 12px;
+}
+
+.amazon-not-configured {
+  padding: 80px 32px;
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+/* Products table */
+.amazon-products-table {
+  margin-top: 12px;
+}
+
+.amazon-products-table table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  box-shadow: var(--shadow);
+}
+
+.amazon-products-table thead th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.amazon-products-table tbody td {
+  padding: 12px 16px;
+  font-size: 14px;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+}
+
+.amazon-products-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.amazon-products-table tbody tr:hover {
+  background: var(--bg);
+}
+
+.amazon-products-table .product-name {
+  font-weight: 600;
+  max-width: 400px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 900px) {
+  .amazon-page { padding: 16px; }
+  .amazon-products-table { overflow-x: auto; }
+}
