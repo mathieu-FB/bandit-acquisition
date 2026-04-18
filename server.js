@@ -1625,6 +1625,35 @@ IMPORTANT: Réponds UNIQUEMENT avec le JSON, pas de texte avant/après. Le conte
 // STATUS / HEALTH CHECK
 // ============================================================
 
+// Debug endpoint — temporary
+app.get('/api/amazon/debug', async (req, res) => {
+  try {
+    const token = await getAmazonAccessToken();
+    if (!token) return res.json({ error: 'Failed to get access token' });
+
+    const now = new Date();
+    const todayStr = formatDate(now);
+    const start = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+
+    const url = `https://sellingpartnerapi-eu.amazon.com/sales/v1/orderMetrics?` +
+      new URLSearchParams({
+        marketplaceIds: process.env.AMAZON_MARKETPLACE_ID || 'A13V1IB3VIYZZH',
+        interval: `${start}T00:00:00--${todayStr}T23:59:59`,
+        granularity: 'Day',
+      }).toString();
+
+    const salesRes = await fetch(url, {
+      headers: { 'x-amz-access-token': token, 'Content-Type': 'application/json' },
+    });
+    const statusCode = salesRes.status;
+    const body = await salesRes.text();
+
+    res.json({ tokenOk: true, url, statusCode, body: body.substring(0, 2000) });
+  } catch (err) {
+    res.json({ error: err.message });
+  }
+});
+
 app.get('/api/status', (req, res) => {
   const configured = {
     shopify: !!(process.env.SHOPIFY_STORE_URL && process.env.SHOPIFY_ACCESS_TOKEN),
