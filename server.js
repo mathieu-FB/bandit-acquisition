@@ -752,6 +752,104 @@ const AMAZON_OBJECTIVES = {
   },
 };
 
+// ============================================================
+// PRODUCT CATEGORIES — % of CA objective
+// ============================================================
+
+const PRODUCT_CATEGORIES = [
+  {
+    name: 'Fontaines & Distributeurs',
+    pct: 65,
+    types: ['Fontaine à eau', 'Distributeur de croquettes', 'Pièce détachée fontaine', 'Kit', 'Consommable'],
+    color: '#0984e3',
+  },
+  {
+    name: 'Sellerie',
+    pct: 20,
+    types: ['Collier pour chien', 'Collier pour chat', 'Bandana pour chien', 'Bandana pour chat', 'Harnais pour chien', 'Harnais pour chat', 'Laisse pour chien', 'Pochettes et sachets ramasse-crottes'],
+    color: '#6c5ce7',
+  },
+  {
+    name: 'Box & Litières',
+    pct: 10,
+    types: ['Jouet pour chien', 'Box Jouet', 'Bac à litière pour chat'],
+    color: '#00b894',
+  },
+  {
+    name: 'Médailles',
+    pct: 5,
+    types: ['Médaille pour chien', 'Médaille pour chat'],
+    color: '#fdcb6e',
+  },
+];
+
+// Product ID → product_type cache
+let productTypeMap = null;
+let productTypeMapExpiry = 0;
+
+async function getProductTypeMap() {
+  if (productTypeMap && Date.now() < productTypeMapExpiry) return productTypeMap;
+
+  const map = {};
+  let url = `https://${process.env.SHOPIFY_STORE_URL}/admin/api/2024-01/products.json?` +
+    new URLSearchParams({ limit: '250', fields: 'id,product_type' }).toString();
+  const token = process.env.SHOPIFY_ACCESS_TOKEN;
+
+  while (url) {
+    const res = await fetch(url, {
+      headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+    });
+    if (!res.ok) break;
+    const data = await res.json();
+    (data.products || []).forEach(p => { map[p.id] = (p.product_type || '').trim(); });
+
+    const link = res.headers.get('link');
+    if (link && link.includes('rel="next"')) {
+      const match = link.match(/<([^>]+)>;\s*rel="next"/);
+      url = match ? match[1] : null;
+    } else {
+      url = null;
+    }
+  }
+
+  productTypeMap = map;
+  productTypeMapExpiry = Date.now() + 3600 * 1000; // cache 1h
+  console.log(`[ProductTypeMap] Cached ${Object.keys(map).length} products`);
+  return map;
+}
+
+async function fetchOrdersWithLineItems(start, end) {
+  const orders = [];
+  let url = `https://${process.env.SHOPIFY_STORE_URL}/admin/api/2024-01/orders.json?` +
+    new URLSearchParams({
+      created_at_min: `${start}T00:00:00+00:00`,
+      created_at_max: `${end}T23:59:59+00:00`,
+      status: 'any',
+      limit: '250',
+      fields: 'id,created_at,financial_status,source_name,line_items,refunds',
+    }).toString();
+  const token = process.env.SHOPIFY_ACCESS_TOKEN;
+
+  while (url) {
+    const res = await fetch(url, {
+      headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+    });
+    if (!res.ok) break;
+    const data = await res.json();
+    const filtered = (data.orders || []).filter(o => ALLOWED_SOURCES.has(o.source_name));
+    orders.push(...filtered);
+
+    const link = res.headers.get('link');
+    if (link && link.includes('rel="next"')) {
+      const match = link.match(/<([^>]+)>;\s*rel="next"/);
+      url = match ? match[1] : null;
+    } else {
+      url = null;
+    }
+  }
+  return orders;
+}
+
 function getObjective(year, month) {
   const yearObj = OBJECTIVES[year];
   if (!yearObj) return null;
@@ -846,6 +944,159 @@ app.get('/api/objectives', async (req, res) => {
     });
   } catch (err) {
     console.error('Objectives error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// PRODUCT BREAKDOWN BY CATEGORY
+// ============================================================
+
+app.get('/api/product-breakdown', async (req, res) => {
+  try {
+    if (!process.env.SHOPIFY_STORE_URL || !process.env.SHOPIFY_ACCESS_TOKEN) {
+      return res.json({ configured: false });
+    }
+
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth() + 1;
+    const todayStr = formatDate(now);
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const daysElapsedMonth = now.getDate();
+    const monthStart = `${year}-${String(month).padStart(2, '0')}-01`;
+
+    // Quarter dates
+    const obj = getObjective(year, month);
+    let quarterStart = monthStart;
+    let totalDaysQuarter = daysInMonth;
+    let daysElapsedQuarter = daysElapsedMonth;
+
+    if (obj) {
+      const qMonths = Object.keys(obj.quarterObj.months).map(Number).sort((a, b) => a - b);
+      quarterStart = `${year}-${String(qMonths[0]).padStart(2, '0')}-01`;
+      const quarterStartDate = new Date(`${quarterStart}T00:00:00`);
+      const quarterEndDate = new Date(year, qMonths[qMonths.length - 1], 0);
+      totalDaysQuarter = Math.round((quarterEndDate - quarterStartDate) / (1000 * 60 * 60 * 24)) + 1;
+      daysElapsedQuarter = Math.round((now - quarterStartDate) / (1000 * 60 * 60 * 24)) + 1;
+    }
+
+    const [typeMap, orders] = await Promise.all([
+      getProductTypeMap(),
+      fetchOrdersWithLineItems(monthStart, todayStr),
+    ]);
+
+    // Build refund map: line_item_id → refunded quantity
+    const refundMap = {};
+    orders.forEach(order => {
+      if (order.refunds) {
+        order.refunds.forEach(refund => {
+          (refund.refund_line_items || []).forEach(rli => {
+            refundMap[rli.line_item_id] = (refundMap[rli.line_item_id] || 0) + rli.quantity;
+          });
+        });
+      }
+    });
+
+    // Aggregate by product type
+    const typeAgg = {}; // { product_type: { units, ca } }
+    let totalUnits = 0, totalCA = 0;
+
+    orders.forEach(order => {
+      if (order.financial_status === 'voided') return;
+      (order.line_items || []).forEach(li => {
+        const productType = typeMap[li.product_id] || 'Autre';
+        const refunded = refundMap[li.id] || 0;
+        const netQty = li.quantity - refunded;
+        if (netQty <= 0) return;
+
+        // CA HT = price × qty (price is already after discount per item)
+        const ca = parseFloat(li.price || 0) * netQty;
+
+        if (!typeAgg[productType]) typeAgg[productType] = { units: 0, ca: 0 };
+        typeAgg[productType].units += netQty;
+        typeAgg[productType].ca += ca;
+        totalUnits += netQty;
+        totalCA += ca;
+      });
+    });
+
+    // Aggregate into categories
+    const categories = PRODUCT_CATEGORIES.map(cat => {
+      let units = 0, ca = 0;
+      cat.types.forEach(t => {
+        if (typeAgg[t]) {
+          units += typeAgg[t].units;
+          ca += typeAgg[t].ca;
+        }
+      });
+      const objectiveCA = obj ? obj.monthObj.ca * (cat.pct / 100) : 0;
+      const progressCA = objectiveCA > 0 ? (ca / objectiveCA) * 100 : 0;
+      const projectedCA = daysElapsedMonth > 0 ? (ca / daysElapsedMonth) * daysInMonth : 0;
+      return {
+        name: cat.name,
+        color: cat.color,
+        pct: cat.pct,
+        units,
+        ca,
+        pctOfTotal: totalCA > 0 ? (ca / totalCA) * 100 : 0,
+        objectiveCA,
+        progressCA,
+        projectedCA,
+      };
+    });
+
+    // "Autres" — everything not in a category
+    const categorizedTypes = new Set(PRODUCT_CATEGORIES.flatMap(c => c.types));
+    let autresUnits = 0, autresCA = 0;
+    Object.entries(typeAgg).forEach(([type, data]) => {
+      if (!categorizedTypes.has(type)) {
+        autresUnits += data.units;
+        autresCA += data.ca;
+      }
+    });
+    if (autresCA > 0) {
+      categories.push({
+        name: 'Autres',
+        color: '#b2bec3',
+        pct: 0,
+        units: autresUnits,
+        ca: autresCA,
+        pctOfTotal: totalCA > 0 ? (autresCA / totalCA) * 100 : 0,
+        objectiveCA: 0,
+        progressCA: 0,
+        projectedCA: 0,
+      });
+    }
+
+    // All product types for the detailed breakdown
+    const allTypes = Object.entries(typeAgg)
+      .map(([type, data]) => ({
+        type,
+        units: data.units,
+        ca: data.ca,
+        pctOfTotal: totalCA > 0 ? (data.ca / totalCA) * 100 : 0,
+      }))
+      .sort((a, b) => b.ca - a.ca);
+
+    const monthNames = ['', 'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
+
+    res.json({
+      configured: true,
+      period: {
+        label: `${monthNames[month]} ${year}`,
+        start: monthStart,
+        end: todayStr,
+        daysElapsed: daysElapsedMonth,
+        daysTotal: daysInMonth,
+      },
+      totalUnits,
+      totalCA,
+      categories,
+      allTypes,
+    });
+  } catch (err) {
+    console.error('Product breakdown error:', err);
     res.status(500).json({ error: err.message });
   }
 });

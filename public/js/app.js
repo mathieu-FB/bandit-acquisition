@@ -586,6 +586,149 @@ async function loadDashboard() {
 }
 
 // ============================================================
+// PRODUCT BREAKDOWN
+// ============================================================
+
+async function loadProductBreakdown() {
+  try {
+    const res = await fetch('/api/product-breakdown');
+    const data = await res.json();
+    const section = document.getElementById('productBreakdownSection');
+
+    if (!data.configured || !data.categories || data.categories.length === 0) {
+      section.style.display = 'none';
+      return;
+    }
+
+    section.style.display = 'block';
+    document.getElementById('productPeriodLabel').textContent = `— ${data.period.label} (J${data.period.daysElapsed}/${data.period.daysTotal})`;
+
+    // Doughnut chart
+    const ctx = document.getElementById('chart-productBreakdown');
+    if (ctx) {
+      if (chartInstances['chart-productBreakdown']) chartInstances['chart-productBreakdown'].destroy();
+
+      chartInstances['chart-productBreakdown'] = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+          labels: data.categories.map(c => c.name),
+          datasets: [{
+            data: data.categories.map(c => c.ca),
+            backgroundColor: data.categories.map(c => c.color),
+            borderWidth: 2,
+            borderColor: '#fff',
+          }],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          cutout: '60%',
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              ...TOOLTIP_CONFIG,
+              callbacks: {
+                label: function(ctx) {
+                  return ` ${ctx.label}: ${fmtCurrency(ctx.parsed)} (${data.categories[ctx.dataIndex].pctOfTotal.toFixed(1)}%)`;
+                },
+              },
+            },
+          },
+          animation: { duration: 800 },
+        },
+      });
+    }
+
+    // Legend
+    const legendEl = document.getElementById('legend-productBreakdown');
+    legendEl.innerHTML = data.categories.map(c => `
+      <div class="legend-item">
+        <div class="legend-dot" style="background:${c.color}"></div>
+        <span class="legend-label">${c.name}</span>
+        <span class="legend-value">${fmtCurrency(c.ca)} (${c.pctOfTotal.toFixed(0)}%)</span>
+      </div>
+    `).join('');
+
+    // Category cards with objectives
+    const listEl = document.getElementById('productCategoriesList');
+    listEl.innerHTML = data.categories.map(c => {
+      const hasObj = c.objectiveCA > 0;
+      const pct = Math.min(c.progressCA, 100);
+      const timePct = data.period.daysElapsed / data.period.daysTotal * 100;
+      const onTrack = c.progressCA >= timePct * 0.85;
+      const projPct = hasObj ? Math.min((c.projectedCA / c.objectiveCA) * 100, 100) : 0;
+
+      return `
+        <div class="product-cat-card">
+          <div class="product-cat-header">
+            <div class="product-cat-dot" style="background:${c.color}"></div>
+            <h4>${c.name}</h4>
+            ${hasObj ? `<span class="product-cat-obj-pct">${c.pct}% obj.</span>` : ''}
+          </div>
+          <div class="product-cat-metrics">
+            <div class="product-cat-metric">
+              <span class="product-cat-val">${fmtCurrency(c.ca)}</span>
+              <span class="product-cat-label">CA</span>
+            </div>
+            <div class="product-cat-metric">
+              <span class="product-cat-val">${fmtNumber(c.units)}</span>
+              <span class="product-cat-label">Unités</span>
+            </div>
+            <div class="product-cat-metric">
+              <span class="product-cat-val">${c.pctOfTotal.toFixed(1)}%</span>
+              <span class="product-cat-label">% du CA</span>
+            </div>
+          </div>
+          ${hasObj ? `
+            <div class="product-cat-progress">
+              <div class="obj-progress-row">
+                <div class="obj-progress-bar">
+                  <div class="obj-progress-fill" style="width:${pct}%"></div>
+                  <div class="obj-progress-projected" style="width:${projPct}%;opacity:0.25"></div>
+                </div>
+                <span class="obj-pct" style="color:${c.progressCA >= 100 ? '#00c48c' : onTrack ? 'var(--text-secondary)' : '#ff5a5f'}">${c.progressCA.toFixed(0)}%</span>
+              </div>
+              <div class="product-cat-obj-details">
+                <span>Objectif : ${fmtK(c.objectiveCA)}</span>
+                <span>Projection : <strong style="color:${c.projectedCA >= c.objectiveCA ? '#00c48c' : '#ff5a5f'}">${fmtK(c.projectedCA)}</strong></span>
+              </div>
+            </div>
+          ` : ''}
+        </div>
+      `;
+    }).join('');
+
+    // Detailed types table
+    const tableEl = document.getElementById('productTypesTable');
+    tableEl.innerHTML = `
+      <table>
+        <thead>
+          <tr>
+            <th>Type de produit</th>
+            <th>Unités</th>
+            <th>CA</th>
+            <th>% du total</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${data.allTypes.map(t => `
+            <tr>
+              <td class="product-name">${t.type || 'Non défini'}</td>
+              <td>${fmtNumber(t.units)}</td>
+              <td>${fmtCurrency(t.ca)}</td>
+              <td>${t.pctOfTotal.toFixed(1)}%</td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+
+  } catch (err) {
+    console.error('Product breakdown error:', err);
+  }
+}
+
+// ============================================================
 // META ANALYSIS
 // ============================================================
 
@@ -889,6 +1032,7 @@ document.addEventListener('DOMContentLoaded', () => {
   loadStatus();
   loadObjectives();
   loadDashboard();
+  loadProductBreakdown();
 
   // Auto-refresh dashboard every 5 minutes
   setInterval(() => {
@@ -896,6 +1040,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (onDashboard) {
       loadObjectives();
       loadDashboard();
+      loadProductBreakdown();
     }
   }, 5 * 60 * 1000);
 

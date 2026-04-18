@@ -56,7 +56,7 @@
 
   <!-- TAB NAVIGATION -->
   <nav class="tab-nav">
-    <button class="tab-btn active" data-tab="dashboard">Dashboard</button>
+    <button class="tab-btn active" data-tab="dashboard">E-commerce</button>
     <button class="tab-btn" data-tab="meta-analysis">Meta Analysis</button>
     <button class="tab-btn" data-tab="amazon">Amazon</button>
   </nav>
@@ -325,6 +325,34 @@
         <div class="card-source"><span class="source-badge shopify">S</span> Source</div>
       </div>
     </section>
+
+    <!-- ROW 5: Product Breakdown -->
+    <section id="productBreakdownSection" style="display:none;">
+      <h2 class="section-title">Ventes par catégorie produit <span class="section-period" id="productPeriodLabel"></span></h2>
+
+      <div class="product-breakdown-grid">
+        <!-- Doughnut Chart -->
+        <div class="card card-chart product-chart-card">
+          <div class="card-header">
+            <h3>Répartition CA par catégorie</h3>
+          </div>
+          <div class="product-chart-wrap">
+            <canvas id="chart-productBreakdown"></canvas>
+          </div>
+          <div class="card-legend" id="legend-productBreakdown"></div>
+        </div>
+
+        <!-- Category Cards with objectives -->
+        <div class="product-categories-list" id="productCategoriesList"></div>
+      </div>
+
+      <!-- Detailed type table -->
+      <div class="product-types-table-wrap">
+        <h3 class="product-table-title">Détail par type de produit</h3>
+        <div class="product-types-table" id="productTypesTable"></div>
+      </div>
+    </section>
+
   </main>
   </div><!-- /tab-dashboard -->
 
