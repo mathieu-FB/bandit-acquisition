@@ -760,13 +760,13 @@ const PRODUCT_CATEGORIES = [
   {
     name: 'Fontaines & Distributeurs',
     pct: 65,
-    types: ['Fontaine à eau', 'Distributeur de croquettes', 'Pièce détachée fontaine', 'Kit', 'Consommable'],
+    types: ['Fontaine à eau', 'Distributeur de croquettes', 'Pièce détachée fontaine', 'Consommable'],
     color: '#0984e3',
   },
   {
     name: 'Sellerie',
     pct: 20,
-    types: ['Collier pour chien', 'Collier pour chat', 'Bandana pour chien', 'Bandana pour chat', 'Harnais pour chien', 'Harnais pour chat', 'Laisse pour chien', 'Pochettes et sachets ramasse-crottes'],
+    types: ['Collier pour chien', 'Collier pour chat', 'Bandana pour chien', 'Bandana pour chat', 'Harnais pour chien', 'Harnais pour chat', 'Laisse pour chien', 'Pochettes et sachets ramasse-crottes', 'Kit'],
     color: '#6c5ce7',
   },
   {
