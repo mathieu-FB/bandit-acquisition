@@ -1156,12 +1156,15 @@ async function fetchAmazonTopProducts(start, end) {
   let nextToken = null;
   let page = 0;
   do {
+    // CreatedBefore must be at least 2 minutes before now
+    const twoMinAgo = new Date(Date.now() - 3 * 60 * 1000).toISOString();
+    const createdBefore = `${end}T23:59:59Z` < twoMinAgo ? `${end}T23:59:59Z` : twoMinAgo;
     const params = nextToken
       ? { NextToken: nextToken }
       : {
           MarketplaceIds: marketplaceId,
           CreatedAfter: `${start}T00:00:00Z`,
-          CreatedBefore: `${end}T23:59:59Z`,
+          CreatedBefore: createdBefore,
           OrderStatuses: 'Shipped,Unshipped',
           MaxResultsPerPage: '100',
         };
@@ -1685,11 +1688,12 @@ app.get('/api/amazon/debug', async (req, res) => {
     const start = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
 
     // Test orders list
+    const twoMinAgo = new Date(Date.now() - 3 * 60 * 1000).toISOString();
     const ordersUrl = `https://sellingpartnerapi-eu.amazon.com/orders/v0/orders?` +
       new URLSearchParams({
         MarketplaceIds: marketplaceId,
         CreatedAfter: `${start}T00:00:00Z`,
-        CreatedBefore: `${todayStr}T23:59:59Z`,
+        CreatedBefore: twoMinAgo,
         OrderStatuses: 'Shipped,Unshipped',
         MaxResultsPerPage: '5',
       }).toString();
