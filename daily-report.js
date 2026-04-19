@@ -319,7 +319,10 @@ async function fetchTikTokStats(start, end) {
 // ============================================================
 
 async function collectReportData() {
-  const yesterday = new Date();
+  // Use Paris timezone to compute "yesterday" — the server runs in UTC,
+  // but the cron fires at 00:01 Europe/Paris (= 22:01 UTC the day before).
+  const nowParis = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Paris' }));
+  const yesterday = new Date(nowParis);
   yesterday.setDate(yesterday.getDate() - 1);
   const dayBefore = new Date(yesterday);
   dayBefore.setDate(dayBefore.getDate() - 1);
