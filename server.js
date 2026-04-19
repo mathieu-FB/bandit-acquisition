@@ -1925,6 +1925,214 @@ IMPORTANT: Réponds UNIQUEMENT avec le JSON, pas de texte avant/après. Le conte
 });
 
 // ============================================================
+// TIKTOK ANALYSIS
+// ============================================================
+
+async function fetchTikTokAdInsights(start, end) {
+  const token = process.env.TIKTOK_ACCESS_TOKEN;
+  const advertiserId = process.env.TIKTOK_ADVERTISER_ID;
+  if (!token || !advertiserId) return [];
+
+  const url = 'https://business-api.tiktok.com/open_api/v1.3/report/integrated/get/';
+  const params = new URLSearchParams({
+    advertiser_id: advertiserId,
+    report_type: 'BASIC',
+    data_level: 'AUCTION_AD',
+    dimensions: JSON.stringify(['ad_id']),
+    metrics: JSON.stringify([
+      'ad_name', 'campaign_name', 'adgroup_name',
+      'spend', 'impressions', 'clicks', 'cpm', 'cpc', 'ctr',
+      'reach', 'frequency',
+      'complete_payment', 'total_complete_payment_rate',
+      'complete_payment_roas', 'value_per_complete_payment'
+    ]),
+    start_date: start,
+    end_date: end,
+    page: '1',
+    page_size: '100',
+    filtering: JSON.stringify([{ field_name: 'spend', filter_type: 'GREATER_THAN', filter_value: '5' }]),
+  });
+
+  const res = await fetch(`${url}?${params.toString()}`, { headers: { 'Access-Token': token } });
+  if (!res.ok) { console.error(`TikTok Ad insights error ${res.status}:`, await res.text()); return []; }
+  const json = await res.json();
+  if (json.code !== 0) { console.error('TikTok Ad insights API error:', json.message); return []; }
+  return json.data?.list || [];
+}
+
+async function fetchTikTokAdgroupInsights(start, end) {
+  const token = process.env.TIKTOK_ACCESS_TOKEN;
+  const advertiserId = process.env.TIKTOK_ADVERTISER_ID;
+  if (!token || !advertiserId) return [];
+
+  const url = 'https://business-api.tiktok.com/open_api/v1.3/report/integrated/get/';
+  const params = new URLSearchParams({
+    advertiser_id: advertiserId,
+    report_type: 'BASIC',
+    data_level: 'AUCTION_ADGROUP',
+    dimensions: JSON.stringify(['adgroup_id']),
+    metrics: JSON.stringify([
+      'adgroup_name', 'campaign_name',
+      'spend', 'impressions', 'clicks', 'cpm', 'cpc', 'ctr',
+      'reach', 'frequency',
+      'complete_payment', 'total_complete_payment_rate',
+      'complete_payment_roas', 'value_per_complete_payment'
+    ]),
+    start_date: start,
+    end_date: end,
+    page: '1',
+    page_size: '50',
+  });
+
+  const res = await fetch(`${url}?${params.toString()}`, { headers: { 'Access-Token': token } });
+  if (!res.ok) { console.error(`TikTok Adgroup insights error ${res.status}:`, await res.text()); return []; }
+  const json = await res.json();
+  if (json.code !== 0) { console.error('TikTok Adgroup insights API error:', json.message); return []; }
+  return json.data?.list || [];
+}
+
+function parseTikTokInsightRow(row) {
+  const m = row.metrics || {};
+  const spend = parseFloat(m.spend || 0);
+  const impressions = parseInt(m.impressions || 0);
+  const clicks = parseInt(m.clicks || 0);
+  const cpm = parseFloat(m.cpm || 0);
+  const cpc = parseFloat(m.cpc || 0);
+  const ctr = parseFloat(m.ctr || 0);
+  const reach = parseInt(m.reach || 0);
+  const frequency = parseFloat(m.frequency || 0);
+  const purchases = parseInt(m.complete_payment || 0);
+  const valuePerPurchase = parseFloat(m.value_per_complete_payment || 0);
+  const revenue = purchases * valuePerPurchase;
+  const roas = spend > 0 ? revenue / spend : 0;
+  const cpa = purchases > 0 ? spend / purchases : 0;
+  return { spend, impressions, clicks, cpm, cpc, ctr, reach, frequency, purchases, revenue, roas, cpa };
+}
+
+app.get('/api/tiktok/analysis', async (req, res) => {
+  try {
+    const token = process.env.TIKTOK_ACCESS_TOKEN;
+    const apiKey = process.env.ANTHROPIC_API_KEY;
+    if (!token) return res.status(400).json({ error: 'TikTok non configuré' });
+
+    const days = parseInt(req.query.days) || 15;
+    const end = new Date();
+    end.setDate(end.getDate() - 1);
+    const start = new Date(end);
+    start.setDate(start.getDate() - days + 1);
+    const startStr = formatDate(start);
+    const endStr = formatDate(end);
+
+    const [adsRaw, adgroupsRaw] = await Promise.all([
+      fetchTikTokAdInsights(startStr, endStr),
+      fetchTikTokAdgroupInsights(startStr, endStr),
+    ]);
+
+    // Parse ads
+    const allAds = adsRaw.map(row => ({
+      id: row.dimensions?.ad_id || '',
+      name: row.metrics?.ad_name || 'Sans nom',
+      adgroupName: row.metrics?.adgroup_name || '',
+      campaignName: row.metrics?.campaign_name || '',
+      ...parseTikTokInsightRow(row),
+    })).filter(a => a.spend >= 5);
+
+    const topAds = [...allAds].sort((a, b) => b.roas - a.roas).slice(0, 5);
+
+    // Parse adgroups
+    const allAdgroups = adgroupsRaw.map(row => ({
+      id: row.dimensions?.adgroup_id || '',
+      name: row.metrics?.adgroup_name || 'Sans nom',
+      campaignName: row.metrics?.campaign_name || '',
+      ...parseTikTokInsightRow(row),
+    })).filter(a => a.spend >= 5);
+
+    const topAdgroups = [...allAdgroups].sort((a, b) => b.roas - a.roas).slice(0, 5);
+    const worstAdgroups = [...allAdgroups].sort((a, b) => a.roas - b.roas).slice(0, 5);
+
+    // Account totals
+    const accountTotals = {
+      spend: allAds.reduce((s, a) => s + a.spend, 0),
+      revenue: allAds.reduce((s, a) => s + a.revenue, 0),
+      purchases: allAds.reduce((s, a) => s + a.purchases, 0),
+      impressions: allAds.reduce((s, a) => s + a.impressions, 0),
+      clicks: allAds.reduce((s, a) => s + a.clicks, 0),
+      reach: allAdgroups.reduce((s, a) => s + a.reach, 0),
+    };
+    accountTotals.roas = accountTotals.spend > 0 ? accountTotals.revenue / accountTotals.spend : 0;
+    accountTotals.cpa = accountTotals.purchases > 0 ? accountTotals.spend / accountTotals.purchases : 0;
+    accountTotals.cpm = accountTotals.impressions > 0 ? (accountTotals.spend / accountTotals.impressions) * 1000 : 0;
+    accountTotals.ctr = accountTotals.impressions > 0 ? (accountTotals.clicks / accountTotals.impressions) * 100 : 0;
+
+    // Claude analysis
+    let analysis = { topAdsAnalysis: '', newAdsProposals: '', scalingAnalysis: '', globalAnalysis: '' };
+    if (apiKey) {
+      const anthropic = new Anthropic({ apiKey });
+
+      const fmtAd = (ad, i) => `#${i+1} "${ad.name}" (${ad.campaignName}) — Spend: ${ad.spend.toFixed(0)}€, Revenue: ${ad.revenue.toFixed(0)}€, ROAS: ${ad.roas.toFixed(2)}, CPA: ${ad.cpa.toFixed(0)}€, CPM: ${ad.cpm.toFixed(1)}€, CTR: ${ad.ctr.toFixed(2)}%, Purchases: ${ad.purchases}, Impressions: ${ad.impressions}, Reach: ${ad.reach}, Frequency: ${ad.frequency.toFixed(1)}`;
+      const fmtAdgroup = (ag, i) => `#${i+1} "${ag.name}" (${ag.campaignName}) — Spend: ${ag.spend.toFixed(0)}€, Revenue: ${ag.revenue.toFixed(0)}€, ROAS: ${ag.roas.toFixed(2)}, CPA: ${ag.cpa.toFixed(0)}€, CPM: ${ag.cpm.toFixed(1)}€, CTR: ${ag.ctr.toFixed(2)}%, Purchases: ${ag.purchases}, Reach: ${ag.reach}, Frequency: ${ag.frequency.toFixed(1)}`;
+
+      const prompt = `Tu es un senior data analyst / growth strategist spécialisé TikTok Ads pour des marques DTC e-commerce. Tu analyses le compte TikTok Ads de French Bandit (accessoires premium pour chiens et chats).
+
+Période : ${startStr} → ${endStr} (${days} derniers jours)
+
+=== DONNÉES COMPTE ===
+Spend total: ${accountTotals.spend.toFixed(0)}€ | Revenue: ${accountTotals.revenue.toFixed(0)}€ | ROAS: ${accountTotals.roas.toFixed(2)} | CPA: ${accountTotals.cpa.toFixed(0)}€ | CPM: ${accountTotals.cpm.toFixed(1)}€ | CTR: ${accountTotals.ctr.toFixed(2)}% | Purchases: ${accountTotals.purchases} | Reach: ${accountTotals.reach}
+
+=== TOP 5 ADS (par ROAS) ===
+${topAds.map(fmtAd).join('\n')}
+
+=== TOP 5 ADGROUPS (par ROAS) ===
+${topAdgroups.map(fmtAdgroup).join('\n')}
+
+=== WORST 5 ADGROUPS (pire ROAS) ===
+${worstAdgroups.map(fmtAdgroup).join('\n')}
+
+=== INSTRUCTIONS ===
+Réponds en JSON strict avec ces 4 champs (valeurs = strings avec du Markdown) :
+
+{
+  "topAdsAnalysis": "Analyse détaillée de chaque top ad TikTok. Pour chaque ad : pourquoi elle performe, hook analysis, format (UGC/brand/mashup), signaux de saturation (fréquence, CTR decay). Identifie les patterns communs. Donne des recommandations actionnables (dupliquer, itérer le hook, tester nouvelles audiences).",
+
+  "newAdsProposals": "Propose 3 nouvelles publicités TikTok basées sur les patterns des top performers. Pour chaque proposition donne :\\n- Concept et angle créatif\\n- Hook (3 premières secondes — crucial sur TikTok)\\n- Script/storyboard résumé\\n- Format recommandé (UGC, brand content, spark ad, mashup)\\n- Son/musique suggéré\\n- Audience suggérée\\n- Budget test recommandé",
+
+  "scalingAnalysis": "Pour chaque top adgroup, plan de scaling précis : augmentation de budget recommandée (%), stratégie de duplication, audiences lookalike/custom à tester, signaux de fatigue à surveiller (fréquence, CPM, CTR), seuils d'alerte. Spécificités TikTok : pixel events, smart audience, spark ads. Sois concret avec des chiffres.",
+
+  "globalAnalysis": "Analyse macro du compte TikTok : santé globale, tendances, funnel (CTR → conversion), répartition du budget, efficacité par campagne, risques (dépendance à un seul ad, fatigue créative, CPM en hausse...). Compare les métriques aux benchmarks e-commerce TikTok. Donne 3 quick wins et 3 recommandations stratégiques à moyen terme."
+}
+
+IMPORTANT: Réponds UNIQUEMENT avec le JSON, pas de texte avant/après. Le contenu doit être en français. Utilise du Markdown (## pour les titres, **gras**, - pour les listes). Sois précis, factuel, avec des chiffres.`;
+
+      try {
+        const response = await anthropic.messages.create({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 4000,
+          messages: [{ role: 'user', content: prompt }],
+        });
+        const text = response.content[0].text.trim();
+        const jsonStr = text.replace(/^```json\s*/i, '').replace(/\s*```$/, '');
+        analysis = JSON.parse(jsonStr);
+      } catch (e) {
+        console.error('Claude TikTok analysis error:', e.message);
+        analysis.globalAnalysis = 'Erreur lors de la génération de l\'analyse.';
+      }
+    }
+
+    res.json({
+      period: { start: startStr, end: endStr },
+      topAds,
+      topAdgroups,
+      worstAdgroups,
+      accountTotals,
+      analysis,
+    });
+  } catch (err) {
+    console.error('TikTok analysis error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
 // STATUS / HEALTH CHECK
 // ============================================================
 

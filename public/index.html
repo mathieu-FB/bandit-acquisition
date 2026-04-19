@@ -433,9 +433,56 @@
 
       <!-- TIKTOK content -->
       <div class="acq-content" id="acq-tiktok">
-        <div class="card" style="text-align:center;padding:40px;">
-          <h3 style="margin-bottom:8px;">TikTok Ads</h3>
-          <p style="color:var(--text-muted);font-size:14px;">Analyse TikTok Ads — bientôt disponible.</p>
+
+        <!-- Toolbar with period selection -->
+        <div class="meta-toolbar">
+          <div class="meta-period-btns">
+            <button class="btn btn-ghost active" data-tiktok-days="15">15 jours</button>
+            <button class="btn btn-ghost" data-tiktok-days="30">30 jours</button>
+          </div>
+          <span class="meta-period-label" id="tiktokPeriodLabel"></span>
+        </div>
+
+        <!-- Loading spinner -->
+        <div class="meta-loading" id="tiktokLoading">
+          <div class="spinner"></div>
+          <p>Analyse TikTok en cours... (peut prendre 30s)</p>
+        </div>
+
+        <!-- Results container -->
+        <div class="meta-results" id="tiktokResults" style="display:none;">
+
+          <!-- Section 1: Top 5 Ads -->
+          <section class="meta-section">
+            <h2 class="meta-section-title">Top 5 Ads — Performers</h2>
+            <div class="meta-ads-grid" id="tiktokTopAds"></div>
+          </section>
+
+          <!-- Section 2: New Ads Proposals -->
+          <section class="meta-section">
+            <h2 class="meta-section-title">Propositions de nouvelles publicités</h2>
+            <div class="meta-analysis-content" id="tiktokNewAdsProposals"></div>
+          </section>
+
+          <!-- Section 3: Top Adgroups -->
+          <section class="meta-section">
+            <h2 class="meta-section-title">Top Adgroups — Comment les scaler</h2>
+            <div class="meta-adsets-grid" id="tiktokTopAdgroups"></div>
+            <div class="meta-analysis-content" id="tiktokScalingAnalysis"></div>
+          </section>
+
+          <!-- Section 4: Worst Adgroups -->
+          <section class="meta-section">
+            <h2 class="meta-section-title">Worst Performing Adgroups</h2>
+            <div class="meta-adsets-grid" id="tiktokWorstAdgroups"></div>
+          </section>
+
+          <!-- Section 5: Global Analysis -->
+          <section class="meta-section">
+            <h2 class="meta-section-title">Analyse globale du compte</h2>
+            <div class="meta-analysis-content" id="tiktokGlobalAnalysis"></div>
+          </section>
+
         </div>
       </div><!-- /acq-tiktok -->
 

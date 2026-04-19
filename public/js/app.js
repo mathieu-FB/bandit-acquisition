@@ -873,6 +873,95 @@ function renderMarkdown(md) {
 }
 
 // ============================================================
+// TIKTOK ANALYSIS
+// ============================================================
+
+let tiktokAnalysisDays = 15;
+let tiktokAnalysisLoadedDays = null;
+
+async function loadTiktokAnalysis(forceDays) {
+  const days = forceDays || tiktokAnalysisDays;
+  if (tiktokAnalysisLoadedDays === days) return;
+
+  const loading = document.getElementById('tiktokLoading');
+  const results = document.getElementById('tiktokResults');
+  loading.style.display = 'flex';
+  loading.innerHTML = '<div class="spinner"></div><p>Analyse TikTok en cours... (peut prendre 30s)</p>';
+  results.style.display = 'none';
+
+  try {
+    const res = await fetch(`/api/tiktok/analysis?days=${days}`);
+    const data = await res.json();
+
+    if (data.error) {
+      loading.innerHTML = `<p style="color:var(--red)">Erreur: ${data.error}</p>`;
+      return;
+    }
+
+    // 1. Top 5 Ads (TikTok — no thumbnails, use placeholder)
+    const topAdsEl = document.getElementById('tiktokTopAds');
+    topAdsEl.innerHTML = data.topAds.map(ad => `
+      <div class="meta-ad-card">
+        <div class="meta-ad-visual">
+          <div class="meta-ad-no-img" style="font-size:24px;">🎵</div>
+        </div>
+        <div class="meta-ad-info">
+          <h4 class="meta-ad-name">${ad.name}</h4>
+          <div class="meta-ad-campaign">${ad.campaignName}</div>
+          <div class="meta-ad-metrics">
+            <div class="meta-metric"><span class="meta-metric-val">${ad.roas.toFixed(2)}x</span><span class="meta-metric-label">ROAS</span></div>
+            <div class="meta-metric"><span class="meta-metric-val">${ad.spend.toFixed(0)}€</span><span class="meta-metric-label">Spend</span></div>
+            <div class="meta-metric"><span class="meta-metric-val">${ad.revenue.toFixed(0)}€</span><span class="meta-metric-label">Revenue</span></div>
+            <div class="meta-metric"><span class="meta-metric-val">${ad.purchases}</span><span class="meta-metric-label">Achats</span></div>
+            <div class="meta-metric"><span class="meta-metric-val">${ad.cpa.toFixed(0)}€</span><span class="meta-metric-label">CPA</span></div>
+            <div class="meta-metric"><span class="meta-metric-val">${ad.ctr.toFixed(2)}%</span><span class="meta-metric-label">CTR</span></div>
+            <div class="meta-metric"><span class="meta-metric-val">${ad.cpm.toFixed(1)}€</span><span class="meta-metric-label">CPM</span></div>
+            <div class="meta-metric"><span class="meta-metric-val">${ad.frequency.toFixed(1)}</span><span class="meta-metric-label">Freq.</span></div>
+          </div>
+        </div>
+      </div>
+    `).join('');
+
+    // Analysis for top ads
+    if (data.analysis.topAdsAnalysis) {
+      // Remove any previously injected analysis
+      const existingAnalysis = topAdsEl.nextElementSibling;
+      if (existingAnalysis && existingAnalysis.classList.contains('meta-analysis-content') && !existingAnalysis.id) {
+        existingAnalysis.remove();
+      }
+      const analysisDiv = document.createElement('div');
+      analysisDiv.className = 'meta-analysis-content';
+      analysisDiv.innerHTML = renderMarkdown(data.analysis.topAdsAnalysis);
+      topAdsEl.after(analysisDiv);
+    }
+
+    // 2. New Ads Proposals
+    document.getElementById('tiktokNewAdsProposals').innerHTML = renderMarkdown(data.analysis.newAdsProposals || 'Analyse non disponible.');
+
+    // 3. Top Adgroups
+    document.getElementById('tiktokTopAdgroups').innerHTML = renderAdsetCards(data.topAdgroups);
+    document.getElementById('tiktokScalingAnalysis').innerHTML = renderMarkdown(data.analysis.scalingAnalysis || 'Analyse non disponible.');
+
+    // 4. Worst Adgroups
+    document.getElementById('tiktokWorstAdgroups').innerHTML = renderAdsetCards(data.worstAdgroups);
+
+    // 5. Global Analysis
+    document.getElementById('tiktokGlobalAnalysis').innerHTML = renderMarkdown(data.analysis.globalAnalysis || 'Analyse non disponible.');
+
+    // Show period
+    document.getElementById('tiktokPeriodLabel').textContent = `${data.period.start} → ${data.period.end}`;
+
+    loading.style.display = 'none';
+    results.style.display = 'block';
+    tiktokAnalysisLoadedDays = days;
+
+  } catch (err) {
+    console.error('TikTok analysis error:', err);
+    loading.innerHTML = `<p style="color:var(--red)">Erreur de chargement</p>`;
+  }
+}
+
+// ============================================================
 // AMAZON DASHBOARD
 // ============================================================
 
@@ -1073,6 +1162,7 @@ function switchAcqTab(acqId) {
   document.getElementById(`acq-${acqId}`).classList.add('active');
 
   if (acqId === 'meta') loadMetaAnalysis();
+  if (acqId === 'tiktok') loadTiktokAnalysis();
 }
 
 function updateToolbarVisibility() {
@@ -1179,6 +1269,18 @@ document.addEventListener('DOMContentLoaded', () => {
       document.querySelectorAll('[data-meta-days]').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       loadMetaAnalysis(days);
+    });
+  });
+
+  // TikTok period buttons (15j / 30j)
+  document.querySelectorAll('[data-tiktok-days]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const days = parseInt(btn.dataset.tiktokDays);
+      tiktokAnalysisDays = days;
+      tiktokAnalysisLoadedDays = null;
+      document.querySelectorAll('[data-tiktok-days]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      loadTiktokAnalysis(days);
     });
   });
 
