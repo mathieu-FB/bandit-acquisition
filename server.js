@@ -1419,9 +1419,9 @@ async function fetchOneAdReport(token, profileId, adProduct, reportTypeId, start
   }
   console.log(`[Amazon Ads] ${adProduct} report:`, reportId);
 
-  // Step 2: Poll (max 5 min)
+  // Step 2: Poll (max 10 min — Amazon can be slow)
   let downloadUrl = null;
-  for (let attempt = 0; attempt < 60; attempt++) {
+  for (let attempt = 0; attempt < 120; attempt++) {
     await new Promise(r => setTimeout(r, 5000));
     const statusRes = await fetch(`https://advertising-api-eu.amazon.com/reporting/reports/${reportId}`, {
       headers: {
@@ -2081,6 +2081,39 @@ app.get('/api/amazon/ads-status', (req, res) => {
       ageMinutes: amazonAdSpendCache.lastUpdate ? Math.round((Date.now() - amazonAdSpendCache.lastUpdate) / 60000) : null,
     },
   });
+});
+
+// Force refresh ad spend — waits for completion and returns result
+app.get('/api/amazon/force-refresh-ads', async (req, res) => {
+  try {
+    if (amazonAdSpendCache.fetching) return res.json({ status: 'already_fetching' });
+    amazonAdSpendCache.fetching = true;
+
+    const token = await getAmazonAdsAccessToken();
+    const profileId = process.env.AMAZON_ADS_PROFILE_ID;
+    if (!token || !profileId) { amazonAdSpendCache.fetching = false; return res.json({ error: 'Not configured' }); }
+
+    const now = new Date();
+    const start = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+    const yesterday = formatDate(new Date(Date.now() - 86400000));
+
+    const [spSpend, sbSpend, sdSpend] = await Promise.all([
+      fetchOneAdReport(token, profileId, 'SPONSORED_PRODUCTS', 'spCampaigns', start, yesterday),
+      fetchOneAdReport(token, profileId, 'SPONSORED_BRANDS', 'sbCampaigns', start, yesterday),
+      fetchOneAdReport(token, profileId, 'SPONSORED_DISPLAY', 'sdCampaigns', start, yesterday),
+    ]);
+
+    const totalSpend = spSpend + sbSpend + sdSpend;
+    amazonAdSpendCache.spend = totalSpend;
+    amazonAdSpendCache.lastUpdate = Date.now();
+    amazonAdSpendCache.fetching = false;
+    saveAdSpendCache();
+
+    res.json({ status: 'ok', sp: spSpend, sb: sbSpend, sd: sdSpend, total: totalSpend });
+  } catch (err) {
+    amazonAdSpendCache.fetching = false;
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get('/api/amazon/debug-ads', async (req, res) => {
