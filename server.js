@@ -2947,6 +2947,42 @@ async function fetchPipedriveOrgs(ids) {
   return map;
 }
 
+app.get('/api/pipedrive/debug', async (req, res) => {
+  if (!isPipedriveConfigured()) {
+    return res.json({ error: 'PIPEDRIVE_API_TOKEN not set' });
+  }
+  try {
+    const token = process.env.PIPEDRIVE_API_TOKEN;
+    const domain = process.env.PIPEDRIVE_DOMAIN || 'api';
+    const base = domain.includes('.') ? `https://${domain}` : `https://${domain}.pipedrive.com`;
+
+    // Test 1: try v2 deals
+    const url2 = `${base}/api/v2/deals?status=won&limit=5`;
+    console.log(`[Pipedrive debug] Testing v2: ${url2}`);
+    const res2 = await fetch(url2, { headers: { 'x-api-token': token } });
+    const body2 = await res2.text();
+
+    // Test 2: try v1 deals as fallback
+    const url1 = `${base}/api/v1/deals?status=won&limit=5&api_token=${token}`;
+    console.log(`[Pipedrive debug] Testing v1: ${url1.replace(token, 'TOKEN')}`);
+    const res1 = await fetch(url1);
+    const body1 = await res1.text();
+
+    let v2data, v1data;
+    try { v2data = JSON.parse(body2); } catch { v2data = body2.substring(0, 500); }
+    try { v1data = JSON.parse(body1); } catch { v1data = body1.substring(0, 500); }
+
+    res.json({
+      domain,
+      base,
+      v2: { status: res2.status, dataCount: v2data?.data?.length ?? 'n/a', sample: v2data?.data?.[0] || null, raw: v2data?.success === undefined ? v2data : undefined },
+      v1: { status: res1.status, dataCount: v1data?.data?.length ?? 'n/a', success: v1data?.success, sampleKeys: v1data?.data?.[0] ? Object.keys(v1data.data[0]) : null },
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message, stack: err.stack });
+  }
+});
+
 app.get('/api/pipedrive/b2b-report', async (req, res) => {
   if (!isPipedriveConfigured()) {
     return res.json({ error: 'Pipedrive not configured' });
