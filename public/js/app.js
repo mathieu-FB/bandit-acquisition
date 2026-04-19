@@ -872,6 +872,107 @@ function renderMarkdown(md) {
     .replace(/<p><ul>/g, '<ul>').replace(/<\/ul><\/p>/g, '</ul>');
 }
 
+function renderTiktokAdgroupCards(adgroups, type) {
+  return adgroups.map(ag => {
+    const budgetDisplay = ag.dailyBudget ? `${parseFloat(ag.dailyBudget).toFixed(0)}€/j` : '—';
+    const statusBadge = ag.status ? `<span class="budget-status budget-status-${ag.status === 'ENABLE' ? 'active' : 'paused'}">${ag.status === 'ENABLE' ? 'Actif' : ag.status}</span>` : '';
+
+    let actionBtns = '';
+    if (type === 'top' && ag.id) {
+      const b = parseFloat(ag.dailyBudget || 0);
+      actionBtns = `
+        <div class="budget-actions" data-adgroup-id="${ag.id}" data-current-budget="${b}">
+          <button class="btn-budget btn-budget-up" onclick="applyTiktokBudget('${ag.id}', ${(b * 1.2).toFixed(2)}, this)" title="+20%">+20%</button>
+          <button class="btn-budget btn-budget-up" onclick="applyTiktokBudget('${ag.id}', ${(b * 1.5).toFixed(2)}, this)" title="+50%">+50%</button>
+          <button class="btn-budget btn-budget-up" onclick="applyTiktokBudget('${ag.id}', ${(b * 2).toFixed(2)}, this)" title="x2">x2</button>
+        </div>`;
+    } else if (type === 'worst' && ag.id) {
+      const b = parseFloat(ag.dailyBudget || 0);
+      actionBtns = `
+        <div class="budget-actions" data-adgroup-id="${ag.id}" data-current-budget="${b}">
+          <button class="btn-budget btn-budget-down" onclick="applyTiktokBudget('${ag.id}', ${(b * 0.5).toFixed(2)}, this)" title="-50%">-50%</button>
+          <button class="btn-budget btn-budget-pause" onclick="applyTiktokAction('${ag.id}', 'pause', this)" title="Pause">Pause</button>
+        </div>`;
+    }
+
+    return `
+      <div class="meta-adset-card">
+        <div class="meta-adset-header">
+          <h4>${ag.name}</h4>
+          <span class="meta-adset-campaign">${ag.campaignName}</span>
+        </div>
+        <div class="meta-ad-metrics">
+          <div class="meta-metric"><span class="meta-metric-val">${ag.roas.toFixed(2)}x</span><span class="meta-metric-label">ROAS</span></div>
+          <div class="meta-metric"><span class="meta-metric-val">${ag.spend.toFixed(0)}€</span><span class="meta-metric-label">Spend</span></div>
+          <div class="meta-metric"><span class="meta-metric-val">${ag.revenue.toFixed(0)}€</span><span class="meta-metric-label">Revenue</span></div>
+          <div class="meta-metric"><span class="meta-metric-val">${ag.purchases}</span><span class="meta-metric-label">Achats</span></div>
+          <div class="meta-metric"><span class="meta-metric-val">${ag.cpa.toFixed(0)}€</span><span class="meta-metric-label">CPA</span></div>
+          <div class="meta-metric"><span class="meta-metric-val">${ag.ctr.toFixed(2)}%</span><span class="meta-metric-label">CTR</span></div>
+          <div class="meta-metric"><span class="meta-metric-val">${ag.cpm.toFixed(1)}€</span><span class="meta-metric-label">CPM</span></div>
+          <div class="meta-metric"><span class="meta-metric-val">${budgetDisplay}</span><span class="meta-metric-label">Budget ${statusBadge}</span></div>
+        </div>
+        ${actionBtns}
+      </div>`;
+  }).join('');
+}
+
+async function applyTiktokBudget(adgroupId, newBudget, btnEl) {
+  if (!confirm(`Modifier le budget à ${newBudget.toFixed(0)}€/jour ?`)) return;
+  const card = btnEl.closest('.meta-adset-card');
+  const actions = card.querySelector('.budget-actions');
+  const originalHtml = actions.innerHTML;
+  actions.innerHTML = '<span class="budget-loading">Mise à jour...</span>';
+
+  try {
+    const res = await fetch('/api/tiktok/update-budget', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adgroupId, budget: newBudget }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      actions.innerHTML = `<span class="budget-success">Budget mis à jour : ${newBudget.toFixed(0)}€/j</span>`;
+      // Update the budget display in the metrics
+      const metrics = card.querySelectorAll('.meta-metric');
+      const budgetMetric = metrics[metrics.length - 1];
+      budgetMetric.querySelector('.meta-metric-val').textContent = `${newBudget.toFixed(0)}€/j`;
+    } else {
+      actions.innerHTML = `<span class="budget-error">Erreur: ${data.error}</span>`;
+      setTimeout(() => { actions.innerHTML = originalHtml; }, 3000);
+    }
+  } catch (err) {
+    actions.innerHTML = `<span class="budget-error">Erreur réseau</span>`;
+    setTimeout(() => { actions.innerHTML = originalHtml; }, 3000);
+  }
+}
+
+async function applyTiktokAction(adgroupId, action, btnEl) {
+  const label = action === 'pause' ? 'Mettre en pause' : 'Activer';
+  if (!confirm(`${label} cet adgroup ?`)) return;
+  const card = btnEl.closest('.meta-adset-card');
+  const actions = card.querySelector('.budget-actions');
+  const originalHtml = actions.innerHTML;
+  actions.innerHTML = '<span class="budget-loading">Mise à jour...</span>';
+
+  try {
+    const res = await fetch('/api/tiktok/update-budget', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adgroupId, action }),
+    });
+    const data = await res.json();
+    if (data.success) {
+      actions.innerHTML = `<span class="budget-success">${action === 'pause' ? 'Mis en pause' : 'Activé'}</span>`;
+    } else {
+      actions.innerHTML = `<span class="budget-error">Erreur: ${data.error}</span>`;
+      setTimeout(() => { actions.innerHTML = originalHtml; }, 3000);
+    }
+  } catch (err) {
+    actions.innerHTML = `<span class="budget-error">Erreur réseau</span>`;
+    setTimeout(() => { actions.innerHTML = originalHtml; }, 3000);
+  }
+}
+
 // ============================================================
 // TIKTOK ANALYSIS
 // ============================================================
@@ -938,12 +1039,12 @@ async function loadTiktokAnalysis(forceDays) {
     // 2. New Ads Proposals
     document.getElementById('tiktokNewAdsProposals').innerHTML = renderMarkdown(data.analysis.newAdsProposals || 'Analyse non disponible.');
 
-    // 3. Top Adgroups
-    document.getElementById('tiktokTopAdgroups').innerHTML = renderAdsetCards(data.topAdgroups);
+    // 3. Top Adgroups (with budget actions)
+    document.getElementById('tiktokTopAdgroups').innerHTML = renderTiktokAdgroupCards(data.topAdgroups, 'top');
     document.getElementById('tiktokScalingAnalysis').innerHTML = renderMarkdown(data.analysis.scalingAnalysis || 'Analyse non disponible.');
 
-    // 4. Worst Adgroups
-    document.getElementById('tiktokWorstAdgroups').innerHTML = renderAdsetCards(data.worstAdgroups);
+    // 4. Worst Adgroups (with pause/reduce actions)
+    document.getElementById('tiktokWorstAdgroups').innerHTML = renderTiktokAdgroupCards(data.worstAdgroups, 'worst');
 
     // 5. Global Analysis
     document.getElementById('tiktokGlobalAnalysis').innerHTML = renderMarkdown(data.analysis.globalAnalysis || 'Analyse non disponible.');

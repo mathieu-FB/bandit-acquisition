@@ -2009,6 +2009,87 @@ function parseTikTokInsightRow(row) {
   return { spend, impressions, clicks, cpm, cpc, ctr, reach, frequency, purchases, revenue, roas, cpa };
 }
 
+// Fetch adgroup details (budget, status) from TikTok management API
+async function fetchTikTokAdgroupDetails(adgroupIds) {
+  const token = process.env.TIKTOK_ACCESS_TOKEN;
+  const advertiserId = process.env.TIKTOK_ADVERTISER_ID;
+  if (!token || !advertiserId || !adgroupIds.length) return {};
+
+  const url = 'https://business-api.tiktok.com/open_api/v1.3/adgroup/get/';
+  const params = new URLSearchParams({
+    advertiser_id: advertiserId,
+    filtering: JSON.stringify({ adgroup_ids: adgroupIds.map(String) }),
+    page: '1',
+    page_size: '50',
+  });
+
+  try {
+    const res = await fetch(`${url}?${params.toString()}`, { headers: { 'Access-Token': token } });
+    if (!res.ok) { console.error('[TikTok] Adgroup details error:', res.status); return {}; }
+    const json = await res.json();
+    if (json.code !== 0) { console.error('[TikTok] Adgroup details API error:', json.message); return {}; }
+
+    const details = {};
+    (json.data?.list || []).forEach(ag => {
+      details[ag.adgroup_id] = {
+        budget: parseFloat(ag.budget || 0),
+        budgetMode: ag.budget_mode,
+        status: ag.operation_status || ag.secondary_status,
+        bidPrice: parseFloat(ag.bid_price || 0),
+      };
+    });
+    return details;
+  } catch (e) { console.error('[TikTok] Adgroup details error:', e.message); return {}; }
+}
+
+// Update TikTok adgroup budget
+app.post('/api/tiktok/update-budget', async (req, res) => {
+  try {
+    const token = process.env.TIKTOK_ACCESS_TOKEN;
+    const advertiserId = process.env.TIKTOK_ADVERTISER_ID;
+    if (!token || !advertiserId) return res.status(400).json({ error: 'TikTok non configuré' });
+
+    const { adgroupId, budget, action } = req.body;
+    if (!adgroupId) return res.status(400).json({ error: 'adgroupId requis' });
+
+    // If action is 'pause' or 'enable', update status
+    if (action === 'pause' || action === 'enable') {
+      const statusRes = await fetch('https://business-api.tiktok.com/open_api/v1.3/adgroup/status/update/', {
+        method: 'POST',
+        headers: { 'Access-Token': token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          advertiser_id: advertiserId,
+          adgroup_ids: [String(adgroupId)],
+          opt_status: action === 'pause' ? 'DISABLE' : 'ENABLE',
+        }),
+      });
+      const statusJson = await statusRes.json();
+      if (statusJson.code !== 0) return res.status(400).json({ error: statusJson.message });
+      return res.json({ success: true, action, adgroupId });
+    }
+
+    // Update budget
+    if (!budget || budget <= 0) return res.status(400).json({ error: 'Budget invalide' });
+
+    const updateRes = await fetch('https://business-api.tiktok.com/open_api/v1.3/adgroup/update/', {
+      method: 'POST',
+      headers: { 'Access-Token': token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        advertiser_id: advertiserId,
+        adgroup_id: String(adgroupId),
+        budget: budget.toFixed(2),
+      }),
+    });
+    const updateJson = await updateRes.json();
+    if (updateJson.code !== 0) return res.status(400).json({ error: updateJson.message });
+
+    res.json({ success: true, adgroupId, newBudget: budget });
+  } catch (err) {
+    console.error('[TikTok] Budget update error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/tiktok/analysis', async (req, res) => {
   try {
     const token = process.env.TIKTOK_ACCESS_TOKEN;
@@ -2049,6 +2130,18 @@ app.get('/api/tiktok/analysis', async (req, res) => {
 
     const topAdgroups = [...allAdgroups].sort((a, b) => b.roas - a.roas).slice(0, 5);
     const worstAdgroups = [...allAdgroups].sort((a, b) => a.roas - b.roas).slice(0, 5);
+
+    // Fetch budget details for top + worst adgroups
+    const allAdgroupIds = [...new Set([...topAdgroups, ...worstAdgroups].map(a => a.id).filter(Boolean))];
+    const budgetDetails = await fetchTikTokAdgroupDetails(allAdgroupIds);
+    [...topAdgroups, ...worstAdgroups].forEach(ag => {
+      const detail = budgetDetails[ag.id];
+      if (detail) {
+        ag.dailyBudget = detail.budget;
+        ag.budgetMode = detail.budgetMode;
+        ag.status = detail.status;
+      }
+    });
 
     // Account totals
     const accountTotals = {
