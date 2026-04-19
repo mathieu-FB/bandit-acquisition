@@ -652,13 +652,11 @@ app.get('/api/dashboard', async (req, res) => {
 
     const totalSpend = meta.spend + google.spend + tiktok.spend;
     const totalSpendPrev = comp.meta.spend + comp.google.spend + comp.tiktok.spend;
-    const totalPurchases = (meta.purchases || 0) + (google.conversions || 0) + (tiktok.purchases || 0);
-    const totalPurchasesPrev = (comp.meta.purchases || 0) + (comp.google.conversions || 0) + (comp.tiktok.purchases || 0);
 
     const percentMarketing = shopify.netSales > 0 ? (totalSpend / shopify.netSales) * 100 : 0;
     const percentMarketingPrev = shopifyPrev.netSales > 0 ? (totalSpendPrev / shopifyPrev.netSales) * 100 : 0;
-    const blendedCac = totalPurchases > 0 ? totalSpend / totalPurchases : 0;
-    const blendedCacPrev = totalPurchasesPrev > 0 ? totalSpendPrev / totalPurchasesPrev : 0;
+    const blendedCac = shopify.totalOrders > 0 ? totalSpend / shopify.totalOrders : 0;
+    const blendedCacPrev = shopifyPrev.totalOrders > 0 ? totalSpendPrev / shopifyPrev.totalOrders : 0;
     const blendedRoas = totalSpend > 0 ? shopify.netSales / totalSpend : 0;
     const blendedRoasPrev = totalSpendPrev > 0 ? shopifyPrev.netSales / totalSpendPrev : 0;
 
@@ -785,7 +783,7 @@ const PRODUCT_CATEGORIES = [
   },
   {
     name: 'Médailles',
-    pct: 0,
+    pct: 5,
     types: ['Médaille pour chien', 'Médaille pour chat'],
     color: '#fdcb6e',
   },
@@ -1558,7 +1556,11 @@ app.get('/api/amazon/dashboard', async (req, res) => {
     }
 
     // Fetch sales data + get cached ad spend
-    const salesQTD = await fetchAmazonSalesMetrics(quarterStart, todayStr);
+    // Ensure we fetch enough data for 30J selector (may be before quarter start)
+    const fetchStart = kpiDays > 0
+      ? formatDate(new Date(Math.min(new Date(quarterStart).getTime(), Date.now() - kpiDays * 86400000)))
+      : quarterStart;
+    const salesQTD = await fetchAmazonSalesMetrics(fetchStart, todayStr);
     const adSpend = isAmazonAdsConfigured() ? fetchAmazonAdSpend() : 0;
 
     // Aggregate sales by day
@@ -1581,12 +1583,26 @@ app.get('/api/amazon/dashboard', async (req, res) => {
       });
     }
 
+    // KPI period (15J / 30J selector, default MTD)
+    const kpiDays = parseInt(req.query.days) || 0;
+    let kpiCA = mtdCA, kpiOrders = mtdOrders;
+    let kpiLabel = '';
+    if (kpiDays > 0) {
+      kpiCA = 0; kpiOrders = 0;
+      const kpiStart = formatDate(new Date(Date.now() - kpiDays * 86400000));
+      Object.entries(dailyCA).forEach(([date, d]) => {
+        if (date >= kpiStart) { kpiCA += d.ca; kpiOrders += d.orders; }
+      });
+      kpiLabel = `${kpiDays} derniers jours`;
+    }
+
     // Ad spend total (fetchAmazonAdSpend now returns a number)
     const totalAdSpend = adSpend || 0;
 
     const tacosMTD = mtdCA > 0 ? (totalAdSpend / mtdCA) * 100 : 0;
     const tacosQTD = totalCA > 0 ? (totalAdSpend / totalCA) * 100 : 0;
-    const tacosDay = todayCA > 0 ? 0 : 0; // Can't compute daily ads spend easily
+    const tacosDay = tacosMTD; // Daily ad spend not available, show MTD TACOS
+    const tacosKpi = kpiCA > 0 ? (totalAdSpend / kpiCA) * 100 : 0;
 
     // Projections
     const projectedCA_month = daysElapsedMonth > 0 ? (mtdCA / daysElapsedMonth) * daysInMonth : 0;
@@ -1636,9 +1652,10 @@ app.get('/api/amazon/dashboard', async (req, res) => {
         },
       } : null,
       kpis: {
-        ca: mtdCA,
-        orders: mtdOrders,
-        tacos: tacosMTD,
+        ca: kpiDays > 0 ? kpiCA : mtdCA,
+        orders: kpiDays > 0 ? kpiOrders : mtdOrders,
+        tacos: kpiDays > 0 ? tacosKpi : tacosMTD,
+        label: kpiLabel,
       },
       topProducts,
     });

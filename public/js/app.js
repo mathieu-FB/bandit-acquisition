@@ -877,9 +877,11 @@ function renderMarkdown(md) {
 // ============================================================
 
 let amazonLoaded = false;
+let amazonKpiDays = 0; // 0 = MTD, 15, 30
 
-async function loadAmazonDashboard(force) {
-  if (amazonLoaded && !force) return;
+async function loadAmazonDashboard(force, days) {
+  if (days !== undefined) amazonKpiDays = days;
+  if (amazonLoaded && !force && days === undefined) return;
 
   const loading = document.getElementById('amazonLoading');
   const results = document.getElementById('amazonResults');
@@ -890,7 +892,8 @@ async function loadAmazonDashboard(force) {
   notConfigured.style.display = 'none';
 
   try {
-    const res = await fetch('/api/amazon/dashboard');
+    const amzQs = amazonKpiDays > 0 ? `?days=${amazonKpiDays}` : '';
+    const res = await fetch(`/api/amazon/dashboard${amzQs}`);
     const data = await res.json();
 
     if (!data.configured) {
@@ -945,6 +948,10 @@ async function loadAmazonDashboard(force) {
     document.getElementById('amz-val-ca').textContent = fmtCurrency(data.kpis.ca);
     document.getElementById('amz-val-orders').textContent = fmtNumber(data.kpis.orders);
     document.getElementById('amz-val-tacos').textContent = data.kpis.tacos.toFixed(1) + '%';
+
+    // KPI period label
+    const amzPeriodLabel = document.getElementById('amzKpiPeriodLabel');
+    if (amzPeriodLabel) amzPeriodLabel.textContent = data.kpis.label || '';
 
     // Top Products
     const productsEl = document.getElementById('amzTopProducts');
@@ -1151,6 +1158,15 @@ document.addEventListener('DOMContentLoaded', () => {
       document.querySelectorAll('[data-product-period]').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       loadProductBreakdown(btn.dataset.productPeriod);
+    });
+  });
+
+  // Amazon KPI period buttons (MTD / 15J / 30J)
+  document.querySelectorAll('[data-amz-days]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('[data-amz-days]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      loadAmazonDashboard(true, parseInt(btn.dataset.amzDays));
     });
   });
 
