@@ -1555,6 +1555,9 @@ app.get('/api/amazon/dashboard', async (req, res) => {
       daysElapsedQuarter = Math.round((now - quarterStartDate) / (1000 * 60 * 60 * 24)) + 1;
     }
 
+    // KPI period (15J / 30J selector, default MTD)
+    const kpiDays = parseInt(req.query.days) || 0;
+
     // Fetch sales data + get cached ad spend
     // Ensure we fetch enough data for 30J selector (may be before quarter start)
     const fetchStart = kpiDays > 0
@@ -1568,23 +1571,6 @@ app.get('/api/amazon/dashboard', async (req, res) => {
     let mtdCA = 0, mtdOrders = 0;
     let todayCA = 0, todayOrders = 0;
     const dailyCA = {};
-
-    if (salesQTD && Array.isArray(salesQTD)) {
-      salesQTD.forEach(day => {
-        const date = (day.interval || '').split('T')[0] || (day.date || '');
-        const amount = parseFloat(day.totalSales?.amount || day.orderItemCount || 0);
-        const orders = parseInt(day.orderCount || day.unitCount || 0);
-        dailyCA[date] = { ca: amount, orders };
-        totalCA += amount;
-        totalOrders += orders;
-
-        if (date >= monthStart) { mtdCA += amount; mtdOrders += orders; }
-        if (date === todayStr) { todayCA = amount; todayOrders = orders; }
-      });
-    }
-
-    // KPI period (15J / 30J selector, default MTD)
-    const kpiDays = parseInt(req.query.days) || 0;
     let kpiCA = mtdCA, kpiOrders = mtdOrders;
     let kpiLabel = '';
     if (kpiDays > 0) {
