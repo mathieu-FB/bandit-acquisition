@@ -1404,9 +1404,9 @@ async function refreshAmazonAdSpend() {
     }
     console.log('[Amazon Ads] Report ID:', reportId);
 
-    // Step 2: Poll (max 2 min)
+    // Step 2: Poll (max 5 min)
     let downloadUrl = null;
-    for (let attempt = 0; attempt < 24; attempt++) {
+    for (let attempt = 0; attempt < 60; attempt++) {
       await new Promise(r => setTimeout(r, 5000));
       const statusRes = await fetch(`https://advertising-api-eu.amazon.com/reporting/reports/${reportId}`, {
         headers: {
@@ -1955,10 +1955,10 @@ app.get('/api/amazon/debug-report', async (req, res) => {
       if (match) reportId = match[1];
     }
 
-    // If we got a reportId, poll it
+    // If we got a reportId, poll it (max 5 min)
     let reportStatus = null, reportData = null;
     if (reportId) {
-      for (let i = 0; i < 12; i++) {
+      for (let i = 0; i < 60; i++) {
         await new Promise(r => setTimeout(r, 5000));
         const sRes = await fetch(`https://advertising-api-eu.amazon.com/reporting/reports/${reportId}`, {
           headers: {
