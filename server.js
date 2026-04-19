@@ -1379,15 +1379,30 @@ async function refreshAmazonAdSpend() {
       }),
     });
 
+    let reportId;
     if (!reportRes.ok) {
-      console.error('[Amazon Ads] Report request error:', reportRes.status, await reportRes.text());
-      amazonAdSpendCache.fetching = false;
-      return;
+      const errBody = await reportRes.text();
+      // Handle 425 "duplicate" — extract existing report ID
+      if (reportRes.status === 425) {
+        const match = errBody.match(/duplicate of\s*:\s*([a-f0-9-]+)/i);
+        if (match) {
+          reportId = match[1];
+          console.log('[Amazon Ads] Using existing report:', reportId);
+        } else {
+          console.error('[Amazon Ads] 425 duplicate but no ID found:', errBody);
+          amazonAdSpendCache.fetching = false;
+          return;
+        }
+      } else {
+        console.error('[Amazon Ads] Report request error:', reportRes.status, errBody);
+        amazonAdSpendCache.fetching = false;
+        return;
+      }
+    } else {
+      const reportData = await reportRes.json();
+      reportId = reportData.reportId;
     }
-
-    const reportData = await reportRes.json();
-    const reportId = reportData.reportId;
-    console.log('[Amazon Ads] Report requested:', reportId);
+    console.log('[Amazon Ads] Report ID:', reportId);
 
     // Step 2: Poll (max 2 min)
     let downloadUrl = null;
@@ -1890,6 +1905,41 @@ app.get('/api/amazon/debug-ads', async (req, res) => {
     const reportBody = await reportRes.text();
 
     res.json({ tokenOk: true, profileId, profilesCount: profiles.length, profiles: profiles.map(p => ({ id: p.profileId, name: p.accountInfo?.name, marketplace: p.accountInfo?.marketplaceStringId })), reportStatus, reportBody: reportBody.substring(0, 1000) });
+  } catch (err) {
+    res.json({ error: err.message });
+  }
+});
+
+// Debug: check and download existing report
+app.get('/api/amazon/debug-report', async (req, res) => {
+  try {
+    const reportId = req.query.id || 'e0dba04b-f5ef-4c6e-88da-79156da8d91c';
+    const token = await getAmazonAdsAccessToken();
+    const profileId = process.env.AMAZON_ADS_PROFILE_ID;
+    if (!token) return res.json({ error: 'No token' });
+
+    const statusRes = await fetch(`https://advertising-api-eu.amazon.com/reporting/reports/${reportId}`, {
+      headers: {
+        'Amazon-Advertising-API-ClientId': process.env.AMAZON_ADS_CLIENT_ID,
+        'Amazon-Advertising-API-Scope': profileId,
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    const statusData = await statusRes.json();
+
+    let reportData = null;
+    if (statusData.status === 'COMPLETED' && statusData.url) {
+      const dlRes = await fetch(statusData.url);
+      const buffer = await dlRes.buffer();
+      try {
+        const decompressed = zlib.gunzipSync(buffer);
+        reportData = JSON.parse(decompressed.toString());
+      } catch {
+        try { reportData = JSON.parse(buffer.toString()); } catch { reportData = 'parse error'; }
+      }
+    }
+
+    res.json({ reportId, status: statusData.status, url: statusData.url, failureReason: statusData.failureReason, reportData: reportData ? JSON.stringify(reportData).substring(0, 2000) : null });
   } catch (err) {
     res.json({ error: err.message });
   }
