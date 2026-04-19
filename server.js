@@ -1928,8 +1928,55 @@ IMPORTANT: Réponds UNIQUEMENT avec le JSON, pas de texte avant/après. Le conte
 // STATUS / HEALTH CHECK
 // ============================================================
 
-// Debug Ads endpoint
-// Quick test: create all 3 reports and return status + first rows
+// Check status of an existing report by ID, or poll a report to completion
+app.get('/api/amazon/check-report', async (req, res) => {
+  try {
+    const token = await getAmazonAdsAccessToken();
+    const profileId = process.env.AMAZON_ADS_PROFILE_ID;
+    const reportId = req.query.id;
+    if (!token || !profileId || !reportId) return res.json({ error: 'Need ?id=reportId', hasToken: !!token, profileId });
+
+    // Poll up to 5 min
+    let downloadUrl = null;
+    let pollData = null;
+    for (let attempt = 0; attempt < 60; attempt++) {
+      const statusRes = await fetch(`https://advertising-api-eu.amazon.com/reporting/reports/${reportId}`, {
+        headers: {
+          'Amazon-Advertising-API-ClientId': process.env.AMAZON_ADS_CLIENT_ID,
+          'Amazon-Advertising-API-Scope': profileId,
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      pollData = await statusRes.json();
+      if (pollData.status === 'COMPLETED') { downloadUrl = pollData.url; break; }
+      if (pollData.status === 'FAILURE') return res.json({ reportId, step: 'FAILURE', pollData });
+      if (attempt === 0 && pollData.status !== 'PENDING' && pollData.status !== 'PROCESSING') {
+        return res.json({ reportId, step: 'UNKNOWN_STATUS', pollData });
+      }
+      await new Promise(r => setTimeout(r, 5000));
+    }
+
+    if (!downloadUrl) return res.json({ reportId, step: 'TIMEOUT', pollData });
+
+    const dlRes = await fetch(downloadUrl);
+    if (!dlRes.ok) return res.json({ reportId, step: 'DOWNLOAD_FAIL', status: dlRes.status });
+
+    const buffer = await dlRes.buffer();
+    let reportJson;
+    try { reportJson = JSON.parse(zlib.gunzipSync(buffer).toString()); } catch {
+      try { reportJson = JSON.parse(buffer.toString()); } catch (e) {
+        return res.json({ reportId, step: 'PARSE_FAIL', error: e.message, rawPreview: buffer.toString().substring(0, 500) });
+      }
+    }
+
+    const rows = Array.isArray(reportJson) ? reportJson : [];
+    let spend = 0;
+    rows.forEach(row => { spend += parseFloat(row.spend || row.cost || 0); });
+    res.json({ reportId, step: 'COMPLETE', totalRows: rows.length, computedSpend: spend, sampleRows: rows.slice(0, 10), rawKeys: rows.length > 0 ? Object.keys(rows[0]) : [] });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Full test: create SP report, poll to completion, download, show raw data
 app.get('/api/amazon/test-ads', async (req, res) => {
   try {
     const token = await getAmazonAdsAccessToken();
@@ -1940,7 +1987,6 @@ app.get('/api/amazon/test-ads', async (req, res) => {
     const start = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
     const yesterday = formatDate(new Date(Date.now() - 86400000));
 
-    // Only test SPONSORED_PRODUCTS (fastest, most common)
     const adProduct = 'SPONSORED_PRODUCTS';
     const reportTypeId = 'spCampaigns';
 
@@ -1974,11 +2020,10 @@ app.get('/api/amazon/test-ads', async (req, res) => {
       return res.json({ profileId, start, end: yesterday, step: 'CREATE', createStatus, createBody: createBody.substring(0, 1000) });
     }
 
-    // Step 2: Poll (max 2 min for test)
+    // Step 2: Poll (max 5 min)
     let downloadUrl = null;
-    let pollStatus = null;
     let pollData = null;
-    for (let attempt = 0; attempt < 24; attempt++) {
+    for (let attempt = 0; attempt < 60; attempt++) {
       await new Promise(r => setTimeout(r, 5000));
       const statusRes = await fetch(`https://advertising-api-eu.amazon.com/reporting/reports/${reportId}`, {
         headers: {
@@ -1987,36 +2032,27 @@ app.get('/api/amazon/test-ads', async (req, res) => {
           Authorization: `Bearer ${token}`,
         },
       });
-      pollStatus = statusRes.status;
       pollData = await statusRes.json();
       if (pollData.status === 'COMPLETED') { downloadUrl = pollData.url; break; }
       if (pollData.status === 'FAILURE') break;
     }
 
     if (!downloadUrl) {
-      return res.json({ profileId, start, end: yesterday, reportId, step: 'POLL', pollStatus, pollData });
+      return res.json({ profileId, start, end: yesterday, reportId, step: 'POLL', pollData });
     }
 
     // Step 3: Download + decompress
     const dlRes = await fetch(downloadUrl);
-    const dlStatus = dlRes.status;
-    if (!dlRes.ok) {
-      return res.json({ profileId, start, end: yesterday, reportId, step: 'DOWNLOAD', dlStatus });
-    }
+    if (!dlRes.ok) return res.json({ profileId, start, end: yesterday, reportId, step: 'DOWNLOAD', status: dlRes.status });
 
     const buffer = await dlRes.buffer();
     let reportJson;
-    let rawText;
-    try {
-      rawText = zlib.gunzipSync(buffer).toString();
-      reportJson = JSON.parse(rawText);
-    } catch {
-      try { rawText = buffer.toString(); reportJson = JSON.parse(rawText); } catch (e) {
+    try { reportJson = JSON.parse(zlib.gunzipSync(buffer).toString()); } catch {
+      try { reportJson = JSON.parse(buffer.toString()); } catch (e) {
         return res.json({ profileId, start, end: yesterday, reportId, step: 'PARSE', error: e.message, rawPreview: buffer.toString().substring(0, 1000) });
       }
     }
 
-    // Show raw report data (first 5 rows) + computed spend
     const rows = Array.isArray(reportJson) ? reportJson : [];
     let spend = 0;
     rows.forEach(row => { spend += parseFloat(row.spend || row.cost || 0); });
