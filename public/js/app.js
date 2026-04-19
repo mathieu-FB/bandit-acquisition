@@ -1406,6 +1406,171 @@ function renderAmzObjectivePeriod(prefix, data) {
 }
 
 // ============================================================
+// B2B — Pipedrive Reporting
+// ============================================================
+
+let b2bSourceChart = null;
+let b2bLoaded = false;
+
+function getB2BDateRange(range) {
+  const now = new Date();
+  const end = new Date(now);
+  end.setDate(end.getDate() - 1); // yesterday
+  let start;
+
+  switch (range) {
+    case '7d':
+      start = new Date(end);
+      start.setDate(start.getDate() - 6);
+      break;
+    case 'mtd':
+      start = new Date(end.getFullYear(), end.getMonth(), 1);
+      break;
+    case 'qtd': {
+      const qMonth = Math.floor(end.getMonth() / 3) * 3;
+      start = new Date(end.getFullYear(), qMonth, 1);
+      break;
+    }
+    case 'ytd':
+      start = new Date(end.getFullYear(), 0, 1);
+      break;
+    default:
+      start = new Date(end.getFullYear(), end.getMonth(), 1);
+  }
+
+  return {
+    start: start.toISOString().split('T')[0],
+    end: end.toISOString().split('T')[0],
+  };
+}
+
+function fmtB2BCurrency(v) {
+  return v.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
+}
+
+async function loadB2BReport(range) {
+  const loading = document.getElementById('b2bLoading');
+  const kpis = document.getElementById('b2bKpis');
+
+  loading.style.display = 'block';
+  kpis.style.opacity = '0.3';
+
+  let start, end;
+  if (range) {
+    const dates = getB2BDateRange(range);
+    start = dates.start;
+    end = dates.end;
+    document.getElementById('b2bDateStart').value = start;
+    document.getElementById('b2bDateEnd').value = end;
+  } else {
+    start = document.getElementById('b2bDateStart').value;
+    end = document.getElementById('b2bDateEnd').value;
+  }
+
+  try {
+    const res = await fetch(`/api/pipedrive/b2b-report?start=${start}&end=${end}`);
+    const data = await res.json();
+
+    if (data.error) {
+      loading.style.display = 'none';
+      kpis.style.opacity = '1';
+      console.error('[B2B]', data.error);
+      return;
+    }
+
+    // KPI cards
+    document.getElementById('b2b-ca').textContent = fmtB2BCurrency(data.ca);
+    document.getElementById('b2b-clients').textContent = data.nbClients;
+    document.getElementById('b2b-deals').textContent = data.nbDeals;
+    document.getElementById('b2b-panier').textContent = fmtB2BCurrency(data.panierMoyen);
+
+    // Pie chart — CA par source
+    renderB2BSourceChart(data.sources);
+
+    // Top 5 clients
+    renderB2BTopClients(data.top5);
+
+    loading.style.display = 'none';
+    kpis.style.opacity = '1';
+    b2bLoaded = true;
+  } catch (err) {
+    console.error('[B2B] Load error:', err);
+    loading.style.display = 'none';
+    kpis.style.opacity = '1';
+  }
+}
+
+const B2B_COLORS = ['#1a1a1a', '#2d9d5c', '#d94040', '#0984e3', '#f39c12', '#8b5cf6', '#00b894', '#e17055', '#636e72'];
+
+function renderB2BSourceChart(sources) {
+  const ctx = document.getElementById('b2bSourceChart').getContext('2d');
+
+  if (b2bSourceChart) b2bSourceChart.destroy();
+
+  const labels = sources.map(s => s.name);
+  const values = sources.map(s => s.value);
+  const colors = sources.map((_, i) => B2B_COLORS[i % B2B_COLORS.length]);
+
+  b2bSourceChart = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels,
+      datasets: [{
+        data: values,
+        backgroundColor: colors,
+        borderWidth: 2,
+        borderColor: '#ffffff',
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      cutout: '55%',
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: ctx => {
+              const val = ctx.parsed;
+              const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+              const pct = total > 0 ? ((val / total) * 100).toFixed(1) : 0;
+              return `${ctx.label}: ${fmtB2BCurrency(val)} (${pct}%)`;
+            },
+          },
+        },
+      },
+    },
+  });
+
+  // Custom legend
+  const legendEl = document.getElementById('b2bSourceLegend');
+  const total = values.reduce((a, b) => a + b, 0);
+  legendEl.innerHTML = sources.map((s, i) => {
+    const pct = total > 0 ? ((s.value / total) * 100).toFixed(1) : 0;
+    return `<div class="b2b-legend-item">
+      <span class="b2b-legend-dot" style="background:${colors[i]}"></span>
+      ${s.name} — ${pct}%
+    </div>`;
+  }).join('');
+}
+
+function renderB2BTopClients(top5) {
+  const tbody = document.getElementById('b2bTopClients');
+  if (!top5 || !top5.length) {
+    tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:24px;">Aucun client sur cette période</td></tr>';
+    return;
+  }
+  tbody.innerHTML = top5.map((c, i) => `
+    <tr>
+      <td><span class="client-rank">${i + 1}</span><span class="client-name">${c.name}</span></td>
+      <td>${fmtB2BCurrency(c.ca)}</td>
+      <td>${c.commandes}</td>
+      <td>${fmtB2BCurrency(c.panierMoyen)}</td>
+    </tr>
+  `).join('');
+}
+
+// ============================================================
 // TABS + SUB-TABS
 // ============================================================
 
@@ -1417,6 +1582,7 @@ function switchTab(tabId) {
   document.getElementById(`tab-${tabId}`).classList.add('active');
 
   if (tabId === 'amazon') loadAmazonDashboard();
+  if (tabId === 'b2b' && !b2bLoaded) loadB2BReport('mtd');
 
   // Show/hide toolbar based on context
   updateToolbarVisibility();
@@ -1564,6 +1730,31 @@ document.addEventListener('DOMContentLoaded', () => {
       loadTiktokAnalysis(days);
     });
   });
+
+  // B2B quick range buttons
+  document.querySelectorAll('[data-b2b-range]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('[data-b2b-range]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      b2bLoaded = false;
+      loadB2BReport(btn.dataset.b2bRange);
+    });
+  });
+
+  // B2B custom date change
+  const b2bStart = document.getElementById('b2bDateStart');
+  const b2bEnd = document.getElementById('b2bDateEnd');
+  if (b2bStart && b2bEnd) {
+    const onB2BDateChange = () => {
+      if (b2bStart.value && b2bEnd.value) {
+        document.querySelectorAll('[data-b2b-range]').forEach(b => b.classList.remove('active'));
+        b2bLoaded = false;
+        loadB2BReport();
+      }
+    };
+    b2bStart.addEventListener('change', onB2BDateChange);
+    b2bEnd.addEventListener('change', onB2BDateChange);
+  }
 
   document.querySelectorAll('.date-input').forEach(input => {
     input.addEventListener('click', function() { this.showPicker(); });

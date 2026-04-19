@@ -60,6 +60,7 @@
   <nav class="tab-nav">
     <button class="tab-btn active" data-tab="ecommerce">E-commerce</button>
     <button class="tab-btn" data-tab="amazon">Amazon</button>
+    <button class="tab-btn" data-tab="b2b">B2B</button>
   </nav>
 
   <!-- LOADING OVERLAY -->
@@ -720,6 +721,95 @@
       </div>
     </div>
   </div><!-- /tab-amazon -->
+
+  <!-- TAB: B2B -->
+  <div class="tab-content" id="tab-b2b">
+    <div class="b2b-page">
+
+      <!-- B2B Sub-tabs -->
+      <nav class="subtab-nav b2b-subtab-nav">
+        <button class="b2b-subtab-btn active" data-b2b-subtab="b2b-reporting">Reporting</button>
+      </nav>
+
+      <!-- B2B Reporting -->
+      <div class="b2b-subtab-content active" id="b2b-subtab-reporting">
+
+        <!-- Toolbar: date + quick ranges -->
+        <div class="b2b-toolbar">
+          <div class="b2b-date-group">
+            <label class="date-label">Période</label>
+            <div class="date-picker-wrap">
+              <input type="date" id="b2bDateStart" class="date-input">
+              <span class="date-separator">—</span>
+              <input type="date" id="b2bDateEnd" class="date-input">
+            </div>
+          </div>
+          <div class="b2b-quick-ranges">
+            <button class="btn btn-outline" data-b2b-range="7d">7J</button>
+            <button class="btn btn-outline active" data-b2b-range="mtd">MTD</button>
+            <button class="btn btn-outline" data-b2b-range="qtd">QTD</button>
+            <button class="btn btn-outline" data-b2b-range="ytd">YTD</button>
+          </div>
+        </div>
+
+        <!-- Loading -->
+        <div class="b2b-loading" id="b2bLoading" style="display:none;">
+          <div class="spinner"></div>
+          <p>Chargement des données B2B...</p>
+        </div>
+
+        <!-- KPI Cards -->
+        <div class="b2b-kpi-grid" id="b2bKpis">
+          <div class="b2b-kpi-card">
+            <div class="b2b-kpi-label">CA B2B</div>
+            <div class="b2b-kpi-value" id="b2b-ca">—</div>
+          </div>
+          <div class="b2b-kpi-card">
+            <div class="b2b-kpi-label">Nombre de clients</div>
+            <div class="b2b-kpi-value" id="b2b-clients">—</div>
+          </div>
+          <div class="b2b-kpi-card">
+            <div class="b2b-kpi-label">Nombre de deals</div>
+            <div class="b2b-kpi-value" id="b2b-deals">—</div>
+          </div>
+          <div class="b2b-kpi-card">
+            <div class="b2b-kpi-label">Panier moyen</div>
+            <div class="b2b-kpi-value" id="b2b-panier">—</div>
+          </div>
+        </div>
+
+        <!-- Charts + Table row -->
+        <div class="b2b-bottom-grid">
+          <!-- Pie chart: CA par source -->
+          <div class="b2b-chart-card">
+            <h3 class="b2b-section-title">Répartition du CA par source</h3>
+            <div class="b2b-chart-wrap">
+              <canvas id="b2bSourceChart"></canvas>
+            </div>
+            <div class="b2b-chart-legend" id="b2bSourceLegend"></div>
+          </div>
+
+          <!-- Top 5 clients -->
+          <div class="b2b-table-card">
+            <h3 class="b2b-section-title">Top 5 Clients</h3>
+            <table class="b2b-clients-table">
+              <thead>
+                <tr>
+                  <th>Client</th>
+                  <th>CA</th>
+                  <th>Commandes</th>
+                  <th>Panier moyen</th>
+                </tr>
+              </thead>
+              <tbody id="b2bTopClients"></tbody>
+            </table>
+          </div>
+        </div>
+
+      </div><!-- /b2b-subtab-reporting -->
+
+    </div>
+  </div><!-- /tab-b2b -->
 
   <script src="js/app.js"></script>
 </body>

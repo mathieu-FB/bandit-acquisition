@@ -2893,6 +2893,143 @@ cron.schedule('1 0 * * *', async () => {
 }, { timezone: 'Europe/Paris' });
 
 // ============================================================
+// PIPEDRIVE — B2B Reporting
+// ============================================================
+
+function isPipedriveConfigured() {
+  return !!process.env.PIPEDRIVE_API_TOKEN;
+}
+
+async function fetchPipedriveDeals(status, cursor) {
+  const token = process.env.PIPEDRIVE_API_TOKEN;
+  const domain = process.env.PIPEDRIVE_DOMAIN || 'api';
+  const base = domain.includes('.') ? `https://${domain}` : `https://${domain}.pipedrive.com`;
+  const params = new URLSearchParams({ status, limit: '500', include_fields: 'custom_fields' });
+  if (cursor) params.set('cursor', cursor);
+  const url = `${base}/api/v2/deals?${params}`;
+  const res = await fetch(url, { headers: { 'x-api-token': token } });
+  if (!res.ok) {
+    const txt = await res.text();
+    throw new Error(`Pipedrive deals ${res.status}: ${txt}`);
+  }
+  return res.json();
+}
+
+async function fetchAllWonDeals() {
+  const deals = [];
+  let cursor = null;
+  do {
+    const resp = await fetchPipedriveDeals('won', cursor);
+    if (resp.data) deals.push(...resp.data);
+    cursor = resp.additional_data?.next_cursor || null;
+  } while (cursor);
+  return deals;
+}
+
+async function fetchPipedriveOrgs(ids) {
+  if (!ids.length) return {};
+  const token = process.env.PIPEDRIVE_API_TOKEN;
+  const domain = process.env.PIPEDRIVE_DOMAIN || 'api';
+  const base = domain.includes('.') ? `https://${domain}` : `https://${domain}.pipedrive.com`;
+  const map = {};
+  // batch 100 at a time
+  for (let i = 0; i < ids.length; i += 100) {
+    const batch = ids.slice(i, i + 100);
+    const url = `${base}/api/v2/organizations?ids=${batch.join(',')}&limit=100`;
+    const res = await fetch(url, { headers: { 'x-api-token': token } });
+    if (res.ok) {
+      const data = await res.json();
+      for (const org of (data.data || [])) {
+        map[org.id] = org.name;
+      }
+    }
+  }
+  return map;
+}
+
+app.get('/api/pipedrive/b2b-report', async (req, res) => {
+  if (!isPipedriveConfigured()) {
+    return res.json({ error: 'Pipedrive not configured' });
+  }
+  try {
+    const { start, end } = req.query;
+    if (!start || !end) return res.json({ error: 'start and end required' });
+
+    console.log(`[Pipedrive] Fetching B2B report ${start} → ${end}`);
+
+    const allDeals = await fetchAllWonDeals();
+    console.log(`[Pipedrive] Total won deals: ${allDeals.length}`);
+
+    // Filter by won_time within date range
+    const startDate = new Date(start + 'T00:00:00Z');
+    const endDate = new Date(end + 'T23:59:59Z');
+    const filtered = allDeals.filter(d => {
+      const wt = d.won_time ? new Date(d.won_time) : null;
+      return wt && wt >= startDate && wt <= endDate;
+    });
+
+    console.log(`[Pipedrive] Filtered deals in range: ${filtered.length}`);
+
+    // CA total
+    const ca = filtered.reduce((s, d) => s + (d.value || 0), 0);
+
+    // Unique clients (by org_id)
+    const clientSet = new Set(filtered.map(d => d.org_id).filter(Boolean));
+    const nbClients = clientSet.size;
+
+    // Panier moyen
+    const panierMoyen = filtered.length > 0 ? ca / filtered.length : 0;
+
+    // Revenue by source (channel field, or fallback to origin)
+    const bySource = {};
+    for (const d of filtered) {
+      const src = d.channel || d.origin || 'Non défini';
+      bySource[src] = (bySource[src] || 0) + (d.value || 0);
+    }
+
+    // Top 5 clients
+    const clientDeals = {};
+    for (const d of filtered) {
+      const key = d.org_id || d.person_id || 'unknown';
+      if (!clientDeals[key]) clientDeals[key] = { orgId: d.org_id, personId: d.person_id, total: 0, count: 0 };
+      clientDeals[key].total += (d.value || 0);
+      clientDeals[key].count++;
+    }
+    const topClients = Object.values(clientDeals)
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 5);
+
+    // Fetch org names for top clients + all unique org_ids
+    const orgIds = [...new Set(topClients.map(c => c.orgId).filter(Boolean))];
+    const orgNames = await fetchPipedriveOrgs(orgIds);
+
+    const top5 = topClients.map(c => ({
+      name: orgNames[c.orgId] || `Client #${c.orgId || c.personId || '?'}`,
+      ca: c.total,
+      commandes: c.count,
+      panierMoyen: c.count > 0 ? c.total / c.count : 0,
+    }));
+
+    // Source breakdown for pie chart
+    const sources = Object.entries(bySource)
+      .map(([name, value]) => ({ name, value }))
+      .sort((a, b) => b.value - a.value);
+
+    res.json({
+      ca,
+      nbClients,
+      nbDeals: filtered.length,
+      panierMoyen,
+      sources,
+      top5,
+    });
+  } catch (err) {
+    console.error('[Pipedrive] B2B report error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
 // START
 // ============================================================
 
