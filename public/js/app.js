@@ -1474,9 +1474,12 @@ async function loadB2BReport(range) {
     if (data.error) {
       loading.style.display = 'none';
       kpis.style.opacity = '1';
+      document.getElementById('b2b-ca').textContent = 'Erreur';
       console.error('[B2B]', data.error);
       return;
     }
+
+    console.log(`[B2B] ${data.nbDeals} deals dans la période (${data.totalWonDeals} won deals au total)`);
 
     // KPI cards
     document.getElementById('b2b-ca').textContent = fmtB2BCurrency(data.ca);

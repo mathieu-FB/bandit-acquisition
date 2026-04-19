@@ -2900,88 +2900,37 @@ function isPipedriveConfigured() {
   return !!process.env.PIPEDRIVE_API_TOKEN;
 }
 
-async function fetchPipedriveDeals(status, cursor) {
-  const token = process.env.PIPEDRIVE_API_TOKEN;
+function pipedriveBase() {
   const domain = process.env.PIPEDRIVE_DOMAIN || 'api';
-  const base = domain.includes('.') ? `https://${domain}` : `https://${domain}.pipedrive.com`;
-  const params = new URLSearchParams({ status, limit: '500', include_fields: 'custom_fields' });
-  if (cursor) params.set('cursor', cursor);
-  const url = `${base}/api/v2/deals?${params}`;
-  const res = await fetch(url, { headers: { 'x-api-token': token } });
+  return domain.includes('.') ? `https://${domain}` : `https://${domain}.pipedrive.com`;
+}
+
+// Use v1 API — returns org_name, person_name directly (no extra calls needed)
+async function fetchPipedriveDealsV1(status, start) {
+  const token = process.env.PIPEDRIVE_API_TOKEN;
+  const base = pipedriveBase();
+  const params = new URLSearchParams({ status, limit: '500', start: String(start), api_token: token });
+  const url = `${base}/api/v1/deals?${params}`;
+  const res = await fetch(url);
   if (!res.ok) {
     const txt = await res.text();
-    throw new Error(`Pipedrive deals ${res.status}: ${txt}`);
+    throw new Error(`Pipedrive v1 deals ${res.status}: ${txt}`);
   }
   return res.json();
 }
 
 async function fetchAllWonDeals() {
   const deals = [];
-  let cursor = null;
-  do {
-    const resp = await fetchPipedriveDeals('won', cursor);
+  let start = 0;
+  let more = true;
+  while (more) {
+    const resp = await fetchPipedriveDealsV1('won', start);
     if (resp.data) deals.push(...resp.data);
-    cursor = resp.additional_data?.next_cursor || null;
-  } while (cursor);
+    more = resp.additional_data?.pagination?.more_items_in_collection || false;
+    start += 500;
+  }
   return deals;
 }
-
-async function fetchPipedriveOrgs(ids) {
-  if (!ids.length) return {};
-  const token = process.env.PIPEDRIVE_API_TOKEN;
-  const domain = process.env.PIPEDRIVE_DOMAIN || 'api';
-  const base = domain.includes('.') ? `https://${domain}` : `https://${domain}.pipedrive.com`;
-  const map = {};
-  // batch 100 at a time
-  for (let i = 0; i < ids.length; i += 100) {
-    const batch = ids.slice(i, i + 100);
-    const url = `${base}/api/v2/organizations?ids=${batch.join(',')}&limit=100`;
-    const res = await fetch(url, { headers: { 'x-api-token': token } });
-    if (res.ok) {
-      const data = await res.json();
-      for (const org of (data.data || [])) {
-        map[org.id] = org.name;
-      }
-    }
-  }
-  return map;
-}
-
-app.get('/api/pipedrive/debug', async (req, res) => {
-  if (!isPipedriveConfigured()) {
-    return res.json({ error: 'PIPEDRIVE_API_TOKEN not set' });
-  }
-  try {
-    const token = process.env.PIPEDRIVE_API_TOKEN;
-    const domain = process.env.PIPEDRIVE_DOMAIN || 'api';
-    const base = domain.includes('.') ? `https://${domain}` : `https://${domain}.pipedrive.com`;
-
-    // Test 1: try v2 deals
-    const url2 = `${base}/api/v2/deals?status=won&limit=5`;
-    console.log(`[Pipedrive debug] Testing v2: ${url2}`);
-    const res2 = await fetch(url2, { headers: { 'x-api-token': token } });
-    const body2 = await res2.text();
-
-    // Test 2: try v1 deals as fallback
-    const url1 = `${base}/api/v1/deals?status=won&limit=5&api_token=${token}`;
-    console.log(`[Pipedrive debug] Testing v1: ${url1.replace(token, 'TOKEN')}`);
-    const res1 = await fetch(url1);
-    const body1 = await res1.text();
-
-    let v2data, v1data;
-    try { v2data = JSON.parse(body2); } catch { v2data = body2.substring(0, 500); }
-    try { v1data = JSON.parse(body1); } catch { v1data = body1.substring(0, 500); }
-
-    res.json({
-      domain,
-      base,
-      v2: { status: res2.status, dataCount: v2data?.data?.length ?? 'n/a', sample: v2data?.data?.[0] || null, raw: v2data?.success === undefined ? v2data : undefined },
-      v1: { status: res1.status, dataCount: v1data?.data?.length ?? 'n/a', success: v1data?.success, sampleKeys: v1data?.data?.[0] ? Object.keys(v1data.data[0]) : null },
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message, stack: err.stack });
-  }
-});
 
 app.get('/api/pipedrive/b2b-report', async (req, res) => {
   if (!isPipedriveConfigured()) {
@@ -2994,7 +2943,13 @@ app.get('/api/pipedrive/b2b-report', async (req, res) => {
     console.log(`[Pipedrive] Fetching B2B report ${start} → ${end}`);
 
     const allDeals = await fetchAllWonDeals();
-    console.log(`[Pipedrive] Total won deals: ${allDeals.length}`);
+    console.log(`[Pipedrive] Total won deals fetched: ${allDeals.length}`);
+
+    // Log date range of all deals for debugging
+    if (allDeals.length > 0) {
+      const wonDates = allDeals.map(d => d.won_time).filter(Boolean).sort();
+      console.log(`[Pipedrive] Won dates range: ${wonDates[0]} → ${wonDates[wonDates.length - 1]}`);
+    }
 
     // Filter by won_time within date range
     const startDate = new Date(start + 'T00:00:00Z');
@@ -3004,47 +2959,48 @@ app.get('/api/pipedrive/b2b-report', async (req, res) => {
       return wt && wt >= startDate && wt <= endDate;
     });
 
-    console.log(`[Pipedrive] Filtered deals in range: ${filtered.length}`);
+    console.log(`[Pipedrive] Deals in range ${start} → ${end}: ${filtered.length}`);
 
     // CA total
     const ca = filtered.reduce((s, d) => s + (d.value || 0), 0);
 
-    // Unique clients (by org_id)
-    const clientSet = new Set(filtered.map(d => d.org_id).filter(Boolean));
+    // Unique clients (by org_id, fallback person_id)
+    const clientSet = new Set(filtered.map(d => d.org_id || d.person_id).filter(Boolean));
     const nbClients = clientSet.size;
 
     // Panier moyen
     const panierMoyen = filtered.length > 0 ? ca / filtered.length : 0;
 
-    // Revenue by source (channel field, or fallback to origin)
+    // Revenue by source — use channel, then origin, then label
     const bySource = {};
     for (const d of filtered) {
-      const src = d.channel || d.origin || 'Non défini';
+      const src = d.channel || d.origin || d.label || 'Non défini';
       bySource[src] = (bySource[src] || 0) + (d.value || 0);
     }
 
-    // Top 5 clients
+    // Top 5 clients — v1 gives us org_name & person_name directly
     const clientDeals = {};
     for (const d of filtered) {
       const key = d.org_id || d.person_id || 'unknown';
-      if (!clientDeals[key]) clientDeals[key] = { orgId: d.org_id, personId: d.person_id, total: 0, count: 0 };
+      if (!clientDeals[key]) {
+        clientDeals[key] = {
+          name: d.org_name || d.person_name || `Client #${key}`,
+          total: 0,
+          count: 0,
+        };
+      }
       clientDeals[key].total += (d.value || 0);
       clientDeals[key].count++;
     }
-    const topClients = Object.values(clientDeals)
+    const top5 = Object.values(clientDeals)
       .sort((a, b) => b.total - a.total)
-      .slice(0, 5);
-
-    // Fetch org names for top clients + all unique org_ids
-    const orgIds = [...new Set(topClients.map(c => c.orgId).filter(Boolean))];
-    const orgNames = await fetchPipedriveOrgs(orgIds);
-
-    const top5 = topClients.map(c => ({
-      name: orgNames[c.orgId] || `Client #${c.orgId || c.personId || '?'}`,
-      ca: c.total,
-      commandes: c.count,
-      panierMoyen: c.count > 0 ? c.total / c.count : 0,
-    }));
+      .slice(0, 5)
+      .map(c => ({
+        name: c.name,
+        ca: c.total,
+        commandes: c.count,
+        panierMoyen: c.count > 0 ? c.total / c.count : 0,
+      }));
 
     // Source breakdown for pie chart
     const sources = Object.entries(bySource)
@@ -3058,6 +3014,7 @@ app.get('/api/pipedrive/b2b-report', async (req, res) => {
       panierMoyen,
       sources,
       top5,
+      totalWonDeals: allDeals.length,
     });
   } catch (err) {
     console.error('[Pipedrive] B2B report error:', err);
