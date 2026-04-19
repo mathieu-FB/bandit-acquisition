@@ -2086,7 +2086,8 @@ app.get('/api/amazon/ads-status', (req, res) => {
 // Force refresh ad spend — waits for completion and returns result
 app.get('/api/amazon/force-refresh-ads', async (req, res) => {
   try {
-    if (amazonAdSpendCache.fetching) return res.json({ status: 'already_fetching' });
+    if (amazonAdSpendCache.fetching && !req.query.force) return res.json({ status: 'already_fetching', hint: 'Add ?force=1 to override' });
+    amazonAdSpendCache.fetching = false; // reset any stuck state
     amazonAdSpendCache.fetching = true;
 
     const token = await getAmazonAdsAccessToken();
