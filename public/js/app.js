@@ -1063,6 +1063,186 @@ async function loadTiktokAnalysis(forceDays) {
 }
 
 // ============================================================
+// TIKTOK SPARK ADS CREATOR
+// ============================================================
+
+let sparkSelectedPosts = [];
+
+async function searchSparkPosts() {
+  const keywords = document.getElementById('sparkKeywords').value.trim();
+  if (!keywords) return;
+
+  const status = document.getElementById('sparkSearchStatus');
+  const grid = document.getElementById('sparkPostsGrid');
+  const selBar = document.getElementById('sparkSelectionBar');
+
+  status.style.display = 'flex';
+  status.innerHTML = '<div class="spinner" style="width:20px;height:20px;"></div><span style="margin-left:8px;">Recherche en cours...</span>';
+  grid.style.display = 'none';
+  selBar.style.display = 'none';
+  sparkSelectedPosts = [];
+
+  try {
+    const res = await fetch(`/api/tiktok/spark-posts?keywords=${encodeURIComponent(keywords)}`);
+    const data = await res.json();
+
+    if (data.error) {
+      status.innerHTML = `<p style="color:var(--red)">Erreur: ${data.error}</p>`;
+      return;
+    }
+
+    if (data.posts.length === 0) {
+      status.innerHTML = `<p style="color:var(--text-muted)">Aucun post trouvé pour "${keywords}" (${data.total} posts autorisés au total)</p>`;
+      return;
+    }
+
+    status.innerHTML = `<span style="color:var(--text-secondary)">${data.filtered} post(s) trouvé(s) sur ${data.total} autorisés</span>`;
+
+    grid.innerHTML = data.posts.map(post => `
+      <label class="spark-post-card" data-item-id="${post.itemId}">
+        <input type="checkbox" class="spark-post-check" value="${post.itemId}"
+          data-caption="${(post.caption || '').replace(/"/g, '&quot;').substring(0, 60)}"
+          data-identity-id="${post.identityId || ''}"
+          data-cover="${post.coverUrl || ''}"
+          onchange="updateSparkSelection()" />
+        <div class="spark-post-visual">
+          ${post.coverUrl ? `<img src="${post.coverUrl}" alt="" />` : '<div class="meta-ad-no-img">Pas de cover</div>'}
+        </div>
+        <div class="spark-post-info">
+          <p class="spark-post-caption">${post.caption || 'Sans caption'}</p>
+          <div class="spark-post-stats">
+            ${post.views ? `<span>${formatNumber(post.views)} vues</span>` : ''}
+            ${post.likes ? `<span>${formatNumber(post.likes)} likes</span>` : ''}
+            ${post.shares ? `<span>${formatNumber(post.shares)} partages</span>` : ''}
+          </div>
+          ${post.identityName ? `<span class="spark-post-author">${post.identityName}</span>` : ''}
+        </div>
+        <div class="spark-post-check-icon"></div>
+      </label>
+    `).join('');
+
+    grid.style.display = 'grid';
+    selBar.style.display = 'flex';
+    updateSparkSelection();
+
+  } catch (err) {
+    status.innerHTML = `<p style="color:var(--red)">Erreur réseau</p>`;
+  }
+}
+
+function formatNumber(n) {
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+  if (n >= 1000) return (n / 1000).toFixed(1) + 'K';
+  return n;
+}
+
+function updateSparkSelection() {
+  const checks = document.querySelectorAll('.spark-post-check:checked');
+  sparkSelectedPosts = Array.from(checks).map(cb => ({
+    itemId: cb.value,
+    caption: cb.dataset.caption,
+    identityId: cb.dataset.identityId,
+    coverUrl: cb.dataset.cover,
+  }));
+  document.getElementById('sparkSelectedCount').textContent = `${sparkSelectedPosts.length} post(s) sélectionné(s)`;
+
+  // Toggle card styling
+  document.querySelectorAll('.spark-post-card').forEach(card => {
+    card.classList.toggle('selected', card.querySelector('.spark-post-check').checked);
+  });
+}
+
+function goToSparkStep2() {
+  if (sparkSelectedPosts.length === 0) return;
+  document.getElementById('sparkStep1').style.display = 'none';
+  document.getElementById('sparkStep2').style.display = 'block';
+
+  // Show selected posts summary
+  document.getElementById('sparkSelectedPosts').innerHTML = `
+    <h4>${sparkSelectedPosts.length} post(s) sélectionné(s)</h4>
+    <div class="spark-selected-grid">
+      ${sparkSelectedPosts.map(p => `
+        <div class="spark-selected-thumb">
+          ${p.coverUrl ? `<img src="${p.coverUrl}" alt="" />` : ''}
+          <span>${p.caption || 'Post'}</span>
+        </div>
+      `).join('')}
+    </div>`;
+}
+
+function backToSparkStep1() {
+  document.getElementById('sparkStep2').style.display = 'none';
+  document.getElementById('sparkStep1').style.display = 'block';
+}
+
+async function createSparkCampaign() {
+  const name = document.getElementById('sparkCampName').value.trim();
+  const budget = parseFloat(document.getElementById('sparkBudget').value);
+  if (!name) return alert('Nom de campagne requis');
+  if (!budget || budget < 5) return alert('Budget minimum : 5€/jour');
+  if (!confirm(`Créer la campagne "${name}" avec ${sparkSelectedPosts.length} post(s) et un budget de ${budget}€/jour ?`)) return;
+
+  const btn = document.getElementById('sparkCreateBtn');
+  btn.disabled = true;
+  btn.textContent = 'Création en cours...';
+
+  try {
+    const res = await fetch('/api/tiktok/create-spark-campaign', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        campaignName: name,
+        dailyBudget: budget,
+        posts: sparkSelectedPosts,
+      }),
+    });
+    const data = await res.json();
+
+    document.getElementById('sparkStep2').style.display = 'none';
+    document.getElementById('sparkStep3').style.display = 'block';
+
+    if (data.success) {
+      const adsOk = data.ads.filter(a => a.success).length;
+      const adsFail = data.ads.filter(a => !a.success).length;
+      document.getElementById('sparkResult').innerHTML = `
+        <div class="spark-result-success">
+          <h4>Campagne créée avec succès</h4>
+          <div class="spark-result-details">
+            <p><strong>Campagne :</strong> ${data.campaignName} (ID: ${data.campaignId})</p>
+            <p><strong>Budget :</strong> ${data.dailyBudget}€/jour</p>
+            <p><strong>Ads créées :</strong> ${adsOk}/${data.ads.length}</p>
+            ${adsFail > 0 ? `<p style="color:var(--red)"><strong>${adsFail} ad(s) en erreur :</strong></p>
+              <ul>${data.ads.filter(a => !a.success).map(a => `<li>${a.error}</li>`).join('')}</ul>` : ''}
+          </div>
+          <button class="btn btn-primary" onclick="resetSparkCreator()" style="margin-top:16px;">Créer une autre campagne</button>
+        </div>`;
+    } else {
+      document.getElementById('sparkResult').innerHTML = `
+        <div class="spark-result-error">
+          <h4>Erreur lors de la création</h4>
+          <p>${data.error}</p>
+          <p>Étape : ${data.step || 'inconnue'}</p>
+          <button class="btn btn-ghost" onclick="resetSparkCreator()" style="margin-top:16px;">Réessayer</button>
+        </div>`;
+    }
+  } catch (err) {
+    document.getElementById('sparkResult').innerHTML = `<div class="spark-result-error"><h4>Erreur réseau</h4><p>${err.message}</p></div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Lancer la campagne';
+  }
+}
+
+function resetSparkCreator() {
+  document.getElementById('sparkStep1').style.display = 'block';
+  document.getElementById('sparkStep2').style.display = 'none';
+  document.getElementById('sparkStep3').style.display = 'none';
+  sparkSelectedPosts = [];
+  document.querySelectorAll('.spark-post-check').forEach(cb => { cb.checked = false; });
+  updateSparkSelection();
+}
+
+// ============================================================
 // AMAZON DASHBOARD
 // ============================================================
 

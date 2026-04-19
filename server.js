@@ -2226,6 +2226,225 @@ IMPORTANT: Réponds UNIQUEMENT avec le JSON, pas de texte avant/après. Le conte
 });
 
 // ============================================================
+// TIKTOK SPARK ADS — CAMPAIGN CREATION
+// ============================================================
+
+// Check TikTok token permissions
+app.get('/api/tiktok/check-permissions', async (req, res) => {
+  const token = process.env.TIKTOK_ACCESS_TOKEN;
+  const advertiserId = process.env.TIKTOK_ADVERTISER_ID;
+  if (!token || !advertiserId) return res.json({ error: 'TikTok non configuré' });
+
+  const checks = {};
+
+  // 1. Check identity list (needed for Spark Ads)
+  try {
+    const idRes = await fetch(`https://business-api.tiktok.com/open_api/v1.3/identity/get/?advertiser_id=${advertiserId}&identity_type=CUSTOMIZED_USER`, {
+      headers: { 'Access-Token': token },
+    });
+    const idJson = await idRes.json();
+    checks.identity = { status: idRes.status, code: idJson.code, message: idJson.message, count: idJson.data?.list?.length || 0 };
+  } catch (e) { checks.identity = { error: e.message }; }
+
+  // 2. Check if we can list campaigns (campaign read permission)
+  try {
+    const campRes = await fetch(`https://business-api.tiktok.com/open_api/v1.3/campaign/get/?advertiser_id=${advertiserId}&page_size=1`, {
+      headers: { 'Access-Token': token },
+    });
+    const campJson = await campRes.json();
+    checks.campaignRead = { status: campRes.status, code: campJson.code, message: campJson.message, totalCampaigns: campJson.data?.page_info?.total_number || 0 };
+  } catch (e) { checks.campaignRead = { error: e.message }; }
+
+  // 3. Check if we can search videos (for Spark Ads posts)
+  try {
+    const vidRes = await fetch(`https://business-api.tiktok.com/open_api/v1.3/creative/video/list/?advertiser_id=${advertiserId}&page_size=1`, {
+      headers: { 'Access-Token': token },
+    });
+    const vidJson = await vidRes.json();
+    checks.videoList = { status: vidRes.status, code: vidJson.code, message: vidJson.message };
+  } catch (e) { checks.videoList = { error: e.message }; }
+
+  // 4. Check authorized Spark Ads posts
+  try {
+    const sparkRes = await fetch(`https://business-api.tiktok.com/open_api/v1.3/tt_video/list/?advertiser_id=${advertiserId}&page_size=5`, {
+      headers: { 'Access-Token': token },
+    });
+    const sparkJson = await sparkRes.json();
+    checks.sparkAdsPosts = { status: sparkRes.status, code: sparkJson.code, message: sparkJson.message, count: sparkJson.data?.videos?.length || sparkJson.data?.list?.length || 0 };
+  } catch (e) { checks.sparkAdsPosts = { error: e.message }; }
+
+  res.json({ advertiserId, checks });
+});
+
+// Search authorized Spark Ads posts by keywords
+app.get('/api/tiktok/spark-posts', async (req, res) => {
+  const token = process.env.TIKTOK_ACCESS_TOKEN;
+  const advertiserId = process.env.TIKTOK_ADVERTISER_ID;
+  if (!token || !advertiserId) return res.json({ error: 'TikTok non configuré' });
+
+  try {
+    // Fetch all authorized TikTok posts (Spark Ads eligible)
+    let allPosts = [];
+    let page = 1;
+    let hasMore = true;
+
+    while (hasMore && page <= 10) {
+      const sparkRes = await fetch(`https://business-api.tiktok.com/open_api/v1.3/tt_video/list/?advertiser_id=${advertiserId}&page=${page}&page_size=50`, {
+        headers: { 'Access-Token': token },
+      });
+      const sparkJson = await sparkRes.json();
+
+      if (sparkJson.code !== 0) {
+        // Fallback: try /tt_video/info/search/ endpoint
+        if (page === 1) {
+          return res.json({ error: sparkJson.message, code: sparkJson.code, hint: 'Le token n\'a peut-être pas les droits Spark Ads' });
+        }
+        break;
+      }
+
+      const posts = sparkJson.data?.videos || sparkJson.data?.list || [];
+      allPosts = allPosts.concat(posts);
+      hasMore = posts.length === 50;
+      page++;
+    }
+
+    // Filter by keywords if provided
+    const keywords = (req.query.keywords || '').toLowerCase().split(',').map(k => k.trim()).filter(Boolean);
+    let filtered = allPosts;
+    if (keywords.length > 0) {
+      filtered = allPosts.filter(post => {
+        const text = ((post.item_info?.caption || '') + ' ' + (post.video_info?.title || '') + ' ' + (post.display_name || '')).toLowerCase();
+        return keywords.some(kw => text.includes(kw));
+      });
+    }
+
+    // Return posts with useful info
+    const results = filtered.map(post => ({
+      itemId: post.item_id || post.tiktok_item_id,
+      caption: post.item_info?.caption || post.video_info?.title || '',
+      coverUrl: post.item_info?.cover_image_url || post.video_info?.cover_url || '',
+      duration: post.item_info?.duration || post.video_info?.duration || 0,
+      likes: post.item_info?.like_count || 0,
+      comments: post.item_info?.comment_count || 0,
+      shares: post.item_info?.share_count || 0,
+      views: post.item_info?.view_count || 0,
+      createTime: post.item_info?.create_time || post.create_time || '',
+      identityId: post.identity_id || '',
+      identityName: post.display_name || '',
+    }));
+
+    res.json({ total: allPosts.length, filtered: results.length, keywords, posts: results });
+  } catch (err) {
+    console.error('[TikTok] Spark posts error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Create a full Spark Ads campaign (campaign + adgroup + ads)
+app.post('/api/tiktok/create-spark-campaign', async (req, res) => {
+  const token = process.env.TIKTOK_ACCESS_TOKEN;
+  const advertiserId = process.env.TIKTOK_ADVERTISER_ID;
+  if (!token || !advertiserId) return res.status(400).json({ error: 'TikTok non configuré' });
+
+  const { campaignName, dailyBudget, posts, targeting } = req.body;
+  if (!campaignName || !dailyBudget || !posts?.length) {
+    return res.status(400).json({ error: 'Champs requis: campaignName, dailyBudget, posts[]' });
+  }
+
+  try {
+    // Step 1: Create campaign
+    const campRes = await fetch('https://business-api.tiktok.com/open_api/v1.3/campaign/create/', {
+      method: 'POST',
+      headers: { 'Access-Token': token, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        advertiser_id: advertiserId,
+        campaign_name: campaignName,
+        objective_type: 'PRODUCT_SALES',
+        budget_mode: 'BUDGET_MODE_DAY',
+        budget: dailyBudget.toFixed(2),
+      }),
+    });
+    const campJson = await campRes.json();
+    if (campJson.code !== 0) return res.status(400).json({ error: campJson.message, step: 'campaign' });
+    const campaignId = campJson.data.campaign_id;
+
+    // Step 2: Create adgroup
+    const agBody = {
+      advertiser_id: advertiserId,
+      campaign_id: campaignId,
+      adgroup_name: `${campaignName} — Adgroup`,
+      promotion_type: 'WEBSITE',
+      placement_type: 'PLACEMENT_TYPE_AUTOMATIC',
+      budget_mode: 'BUDGET_MODE_DAY',
+      budget: dailyBudget.toFixed(2),
+      bid_type: 'BID_TYPE_NO_BID',
+      optimization_goal: 'COMPLETE_PAYMENT',
+      billing_event: 'OCPM',
+      schedule_type: 'SCHEDULE_START_END',
+      schedule_start_time: new Date().toISOString().replace('T', ' ').substring(0, 19),
+      pacing: 'PACING_MODE_SMOOTH',
+    };
+
+    // Apply targeting if provided
+    if (targeting) {
+      if (targeting.age) agBody.age_groups = targeting.age;
+      if (targeting.gender) agBody.gender = targeting.gender;
+      if (targeting.locations) agBody.location_ids = targeting.locations;
+      if (targeting.languages) agBody.languages = targeting.languages;
+      if (targeting.pixelId) agBody.pixel_id = targeting.pixelId;
+    }
+
+    const agRes = await fetch('https://business-api.tiktok.com/open_api/v1.3/adgroup/create/', {
+      method: 'POST',
+      headers: { 'Access-Token': token, 'Content-Type': 'application/json' },
+      body: JSON.stringify(agBody),
+    });
+    const agJson = await agRes.json();
+    if (agJson.code !== 0) return res.status(400).json({ error: agJson.message, step: 'adgroup', campaignId });
+    const adgroupId = agJson.data.adgroup_id;
+
+    // Step 3: Create one ad per selected post (Spark Ad)
+    const adResults = [];
+    for (let i = 0; i < posts.length; i++) {
+      const post = posts[i];
+      const adRes = await fetch('https://business-api.tiktok.com/open_api/v1.3/ad/create/', {
+        method: 'POST',
+        headers: { 'Access-Token': token, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          advertiser_id: advertiserId,
+          adgroup_id: adgroupId,
+          ad_name: `Spark — ${post.caption?.substring(0, 40) || `Post ${i + 1}`}`,
+          creative_type: 'SPARK_ADS',
+          tiktok_item_id: post.itemId,
+          identity_id: post.identityId || undefined,
+          identity_type: 'CUSTOMIZED_USER',
+          ad_format: 'SINGLE_VIDEO',
+        }),
+      });
+      const adJson = await adRes.json();
+      adResults.push({
+        itemId: post.itemId,
+        success: adJson.code === 0,
+        adId: adJson.data?.ad_id,
+        error: adJson.code !== 0 ? adJson.message : null,
+      });
+    }
+
+    res.json({
+      success: true,
+      campaignId,
+      adgroupId,
+      campaignName,
+      dailyBudget,
+      ads: adResults,
+    });
+  } catch (err) {
+    console.error('[TikTok] Campaign creation error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
 // STATUS / HEALTH CHECK
 // ============================================================
 

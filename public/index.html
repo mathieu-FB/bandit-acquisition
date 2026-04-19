@@ -484,6 +484,62 @@
           </section>
 
         </div>
+
+        <!-- SPARK ADS CAMPAIGN CREATOR -->
+        <section class="meta-section spark-creator" id="sparkCreatorSection">
+          <h2 class="meta-section-title">Créer une campagne Spark Ads</h2>
+
+          <!-- Step 1: Search posts -->
+          <div class="spark-step" id="sparkStep1">
+            <div class="spark-step-header">
+              <span class="spark-step-number">1</span>
+              <h3>Rechercher des posts</h3>
+            </div>
+            <div class="spark-search-bar">
+              <input type="text" id="sparkKeywords" class="spark-input" placeholder="Mots-clés séparés par des virgules (ex: fontaine, chien, distributeur)" />
+              <button class="btn btn-primary" id="sparkSearchBtn" onclick="searchSparkPosts()">Rechercher</button>
+            </div>
+            <div id="sparkSearchStatus" style="display:none;"></div>
+            <div class="spark-posts-grid" id="sparkPostsGrid" style="display:none;"></div>
+            <div class="spark-selection-bar" id="sparkSelectionBar" style="display:none;">
+              <span id="sparkSelectedCount">0 post(s) sélectionné(s)</span>
+              <button class="btn btn-primary" onclick="goToSparkStep2()">Continuer</button>
+            </div>
+          </div>
+
+          <!-- Step 2: Configure campaign -->
+          <div class="spark-step" id="sparkStep2" style="display:none;">
+            <div class="spark-step-header">
+              <span class="spark-step-number">2</span>
+              <h3>Configurer la campagne</h3>
+            </div>
+            <div class="spark-config">
+              <div class="spark-field">
+                <label>Nom de la campagne</label>
+                <input type="text" id="sparkCampName" class="spark-input" placeholder="Ex: Spark — Fontaines Avril 2026" />
+              </div>
+              <div class="spark-field">
+                <label>Budget journalier (€)</label>
+                <input type="number" id="sparkBudget" class="spark-input" value="20" min="5" step="5" />
+              </div>
+              <div class="spark-selected-posts" id="sparkSelectedPosts"></div>
+              <div class="spark-actions">
+                <button class="btn btn-ghost" onclick="backToSparkStep1()">Retour</button>
+                <button class="btn btn-primary" id="sparkCreateBtn" onclick="createSparkCampaign()">Lancer la campagne</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- Step 3: Result -->
+          <div class="spark-step" id="sparkStep3" style="display:none;">
+            <div class="spark-step-header">
+              <span class="spark-step-number">3</span>
+              <h3>Résultat</h3>
+            </div>
+            <div id="sparkResult"></div>
+          </div>
+        </section>
+
       </div><!-- /acq-tiktok -->
 
     </div>

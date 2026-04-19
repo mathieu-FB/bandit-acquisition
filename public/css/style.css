@@ -1163,11 +1163,275 @@ body {
   font-weight: 500;
 }
 
+/* Spark Ads Creator */
+.spark-creator {
+  margin-top: 40px;
+  padding-top: 32px;
+  border-top: 2px solid var(--border);
+}
+
+.spark-step-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.spark-step-number {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: white;
+  font-weight: 700;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.spark-step-header h3 {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0;
+}
+
+.spark-search-bar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.spark-input {
+  font-family: var(--font);
+  font-size: 14px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card-bg);
+  color: var(--text);
+  flex: 1;
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.spark-input:focus {
+  border-color: var(--accent);
+}
+
+.spark-posts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.spark-post-card {
+  display: flex;
+  gap: 12px;
+  background: var(--card-bg);
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  position: relative;
+}
+
+.spark-post-card:hover {
+  border-color: var(--accent);
+  box-shadow: var(--shadow-hover);
+}
+
+.spark-post-card.selected {
+  border-color: var(--accent);
+  background: rgba(99, 102, 241, 0.05);
+}
+
+.spark-post-check {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.spark-post-visual {
+  width: 80px;
+  height: 100px;
+  border-radius: 6px;
+  overflow: hidden;
+  flex-shrink: 0;
+  background: var(--bg);
+}
+
+.spark-post-visual img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.spark-post-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.spark-post-caption {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text);
+  line-height: 1.4;
+  margin-bottom: 6px;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.spark-post-stats {
+  display: flex;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.spark-post-author {
+  font-size: 11px;
+  color: var(--accent);
+  font-weight: 500;
+  margin-top: 4px;
+  display: inline-block;
+}
+
+.spark-selection-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-top: 12px;
+}
+
+.spark-selection-bar span {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* Step 2: Config */
+.spark-config {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px 24px;
+}
+
+.spark-field {
+  margin-bottom: 16px;
+}
+
+.spark-field label {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.spark-field .spark-input {
+  max-width: 400px;
+}
+
+.spark-selected-posts {
+  margin: 16px 0;
+}
+
+.spark-selected-posts h4 {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 10px;
+}
+
+.spark-selected-grid {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.spark-selected-thumb {
+  width: 100px;
+  text-align: center;
+}
+
+.spark-selected-thumb img {
+  width: 80px;
+  height: 100px;
+  object-fit: cover;
+  border-radius: 6px;
+}
+
+.spark-selected-thumb span {
+  font-size: 10px;
+  color: var(--text-muted);
+  display: block;
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.spark-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+/* Step 3: Result */
+.spark-result-success {
+  background: var(--card-bg);
+  border: 2px solid #00b894;
+  border-radius: var(--radius);
+  padding: 24px;
+}
+
+.spark-result-success h4 {
+  color: #00b894;
+  font-size: 18px;
+  margin-bottom: 12px;
+}
+
+.spark-result-details p {
+  font-size: 14px;
+  margin-bottom: 6px;
+}
+
+.spark-result-error {
+  background: var(--card-bg);
+  border: 2px solid #e17055;
+  border-radius: var(--radius);
+  padding: 24px;
+}
+
+.spark-result-error h4 {
+  color: #e17055;
+  font-size: 18px;
+  margin-bottom: 8px;
+}
+
 @media (max-width: 900px) {
   .meta-page { padding: 16px; }
   .meta-ad-card { flex-direction: column; }
   .meta-ad-visual { width: 100%; height: 160px; }
   .meta-adsets-grid { grid-template-columns: 1fr; }
+  .spark-posts-grid { grid-template-columns: 1fr; }
+  .spark-search-bar { flex-direction: column; }
   .tab-nav { padding: 0 16px; }
   .subtab-nav { padding: 0 16px; }
   .product-page { padding: 16px; }
