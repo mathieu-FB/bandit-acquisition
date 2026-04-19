@@ -2497,6 +2497,7 @@ app.get('/api/amazon/check-report', async (req, res) => {
 });
 
 // Test a specific ad product type: ?type=sp|sb|sd (default: sp)
+// Returns immediately with report ID — use /api/amazon/check-report?id=... to poll
 app.get('/api/amazon/test-ads', async (req, res) => {
   try {
     const token = await getAmazonAdsAccessToken();
@@ -2514,7 +2515,7 @@ app.get('/api/amazon/test-ads', async (req, res) => {
     const start = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
     const yesterday = formatDate(new Date(Date.now() - 86400000));
 
-    // Step 1: Create report
+    // Create report and return immediately (no polling — use /check-report?id= after)
     const reportRes = await fetch('https://advertising-api-eu.amazon.com/reporting/reports', {
       method: 'POST',
       headers: {
@@ -2540,57 +2541,15 @@ app.get('/api/amazon/test-ads', async (req, res) => {
       if (match) reportId = match[1];
     }
 
-    if (!reportId) {
-      return res.json({ profileId, start, end: yesterday, step: 'CREATE', createStatus, createBody: createBody.substring(0, 1000) });
-    }
-
-    // Step 2: Poll (max 5 min)
-    let downloadUrl = null;
-    let pollData = null;
-    for (let attempt = 0; attempt < 60; attempt++) {
-      await new Promise(r => setTimeout(r, 5000));
-      const statusRes = await fetch(`https://advertising-api-eu.amazon.com/reporting/reports/${reportId}`, {
-        headers: {
-          'Amazon-Advertising-API-ClientId': process.env.AMAZON_ADS_CLIENT_ID,
-          'Amazon-Advertising-API-Scope': profileId,
-          Authorization: `Bearer ${token}`,
-        },
-      });
-      pollData = await statusRes.json();
-      if (pollData.status === 'COMPLETED') { downloadUrl = pollData.url; break; }
-      if (pollData.status === 'FAILURE') break;
-    }
-
-    if (!downloadUrl) {
-      return res.json({ profileId, start, end: yesterday, reportId, step: 'POLL', pollData });
-    }
-
-    // Step 3: Download + decompress
-    const dlRes = await fetch(downloadUrl);
-    if (!dlRes.ok) return res.json({ profileId, start, end: yesterday, reportId, step: 'DOWNLOAD', status: dlRes.status });
-
-    const buffer = await dlRes.buffer();
-    let reportJson;
-    try { reportJson = JSON.parse(zlib.gunzipSync(buffer).toString()); } catch {
-      try { reportJson = JSON.parse(buffer.toString()); } catch (e) {
-        return res.json({ profileId, start, end: yesterday, reportId, step: 'PARSE', error: e.message, rawPreview: buffer.toString().substring(0, 1000) });
-      }
-    }
-
-    const rows = Array.isArray(reportJson) ? reportJson : [];
-    let spend = 0;
-    rows.forEach(row => { spend += parseFloat(row.spend || row.cost || 0); });
-
     res.json({
-      profileId, start, end: yesterday, reportId,
-      step: 'COMPLETE',
-      totalRows: rows.length,
-      computedSpend: spend,
-      sampleRows: rows.slice(0, 5),
-      rawKeys: rows.length > 0 ? Object.keys(rows[0]) : [],
+      type: t.adProduct,
+      profileId, start, end: yesterday,
+      createStatus, reportId,
+      createBody: createStatus !== 200 && createStatus !== 425 ? createBody.substring(0, 1000) : undefined,
+      nextStep: reportId ? `/api/amazon/check-report?id=${reportId}` : null,
     });
   } catch (err) {
-    res.status(500).json({ error: err.message, stack: err.stack?.split('\n').slice(0, 3) });
+    res.status(500).json({ error: err.message });
   }
 });
 
