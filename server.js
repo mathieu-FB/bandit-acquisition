@@ -1340,7 +1340,87 @@ function saveAdSpendCache() {
   } catch (err) { console.error('[Amazon Ads] Cache save error:', err.message); }
 }
 
-// Background: request report, poll, download, update cache
+// Request one report, poll, download, return spend total
+async function fetchOneAdReport(token, profileId, adProduct, reportTypeId, start, end) {
+  // Step 1: Request report
+  const reportRes = await fetch('https://advertising-api-eu.amazon.com/reporting/reports', {
+    method: 'POST',
+    headers: {
+      'Amazon-Advertising-API-ClientId': process.env.AMAZON_ADS_CLIENT_ID,
+      'Amazon-Advertising-API-Scope': profileId,
+      Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/vnd.createasyncreportrequest.v3+json',
+    },
+    body: JSON.stringify({
+      startDate: start,
+      endDate: end,
+      configuration: {
+        adProduct,
+        groupBy: ['campaign'],
+        columns: ['spend'],
+        reportTypeId,
+        timeUnit: 'SUMMARY',
+        format: 'GZIP_JSON',
+      },
+    }),
+  });
+
+  let reportId;
+  if (!reportRes.ok) {
+    const errBody = await reportRes.text();
+    if (reportRes.status === 425) {
+      const match = errBody.match(/duplicate of\s*:\s*([a-f0-9-]+)/i);
+      if (match) { reportId = match[1]; }
+      else { console.error(`[Amazon Ads] ${adProduct} 425 no ID:`, errBody); return 0; }
+    } else {
+      console.error(`[Amazon Ads] ${adProduct} request error:`, reportRes.status, errBody);
+      return 0;
+    }
+  } else {
+    reportId = (await reportRes.json()).reportId;
+  }
+  console.log(`[Amazon Ads] ${adProduct} report:`, reportId);
+
+  // Step 2: Poll (max 5 min)
+  let downloadUrl = null;
+  for (let attempt = 0; attempt < 60; attempt++) {
+    await new Promise(r => setTimeout(r, 5000));
+    const statusRes = await fetch(`https://advertising-api-eu.amazon.com/reporting/reports/${reportId}`, {
+      headers: {
+        'Amazon-Advertising-API-ClientId': process.env.AMAZON_ADS_CLIENT_ID,
+        'Amazon-Advertising-API-Scope': profileId,
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    if (!statusRes.ok) continue;
+    const statusData = await statusRes.json();
+    if (statusData.status === 'COMPLETED') { downloadUrl = statusData.url; break; }
+    if (statusData.status === 'FAILURE') { console.error(`[Amazon Ads] ${adProduct} failed:`, statusData.failureReason); return 0; }
+  }
+
+  if (!downloadUrl) { console.error(`[Amazon Ads] ${adProduct} timed out`); return 0; }
+
+  // Step 3: Download + decompress
+  const dlRes = await fetch(downloadUrl);
+  if (!dlRes.ok) return 0;
+  const buffer = await dlRes.buffer();
+
+  let reportJson;
+  try {
+    reportJson = JSON.parse(zlib.gunzipSync(buffer).toString());
+  } catch {
+    try { reportJson = JSON.parse(buffer.toString()); } catch { return 0; }
+  }
+
+  let spend = 0;
+  (Array.isArray(reportJson) ? reportJson : []).forEach(row => {
+    spend += parseFloat(row.spend || row.cost || 0);
+  });
+  console.log(`[Amazon Ads] ${adProduct} spend: ${spend}€`);
+  return spend;
+}
+
+// Background: fetch all 3 ad types and sum spend
 async function refreshAmazonAdSpend() {
   if (amazonAdSpendCache.fetching) return;
   amazonAdSpendCache.fetching = true;
@@ -1351,101 +1431,23 @@ async function refreshAmazonAdSpend() {
     if (!token || !profileId) { amazonAdSpendCache.fetching = false; return; }
 
     const now = new Date();
-    const year = now.getFullYear();
-    const month = now.getMonth() + 1;
-    const start = `${year}-${String(month).padStart(2, '0')}-01`;
+    const start = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
     const yesterday = formatDate(new Date(Date.now() - 86400000));
 
-    // Step 1: Request report
-    const reportRes = await fetch('https://advertising-api-eu.amazon.com/reporting/reports', {
-      method: 'POST',
-      headers: {
-        'Amazon-Advertising-API-ClientId': process.env.AMAZON_ADS_CLIENT_ID,
-        'Amazon-Advertising-API-Scope': profileId,
-        Authorization: `Bearer ${token}`,
-        'Content-Type': 'application/vnd.createasyncreportrequest.v3+json',
-      },
-      body: JSON.stringify({
-        startDate: start,
-        endDate: yesterday,
-        configuration: {
-          adProduct: 'SPONSORED_PRODUCTS',
-          groupBy: ['campaign'],
-          columns: ['spend'],
-          reportTypeId: 'spCampaigns',
-          timeUnit: 'SUMMARY',
-          format: 'GZIP_JSON',
-        },
-      }),
-    });
+    console.log('[Amazon Ads] Fetching SP + SB + SD reports...');
 
-    let reportId;
-    if (!reportRes.ok) {
-      const errBody = await reportRes.text();
-      // Handle 425 "duplicate" — extract existing report ID
-      if (reportRes.status === 425) {
-        const match = errBody.match(/duplicate of\s*:\s*([a-f0-9-]+)/i);
-        if (match) {
-          reportId = match[1];
-          console.log('[Amazon Ads] Using existing report:', reportId);
-        } else {
-          console.error('[Amazon Ads] 425 duplicate but no ID found:', errBody);
-          amazonAdSpendCache.fetching = false;
-          return;
-        }
-      } else {
-        console.error('[Amazon Ads] Report request error:', reportRes.status, errBody);
-        amazonAdSpendCache.fetching = false;
-        return;
-      }
-    } else {
-      const reportData = await reportRes.json();
-      reportId = reportData.reportId;
-    }
-    console.log('[Amazon Ads] Report ID:', reportId);
+    // Fetch all 3 ad types in parallel
+    const [spSpend, sbSpend, sdSpend] = await Promise.all([
+      fetchOneAdReport(token, profileId, 'SPONSORED_PRODUCTS', 'spCampaigns', start, yesterday),
+      fetchOneAdReport(token, profileId, 'SPONSORED_BRANDS', 'sbCampaigns', start, yesterday),
+      fetchOneAdReport(token, profileId, 'SPONSORED_DISPLAY', 'sdCampaigns', start, yesterday),
+    ]);
 
-    // Step 2: Poll (max 5 min)
-    let downloadUrl = null;
-    for (let attempt = 0; attempt < 60; attempt++) {
-      await new Promise(r => setTimeout(r, 5000));
-      const statusRes = await fetch(`https://advertising-api-eu.amazon.com/reporting/reports/${reportId}`, {
-        headers: {
-          'Amazon-Advertising-API-ClientId': process.env.AMAZON_ADS_CLIENT_ID,
-          'Amazon-Advertising-API-Scope': profileId,
-          Authorization: `Bearer ${token}`,
-        },
-      });
-      if (!statusRes.ok) continue;
-      const statusData = await statusRes.json();
-      console.log('[Amazon Ads] Report status:', statusData.status);
-      if (statusData.status === 'COMPLETED') { downloadUrl = statusData.url; break; }
-      if (statusData.status === 'FAILURE') { console.error('[Amazon Ads] Report failed:', statusData.failureReason); break; }
-    }
-
-    if (!downloadUrl) { console.error('[Amazon Ads] Report timed out'); amazonAdSpendCache.fetching = false; return; }
-
-    // Step 3: Download + decompress
-    const dlRes = await fetch(downloadUrl);
-    if (!dlRes.ok) { amazonAdSpendCache.fetching = false; return; }
-    const buffer = await dlRes.buffer();
-
-    let reportJson;
-    try {
-      const decompressed = zlib.gunzipSync(buffer);
-      reportJson = JSON.parse(decompressed.toString());
-    } catch {
-      try { reportJson = JSON.parse(buffer.toString()); } catch { reportJson = []; }
-    }
-
-    let totalSpend = 0;
-    (Array.isArray(reportJson) ? reportJson : []).forEach(row => {
-      totalSpend += parseFloat(row.spend || row.cost || 0);
-    });
-
+    const totalSpend = spSpend + sbSpend + sdSpend;
     amazonAdSpendCache.spend = totalSpend;
     amazonAdSpendCache.lastUpdate = Date.now();
     saveAdSpendCache();
-    console.log(`[Amazon Ads] Spend updated: ${totalSpend}€`);
+    console.log(`[Amazon Ads] Total spend: ${totalSpend}€ (SP: ${spSpend}, SB: ${sbSpend}, SD: ${sdSpend})`);
   } catch (err) {
     console.error('[Amazon Ads] Refresh error:', err.message);
   } finally {
