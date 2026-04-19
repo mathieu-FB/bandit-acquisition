@@ -806,6 +806,7 @@ body {
   padding: 24px 32px;
   max-width: 1400px;
   margin: 0 auto;
+  position: relative;
 }
 
 .product-toolbar {
@@ -823,6 +824,26 @@ body {
 .product-period-label {
   font-size: 13px;
   color: var(--text-muted);
+}
+
+.product-loading-overlay {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 80px 0;
+  position: absolute;
+  inset: 0;
+  background: rgba(245, 246, 250, 0.85);
+  backdrop-filter: blur(4px);
+  z-index: 10;
+  border-radius: var(--radius);
+}
+
+.product-loading-overlay p {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-top: 12px;
 }
 
 /* ============================================================

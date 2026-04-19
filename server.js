@@ -772,14 +772,20 @@ const PRODUCT_CATEGORIES = [
     color: '#6c5ce7',
   },
   {
-    name: 'Box & Litières',
+    name: 'Box & Jouets',
     pct: 10,
-    types: ['Jouet pour chien', 'Box Jouet', 'Bac à litière pour chat'],
+    types: ['Jouet pour chien', 'Box Jouet'],
     color: '#00b894',
   },
   {
-    name: 'Médailles',
+    name: 'Litières',
     pct: 5,
+    types: ['Bac à litière pour chat'],
+    color: '#e17055',
+  },
+  {
+    name: 'Médailles',
+    pct: 0,
     types: ['Médaille pour chien', 'Médaille pour chat'],
     color: '#fdcb6e',
   },

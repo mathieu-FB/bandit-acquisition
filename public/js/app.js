@@ -593,6 +593,19 @@ let productPeriod = 'mtd';
 
 async function loadProductBreakdown(period) {
   if (period) productPeriod = period;
+
+  // Show loader overlay
+  const page = document.querySelector('.product-page');
+  let loader = document.getElementById('productLoader');
+  if (!loader) {
+    loader = document.createElement('div');
+    loader.id = 'productLoader';
+    loader.className = 'product-loading-overlay';
+    loader.innerHTML = '<div class="spinner"></div><p>Chargement des données produits...</p>';
+    page.appendChild(loader);
+  }
+  loader.style.display = 'flex';
+
   try {
     const res = await fetch(`/api/product-breakdown?period=${productPeriod}`);
     const data = await res.json();
@@ -600,10 +613,9 @@ async function loadProductBreakdown(period) {
 
     if (!data.configured || !data.categories || data.categories.length === 0) {
       section.style.display = 'none';
+      loader.style.display = 'none';
       return;
     }
-
-    section.style.display = 'block';
     document.getElementById('productPeriodLabel').textContent = `${data.period.label} — J${data.period.daysElapsed}/${data.period.daysTotal}`;
 
     // Doughnut chart
@@ -666,7 +678,7 @@ async function loadProductBreakdown(period) {
           <div class="product-cat-header">
             <div class="product-cat-dot" style="background:${c.color}"></div>
             <h4>${c.name}</h4>
-            ${hasObj ? `<span class="product-cat-obj-pct">${c.pct}% obj.</span>` : ''}
+            ${hasObj ? `<span class="product-cat-obj-pct">obj ${c.pct}% du total</span>` : ''}
           </div>
           <div class="product-cat-metrics">
             <div class="product-cat-metric">
@@ -728,6 +740,9 @@ async function loadProductBreakdown(period) {
 
   } catch (err) {
     console.error('Product breakdown error:', err);
+  } finally {
+    const loader = document.getElementById('productLoader');
+    if (loader) loader.style.display = 'none';
   }
 }
 
