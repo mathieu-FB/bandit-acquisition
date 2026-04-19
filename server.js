@@ -1920,6 +1920,19 @@ IMPORTANT: Réponds UNIQUEMENT avec le JSON, pas de texte avant/après. Le conte
 // ============================================================
 
 // Debug Ads endpoint
+app.get('/api/amazon/ads-status', (req, res) => {
+  res.json({
+    configured: isAmazonAdsConfigured(),
+    profileId: process.env.AMAZON_ADS_PROFILE_ID || 'NOT SET',
+    cache: {
+      spend: amazonAdSpendCache.spend,
+      lastUpdate: amazonAdSpendCache.lastUpdate ? new Date(amazonAdSpendCache.lastUpdate).toISOString() : null,
+      fetching: amazonAdSpendCache.fetching,
+      ageMinutes: amazonAdSpendCache.lastUpdate ? Math.round((Date.now() - amazonAdSpendCache.lastUpdate) / 60000) : null,
+    },
+  });
+});
+
 app.get('/api/amazon/debug-ads', async (req, res) => {
   try {
     const token = await getAmazonAdsAccessToken();

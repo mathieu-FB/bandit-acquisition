@@ -1349,10 +1349,6 @@ body {
 
 .amazon-products-table .product-name {
   font-weight: 600;
-  max-width: 400px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 @media (max-width: 900px) {
