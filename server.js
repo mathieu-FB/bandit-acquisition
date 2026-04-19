@@ -767,7 +767,7 @@ const PRODUCT_CATEGORIES = [
     name: 'Sellerie',
     pct: 20,
     types: ['Collier pour chien', 'Collier pour chat', 'Bandana pour chien', 'Bandana pour chat', 'Harnais pour chien', 'Harnais pour chat', 'Laisse pour chien', 'Pochettes et sachets ramasse-crottes', 'Kit'],
-    color: '#6c5ce7',
+    color: '#8b5cf6',
   },
   {
     name: 'Box & Jouets',

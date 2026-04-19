@@ -673,8 +673,8 @@ function buildEmailHTML(data, analysis) {
   };
 
   const bestAdSection = d.bestAd ? `
-    <div style="margin-top:24px;padding:16px 20px;background:#f0f0ff;border-radius:10px;border-left:4px solid #6c5ce7;">
-      <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#6c5ce7;font-weight:700;margin-bottom:6px;">Best performing ad — Meta</div>
+    <div style="margin-top:24px;padding:16px 20px;background:#f0f0ed;border-radius:10px;border-left:4px solid #1a1a1a;">
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#1a1a1a;font-weight:700;margin-bottom:6px;">Best performing ad — Meta</div>
       <div style="font-weight:700;color:#1a1d26;font-size:15px;margin-bottom:4px;">${d.bestAd.name}</div>
       <div style="font-size:13px;color:#6b7280;margin-bottom:8px;">${d.bestAd.campaign} › ${d.bestAd.adset}</div>
       <div style="display:flex;gap:16px;">
@@ -688,24 +688,24 @@ function buildEmailHTML(data, analysis) {
   return `<!DOCTYPE html>
 <html>
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="margin:0;padding:0;background:#f5f6fa;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
+<body style="margin:0;padding:0;background:#f7f7f5;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;">
   <div style="max-width:640px;margin:0 auto;padding:24px 16px;">
 
     <!-- HEADER -->
     <div style="text-align:center;padding:20px 0 16px;">
-      <div style="font-size:18px;font-weight:700;color:#1a1d26;">Bandit <span style="color:#6c5ce7;">Acquisition</span></div>
+      <div style="font-size:18px;font-weight:700;color:#1a1a1a;">Bandit <span style="font-weight:400;letter-spacing:1px;text-transform:uppercase;font-size:13px;color:#555;">Acquisition</span></div>
       <div style="font-size:13px;color:#9ca3af;margin-top:4px;">Rapport du ${d.dayName}</div>
     </div>
 
     <!-- ANALYSIS -->
-    <div style="background:#ffffff;border-radius:12px;padding:20px 24px;margin-bottom:20px;border:1px solid #e8eaef;box-shadow:0 1px 3px rgba(0,0,0,0.04);">
-      <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#6c5ce7;font-weight:700;margin-bottom:10px;">Analyse</div>
+    <div style="background:#ffffff;border-radius:12px;padding:20px 24px;margin-bottom:20px;border:1px solid #e5e5e0;box-shadow:0 1px 3px rgba(0,0,0,0.04);">
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#1a1a1a;font-weight:700;margin-bottom:10px;">Analyse</div>
       <div style="font-size:14px;line-height:1.6;color:#1a1d26;">${analysis.replace(/\n/g, '<br>')}</div>
     </div>
 
     <!-- KPIs -->
-    <div style="background:#ffffff;border-radius:12px;overflow:hidden;margin-bottom:20px;border:1px solid #e8eaef;box-shadow:0 1px 3px rgba(0,0,0,0.04);">
-      <div style="padding:16px 16px 8px;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#6c5ce7;font-weight:700;">Indicateurs clés</div>
+    <div style="background:#ffffff;border-radius:12px;overflow:hidden;margin-bottom:20px;border:1px solid #e5e5e0;box-shadow:0 1px 3px rgba(0,0,0,0.04);">
+      <div style="padding:16px 16px 8px;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#1a1a1a;font-weight:700;">Indicateurs clés</div>
       <table style="width:100%;border-collapse:collapse;font-size:13px;">
         ${kpiRow('CA Shopify HT', d.shopify.yesterday.netSales, d.shopify.dayBefore.netSales, d.shopify.lastWeek.netSales, fmtEur, false)}
         ${kpiRow('Commandes Shopify', d.shopify.yesterday.totalOrders, d.shopify.dayBefore.totalOrders, d.shopify.lastWeek.totalOrders, v => v.toString(), false)}
@@ -720,8 +720,8 @@ function buildEmailHTML(data, analysis) {
     </div>
 
     <!-- CHANNELS -->
-    <div style="background:#ffffff;border-radius:12px;overflow:hidden;margin-bottom:20px;border:1px solid #e8eaef;box-shadow:0 1px 3px rgba(0,0,0,0.04);">
-      <div style="padding:16px 16px 8px;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#6c5ce7;font-weight:700;">Par canal</div>
+    <div style="background:#ffffff;border-radius:12px;overflow:hidden;margin-bottom:20px;border:1px solid #e5e5e0;box-shadow:0 1px 3px rgba(0,0,0,0.04);">
+      <div style="padding:16px 16px 8px;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#1a1a1a;font-weight:700;">Par canal</div>
       <table style="width:100%;border-collapse:collapse;font-size:13px;">
         <tr style="color:#9ca3af;font-size:11px;">
           <td style="padding:4px 16px;">Canal</td>

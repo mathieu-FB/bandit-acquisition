@@ -185,16 +185,16 @@ function createSparkline(canvasId, dailyData, color, formatter) {
       labels,
       datasets: [{
         data: values,
-        borderColor: color || '#6c5ce7',
+        borderColor: color || '#1a1a1a',
         borderWidth: 2,
         fill: {
           target: 'origin',
-          above: (color || '#6c5ce7') + '15',
+          above: (color || '#1a1a1a') + '15',
         },
         tension: 0.4,
         pointRadius: 0,
         pointHoverRadius: 4,
-        pointHoverBackgroundColor: color || '#6c5ce7',
+        pointHoverBackgroundColor: color || '#1a1a1a',
         pointHitRadius: 20,
       }],
     },
@@ -344,7 +344,7 @@ function createBarChart(canvasId, dailyData, color) {
       labels,
       datasets: [{
         data: values,
-        backgroundColor: color || '#6c5ce7',
+        backgroundColor: color || '#1a1a1a',
         borderRadius: 4,
         borderSkipped: false,
       }],
@@ -551,7 +551,7 @@ async function loadDashboard() {
     const costData = charts.dailyMarketingCosts.map(d => ({ date: d.date, value: d.total }));
     const pctData = charts.dailyPercentMarketing.map(d => ({ date: d.date, value: d.percent }));
 
-    createSparkline('chart-netSales', salesData, '#6c5ce7', fmtCurrency);
+    createSparkline('chart-netSales', salesData, '#1a1a1a', fmtCurrency);
     createBarChart('chart-marketingCosts', charts.dailyMarketingCosts, '#3b82f6');
     createSparkline('chart-percentMarketing', pctData, '#ff5a5f', fmtPercent);
 
