@@ -2184,19 +2184,23 @@ app.get('/api/amazon/check-report', async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Full test: create SP report, poll to completion, download, show raw data
+// Test a specific ad product type: ?type=sp|sb|sd (default: sp)
 app.get('/api/amazon/test-ads', async (req, res) => {
   try {
     const token = await getAmazonAdsAccessToken();
     const profileId = process.env.AMAZON_ADS_PROFILE_ID;
     if (!token || !profileId) return res.json({ error: 'Not configured', hasToken: !!token, profileId });
 
+    const typeMap = {
+      sp: { adProduct: 'SPONSORED_PRODUCTS', reportTypeId: 'spCampaigns', col: 'spend' },
+      sb: { adProduct: 'SPONSORED_BRANDS', reportTypeId: 'sbCampaigns', col: 'cost' },
+      sd: { adProduct: 'SPONSORED_DISPLAY', reportTypeId: 'sdCampaigns', col: 'cost' },
+    };
+    const t = typeMap[req.query.type] || typeMap.sp;
+
     const now = new Date();
     const start = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
     const yesterday = formatDate(new Date(Date.now() - 86400000));
-
-    const adProduct = 'SPONSORED_PRODUCTS';
-    const reportTypeId = 'spCampaigns';
 
     // Step 1: Create report
     const reportRes = await fetch('https://advertising-api-eu.amazon.com/reporting/reports', {
@@ -2209,7 +2213,7 @@ app.get('/api/amazon/test-ads', async (req, res) => {
       },
       body: JSON.stringify({
         startDate: start, endDate: yesterday,
-        configuration: { adProduct, groupBy: ['campaign'], columns: ['spend'], reportTypeId, timeUnit: 'SUMMARY', format: 'GZIP_JSON' },
+        configuration: { adProduct: t.adProduct, groupBy: ['campaign'], columns: [t.col], reportTypeId: t.reportTypeId, timeUnit: 'SUMMARY', format: 'GZIP_JSON' },
       }),
     });
 
