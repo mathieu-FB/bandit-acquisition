@@ -616,6 +616,8 @@ async function loadProductBreakdown(period) {
       loader.style.display = 'none';
       return;
     }
+
+    section.style.display = 'block';
     document.getElementById('productPeriodLabel').textContent = `${data.period.label} — J${data.period.daysElapsed}/${data.period.daysTotal}`;
 
     // Doughnut chart
