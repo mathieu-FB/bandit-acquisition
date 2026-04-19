@@ -1444,14 +1444,23 @@ async function fetchOneAdReport(token, profileId, adProduct, reportTypeId, start
   const buffer = await dlRes.buffer();
 
   let reportJson;
+  let rawText;
   try {
-    reportJson = JSON.parse(zlib.gunzipSync(buffer).toString());
+    rawText = zlib.gunzipSync(buffer).toString();
+    reportJson = JSON.parse(rawText);
   } catch {
-    try { reportJson = JSON.parse(buffer.toString()); } catch { return 0; }
+    try { rawText = buffer.toString(); reportJson = JSON.parse(rawText); } catch (e) {
+      console.error(`[Amazon Ads] ${adProduct} parse error:`, e.message, 'raw preview:', buffer.toString().substring(0, 200));
+      return 0;
+    }
   }
 
+  const rows = Array.isArray(reportJson) ? reportJson : [];
+  console.log(`[Amazon Ads] ${adProduct} rows: ${rows.length}, keys: ${rows.length > 0 ? Object.keys(rows[0]).join(',') : 'none'}`);
+  if (rows.length > 0) console.log(`[Amazon Ads] ${adProduct} sample row:`, JSON.stringify(rows[0]));
+
   let spend = 0;
-  (Array.isArray(reportJson) ? reportJson : []).forEach(row => {
+  rows.forEach(row => {
     spend += parseFloat(row.spend || row.cost || 0);
   });
   console.log(`[Amazon Ads] ${adProduct} spend: ${spend}€`);
@@ -1931,35 +1940,97 @@ app.get('/api/amazon/test-ads', async (req, res) => {
     const start = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
     const yesterday = formatDate(new Date(Date.now() - 86400000));
 
-    const types = [
-      { adProduct: 'SPONSORED_PRODUCTS', reportTypeId: 'spCampaigns' },
-      { adProduct: 'SPONSORED_BRANDS', reportTypeId: 'sbCampaigns' },
-      { adProduct: 'SPONSORED_DISPLAY', reportTypeId: 'sdCampaigns' },
-    ];
+    // Only test SPONSORED_PRODUCTS (fastest, most common)
+    const adProduct = 'SPONSORED_PRODUCTS';
+    const reportTypeId = 'spCampaigns';
 
-    const results = [];
-    for (const t of types) {
-      const reportRes = await fetch('https://advertising-api-eu.amazon.com/reporting/reports', {
-        method: 'POST',
+    // Step 1: Create report
+    const reportRes = await fetch('https://advertising-api-eu.amazon.com/reporting/reports', {
+      method: 'POST',
+      headers: {
+        'Amazon-Advertising-API-ClientId': process.env.AMAZON_ADS_CLIENT_ID,
+        'Amazon-Advertising-API-Scope': profileId,
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/vnd.createasyncreportrequest.v3+json',
+      },
+      body: JSON.stringify({
+        startDate: start, endDate: yesterday,
+        configuration: { adProduct, groupBy: ['campaign'], columns: ['spend'], reportTypeId, timeUnit: 'SUMMARY', format: 'GZIP_JSON' },
+      }),
+    });
+
+    const createStatus = reportRes.status;
+    const createBody = await reportRes.text();
+    let reportId = null;
+
+    if (createStatus === 200) {
+      reportId = JSON.parse(createBody).reportId;
+    } else if (createStatus === 425) {
+      const match = createBody.match(/duplicate of\s*:\s*([a-f0-9-]+)/i);
+      if (match) reportId = match[1];
+    }
+
+    if (!reportId) {
+      return res.json({ profileId, start, end: yesterday, step: 'CREATE', createStatus, createBody: createBody.substring(0, 1000) });
+    }
+
+    // Step 2: Poll (max 2 min for test)
+    let downloadUrl = null;
+    let pollStatus = null;
+    let pollData = null;
+    for (let attempt = 0; attempt < 24; attempt++) {
+      await new Promise(r => setTimeout(r, 5000));
+      const statusRes = await fetch(`https://advertising-api-eu.amazon.com/reporting/reports/${reportId}`, {
         headers: {
           'Amazon-Advertising-API-ClientId': process.env.AMAZON_ADS_CLIENT_ID,
           'Amazon-Advertising-API-Scope': profileId,
           Authorization: `Bearer ${token}`,
-          'Content-Type': 'application/vnd.createasyncreportrequest.v3+json',
         },
-        body: JSON.stringify({
-          startDate: start, endDate: yesterday,
-          configuration: { adProduct: t.adProduct, groupBy: ['campaign'], columns: ['spend'], reportTypeId: t.reportTypeId, timeUnit: 'SUMMARY', format: 'GZIP_JSON' },
-        }),
       });
-      const status = reportRes.status;
-      const body = await reportRes.text();
-      results.push({ type: t.adProduct, status, body: body.substring(0, 500) });
+      pollStatus = statusRes.status;
+      pollData = await statusRes.json();
+      if (pollData.status === 'COMPLETED') { downloadUrl = pollData.url; break; }
+      if (pollData.status === 'FAILURE') break;
     }
 
-    res.json({ profileId, start, end: yesterday, results });
+    if (!downloadUrl) {
+      return res.json({ profileId, start, end: yesterday, reportId, step: 'POLL', pollStatus, pollData });
+    }
+
+    // Step 3: Download + decompress
+    const dlRes = await fetch(downloadUrl);
+    const dlStatus = dlRes.status;
+    if (!dlRes.ok) {
+      return res.json({ profileId, start, end: yesterday, reportId, step: 'DOWNLOAD', dlStatus });
+    }
+
+    const buffer = await dlRes.buffer();
+    let reportJson;
+    let rawText;
+    try {
+      rawText = zlib.gunzipSync(buffer).toString();
+      reportJson = JSON.parse(rawText);
+    } catch {
+      try { rawText = buffer.toString(); reportJson = JSON.parse(rawText); } catch (e) {
+        return res.json({ profileId, start, end: yesterday, reportId, step: 'PARSE', error: e.message, rawPreview: buffer.toString().substring(0, 1000) });
+      }
+    }
+
+    // Show raw report data (first 5 rows) + computed spend
+    const rows = Array.isArray(reportJson) ? reportJson : [];
+    let spend = 0;
+    rows.forEach(row => { spend += parseFloat(row.spend || row.cost || 0); });
+
+    res.json({
+      profileId, start, end: yesterday, reportId,
+      step: 'COMPLETE',
+      totalRows: rows.length,
+      computedSpend: spend,
+      sampleRows: rows.slice(0, 5),
+      rawKeys: rows.length > 0 ? Object.keys(rows[0]) : [],
+    });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err.message, stack: err.stack?.split('\n').slice(0, 3) });
   }
 });
 
