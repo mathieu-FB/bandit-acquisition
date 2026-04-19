@@ -1920,6 +1920,49 @@ IMPORTANT: Réponds UNIQUEMENT avec le JSON, pas de texte avant/après. Le conte
 // ============================================================
 
 // Debug Ads endpoint
+// Quick test: create all 3 reports and return status + first rows
+app.get('/api/amazon/test-ads', async (req, res) => {
+  try {
+    const token = await getAmazonAdsAccessToken();
+    const profileId = process.env.AMAZON_ADS_PROFILE_ID;
+    if (!token || !profileId) return res.json({ error: 'Not configured', hasToken: !!token, profileId });
+
+    const now = new Date();
+    const start = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+    const yesterday = formatDate(new Date(Date.now() - 86400000));
+
+    const types = [
+      { adProduct: 'SPONSORED_PRODUCTS', reportTypeId: 'spCampaigns' },
+      { adProduct: 'SPONSORED_BRANDS', reportTypeId: 'sbCampaigns' },
+      { adProduct: 'SPONSORED_DISPLAY', reportTypeId: 'sdCampaigns' },
+    ];
+
+    const results = [];
+    for (const t of types) {
+      const reportRes = await fetch('https://advertising-api-eu.amazon.com/reporting/reports', {
+        method: 'POST',
+        headers: {
+          'Amazon-Advertising-API-ClientId': process.env.AMAZON_ADS_CLIENT_ID,
+          'Amazon-Advertising-API-Scope': profileId,
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/vnd.createasyncreportrequest.v3+json',
+        },
+        body: JSON.stringify({
+          startDate: start, endDate: yesterday,
+          configuration: { adProduct: t.adProduct, groupBy: ['campaign'], columns: ['spend'], reportTypeId: t.reportTypeId, timeUnit: 'SUMMARY', format: 'GZIP_JSON' },
+        }),
+      });
+      const status = reportRes.status;
+      const body = await reportRes.text();
+      results.push({ type: t.adProduct, status, body: body.substring(0, 500) });
+    }
+
+    res.json({ profileId, start, end: yesterday, results });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/amazon/ads-status', (req, res) => {
   res.json({
     configured: isAmazonAdsConfigured(),
