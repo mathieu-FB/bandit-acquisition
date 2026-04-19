@@ -1395,7 +1395,7 @@ async function fetchOneAdReport(token, profileId, adProduct, reportTypeId, start
       configuration: {
         adProduct,
         groupBy: ['campaign'],
-        columns: ['spend'],
+        columns: [adProduct === 'SPONSORED_PRODUCTS' ? 'spend' : 'cost'],
         reportTypeId,
         timeUnit: 'SUMMARY',
         format: 'GZIP_JSON',
