@@ -1571,6 +1571,22 @@ app.get('/api/amazon/dashboard', async (req, res) => {
     let mtdCA = 0, mtdOrders = 0;
     let todayCA = 0, todayOrders = 0;
     const dailyCA = {};
+
+    if (salesQTD && Array.isArray(salesQTD)) {
+      salesQTD.forEach(day => {
+        const date = (day.interval || '').split('T')[0] || (day.date || '');
+        const amount = parseFloat(day.totalSales?.amount || day.orderItemCount || 0);
+        const orders = parseInt(day.orderCount || day.unitCount || 0);
+        dailyCA[date] = { ca: amount, orders };
+        totalCA += amount;
+        totalOrders += orders;
+
+        if (date >= monthStart) { mtdCA += amount; mtdOrders += orders; }
+        if (date === todayStr) { todayCA = amount; todayOrders = orders; }
+      });
+    }
+
+    // KPI period aggregation (after sales data is loaded)
     let kpiCA = mtdCA, kpiOrders = mtdOrders;
     let kpiLabel = '';
     if (kpiDays > 0) {
