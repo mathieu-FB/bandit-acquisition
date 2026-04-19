@@ -1910,36 +1910,80 @@ app.get('/api/amazon/debug-ads', async (req, res) => {
   }
 });
 
-// Debug: check and download existing report
+// Debug: try creating a report with a specific profile ID
 app.get('/api/amazon/debug-report', async (req, res) => {
   try {
-    const reportId = req.query.id || 'e0dba04b-f5ef-4c6e-88da-79156da8d91c';
     const token = await getAmazonAdsAccessToken();
-    const profileId = process.env.AMAZON_ADS_PROFILE_ID;
     if (!token) return res.json({ error: 'No token' });
 
-    const statusRes = await fetch(`https://advertising-api-eu.amazon.com/reporting/reports/${reportId}`, {
+    const profileId = req.query.profile || process.env.AMAZON_ADS_PROFILE_ID;
+    const now = new Date();
+    const start = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+    const yesterday = formatDate(new Date(Date.now() - 86400000));
+
+    // Try to create report
+    const reportRes = await fetch('https://advertising-api-eu.amazon.com/reporting/reports', {
+      method: 'POST',
       headers: {
         'Amazon-Advertising-API-ClientId': process.env.AMAZON_ADS_CLIENT_ID,
         'Amazon-Advertising-API-Scope': profileId,
         Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/vnd.createasyncreportrequest.v3+json',
       },
+      body: JSON.stringify({
+        startDate: start,
+        endDate: yesterday,
+        configuration: {
+          adProduct: 'SPONSORED_PRODUCTS',
+          groupBy: ['campaign'],
+          columns: ['spend'],
+          reportTypeId: 'spCampaigns',
+          timeUnit: 'SUMMARY',
+          format: 'GZIP_JSON',
+        },
+      }),
     });
-    const statusData = await statusRes.json();
 
-    let reportData = null;
-    if (statusData.status === 'COMPLETED' && statusData.url) {
-      const dlRes = await fetch(statusData.url);
-      const buffer = await dlRes.buffer();
-      try {
-        const decompressed = zlib.gunzipSync(buffer);
-        reportData = JSON.parse(decompressed.toString());
-      } catch {
-        try { reportData = JSON.parse(buffer.toString()); } catch { reportData = 'parse error'; }
+    const status = reportRes.status;
+    const body = await reportRes.text();
+
+    let reportId = null;
+    if (status === 200) {
+      reportId = JSON.parse(body).reportId;
+    } else if (status === 425) {
+      const match = body.match(/duplicate of\s*:\s*([a-f0-9-]+)/i);
+      if (match) reportId = match[1];
+    }
+
+    // If we got a reportId, poll it
+    let reportStatus = null, reportData = null;
+    if (reportId) {
+      for (let i = 0; i < 12; i++) {
+        await new Promise(r => setTimeout(r, 5000));
+        const sRes = await fetch(`https://advertising-api-eu.amazon.com/reporting/reports/${reportId}`, {
+          headers: {
+            'Amazon-Advertising-API-ClientId': process.env.AMAZON_ADS_CLIENT_ID,
+            'Amazon-Advertising-API-Scope': profileId,
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        const sData = await sRes.json();
+        reportStatus = sData.status;
+        if (sData.status === 'COMPLETED' && sData.url) {
+          const dlRes = await fetch(sData.url);
+          const buffer = await dlRes.buffer();
+          try {
+            reportData = JSON.parse(zlib.gunzipSync(buffer).toString());
+          } catch {
+            try { reportData = JSON.parse(buffer.toString()); } catch { reportData = 'parse error'; }
+          }
+          break;
+        }
+        if (sData.status === 'FAILURE') { reportStatus = 'FAILURE: ' + sData.failureReason; break; }
       }
     }
 
-    res.json({ reportId, status: statusData.status, url: statusData.url, failureReason: statusData.failureReason, reportData: reportData ? JSON.stringify(reportData).substring(0, 2000) : null });
+    res.json({ profileId, createStatus: status, createBody: body.substring(0, 500), reportId, reportStatus, reportData: reportData ? JSON.stringify(reportData).substring(0, 2000) : null });
   } catch (err) {
     res.json({ error: err.message });
   }
