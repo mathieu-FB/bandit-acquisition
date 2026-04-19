@@ -960,6 +960,7 @@ app.get('/api/product-breakdown', async (req, res) => {
       return res.json({ configured: false });
     }
 
+    const period = req.query.period || 'mtd'; // mtd | qtd | ytd
     const now = new Date();
     const year = now.getFullYear();
     const month = now.getMonth() + 1;
@@ -968,24 +969,49 @@ app.get('/api/product-breakdown', async (req, res) => {
     const daysElapsedMonth = now.getDate();
     const monthStart = `${year}-${String(month).padStart(2, '0')}-01`;
 
-    // Quarter dates
     const obj = getObjective(year, month);
-    let quarterStart = monthStart;
-    let totalDaysQuarter = daysInMonth;
-    let daysElapsedQuarter = daysElapsedMonth;
 
-    if (obj) {
-      const qMonths = Object.keys(obj.quarterObj.months).map(Number).sort((a, b) => a - b);
-      quarterStart = `${year}-${String(qMonths[0]).padStart(2, '0')}-01`;
-      const quarterStartDate = new Date(`${quarterStart}T00:00:00`);
-      const quarterEndDate = new Date(year, qMonths[qMonths.length - 1], 0);
-      totalDaysQuarter = Math.round((quarterEndDate - quarterStartDate) / (1000 * 60 * 60 * 24)) + 1;
-      daysElapsedQuarter = Math.round((now - quarterStartDate) / (1000 * 60 * 60 * 24)) + 1;
+    // Compute period start, label, days
+    let periodStart, periodLabel, daysElapsed, daysTotal;
+
+    if (period === 'ytd') {
+      periodStart = `${year}-01-01`;
+      periodLabel = `Année ${year}`;
+      const startDate = new Date(`${periodStart}T00:00:00`);
+      const endOfYear = new Date(year, 11, 31);
+      daysTotal = Math.round((endOfYear - startDate) / (1000 * 60 * 60 * 24)) + 1;
+      daysElapsed = Math.round((now - startDate) / (1000 * 60 * 60 * 24)) + 1;
+    } else if (period === 'qtd') {
+      if (obj) {
+        const qMonths = Object.keys(obj.quarterObj.months).map(Number).sort((a, b) => a - b);
+        periodStart = `${year}-${String(qMonths[0]).padStart(2, '0')}-01`;
+        const quarterStartDate = new Date(`${periodStart}T00:00:00`);
+        const quarterEndDate = new Date(year, qMonths[qMonths.length - 1], 0);
+        daysTotal = Math.round((quarterEndDate - quarterStartDate) / (1000 * 60 * 60 * 24)) + 1;
+        daysElapsed = Math.round((now - quarterStartDate) / (1000 * 60 * 60 * 24)) + 1;
+      } else {
+        const qMonth = Math.floor((month - 1) / 3) * 3 + 1;
+        periodStart = `${year}-${String(qMonth).padStart(2, '0')}-01`;
+        const quarterStartDate = new Date(`${periodStart}T00:00:00`);
+        const quarterEndDate = new Date(year, qMonth + 2, 0);
+        daysTotal = Math.round((quarterEndDate - quarterStartDate) / (1000 * 60 * 60 * 24)) + 1;
+        daysElapsed = Math.round((now - quarterStartDate) / (1000 * 60 * 60 * 24)) + 1;
+      }
+      const monthNames2 = ['', 'Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Jun', 'Jul', 'Aoû', 'Sep', 'Oct', 'Nov', 'Déc'];
+      const qNum = Math.ceil(month / 3);
+      periodLabel = `Q${qNum} ${year}`;
+    } else {
+      // mtd (default)
+      periodStart = monthStart;
+      daysElapsed = daysElapsedMonth;
+      daysTotal = daysInMonth;
+      const monthNames2 = ['', 'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
+      periodLabel = `${monthNames2[month]} ${year}`;
     }
 
     const [typeMap, orders] = await Promise.all([
       getProductTypeMap(),
-      fetchOrdersWithLineItems(monthStart, todayStr),
+      fetchOrdersWithLineItems(periodStart, todayStr),
     ]);
 
     // Build refund map: line_item_id → refunded quantity
@@ -1032,9 +1058,19 @@ app.get('/api/product-breakdown', async (req, res) => {
           ca += typeAgg[t].ca;
         }
       });
-      const objectiveCA = obj ? obj.monthObj.ca * (cat.pct / 100) : 0;
+      let objectiveCA = 0;
+      if (obj) {
+        if (period === 'ytd') {
+          // Sum all months' objectives for the year
+          objectiveCA = obj.monthObj.ca * 12 * (cat.pct / 100); // approximate
+        } else if (period === 'qtd') {
+          objectiveCA = obj.quarterObj.ca * (cat.pct / 100);
+        } else {
+          objectiveCA = obj.monthObj.ca * (cat.pct / 100);
+        }
+      }
       const progressCA = objectiveCA > 0 ? (ca / objectiveCA) * 100 : 0;
-      const projectedCA = daysElapsedMonth > 0 ? (ca / daysElapsedMonth) * daysInMonth : 0;
+      const projectedCA = daysElapsed > 0 ? (ca / daysElapsed) * daysTotal : 0;
       return {
         name: cat.name,
         color: cat.color,
@@ -1081,16 +1117,14 @@ app.get('/api/product-breakdown', async (req, res) => {
       }))
       .sort((a, b) => b.ca - a.ca);
 
-    const monthNames = ['', 'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
-
     res.json({
       configured: true,
       period: {
-        label: `${monthNames[month]} ${year}`,
-        start: monthStart,
+        label: periodLabel,
+        start: periodStart,
         end: todayStr,
-        daysElapsed: daysElapsedMonth,
-        daysTotal: daysInMonth,
+        daysElapsed,
+        daysTotal,
       },
       totalUnits,
       totalCA,

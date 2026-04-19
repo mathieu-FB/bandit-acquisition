@@ -54,10 +54,9 @@
     </div>
   </div>
 
-  <!-- TAB NAVIGATION -->
+  <!-- TAB NAVIGATION (Rank 1) -->
   <nav class="tab-nav">
-    <button class="tab-btn active" data-tab="dashboard">E-commerce</button>
-    <button class="tab-btn" data-tab="meta-analysis">Meta Analysis</button>
+    <button class="tab-btn active" data-tab="ecommerce">E-commerce</button>
     <button class="tab-btn" data-tab="amazon">Amazon</button>
   </nav>
 
@@ -67,8 +66,18 @@
     <p>Chargement des données...</p>
   </div>
 
-  <!-- TAB: DASHBOARD -->
-  <div class="tab-content active" id="tab-dashboard">
+  <!-- TAB: E-COMMERCE -->
+  <div class="tab-content active" id="tab-ecommerce">
+
+  <!-- SUB-TAB NAVIGATION -->
+  <nav class="subtab-nav">
+    <button class="subtab-btn active" data-subtab="reporting">Reporting</button>
+    <button class="subtab-btn" data-subtab="data-produits">Data Produits</button>
+    <button class="subtab-btn" data-subtab="acquisition">Acquisition</button>
+  </nav>
+
+  <!-- SUB-TAB: REPORTING -->
+  <div class="subtab-content active" id="subtab-reporting">
 
   <!-- OBJECTIVES -->
   <section class="objectives" id="objectivesSection" style="display:none;">
@@ -326,91 +335,114 @@
       </div>
     </section>
 
-    <!-- ROW 5: Product Breakdown -->
-    <section id="productBreakdownSection" style="display:none;">
-      <h2 class="section-title">Ventes par catégorie produit <span class="section-period" id="productPeriodLabel"></span></h2>
+  </main>
+  </div><!-- /subtab-reporting -->
 
-      <div class="product-breakdown-grid">
-        <!-- Doughnut Chart -->
-        <div class="card card-chart product-chart-card">
-          <div class="card-header">
-            <h3>Répartition CA par catégorie</h3>
+  <!-- SUB-TAB: DATA PRODUITS -->
+  <div class="subtab-content" id="subtab-data-produits">
+    <div class="product-page">
+
+      <!-- Period buttons -->
+      <div class="product-toolbar">
+        <div class="product-period-btns">
+          <button class="btn btn-ghost active" data-product-period="mtd">MTD</button>
+          <button class="btn btn-ghost" data-product-period="qtd">QTD</button>
+          <button class="btn btn-ghost" data-product-period="ytd">YTD</button>
+        </div>
+        <span class="product-period-label" id="productPeriodLabel"></span>
+      </div>
+
+      <section id="productBreakdownSection" style="display:none;">
+        <div class="product-breakdown-grid">
+          <!-- Doughnut Chart -->
+          <div class="card card-chart product-chart-card">
+            <div class="card-header">
+              <h3>Répartition CA par catégorie</h3>
+            </div>
+            <div class="product-chart-wrap">
+              <canvas id="chart-productBreakdown"></canvas>
+            </div>
+            <div class="card-legend" id="legend-productBreakdown"></div>
           </div>
-          <div class="product-chart-wrap">
-            <canvas id="chart-productBreakdown"></canvas>
-          </div>
-          <div class="card-legend" id="legend-productBreakdown"></div>
+
+          <!-- Category Cards with objectives -->
+          <div class="product-categories-list" id="productCategoriesList"></div>
         </div>
 
-        <!-- Category Cards with objectives -->
-        <div class="product-categories-list" id="productCategoriesList"></div>
-      </div>
+        <!-- Detailed type table -->
+        <div class="product-types-table-wrap">
+          <h3 class="product-table-title">Détail par type de produit</h3>
+          <div class="product-types-table" id="productTypesTable"></div>
+        </div>
+      </section>
 
-      <!-- Detailed type table -->
-      <div class="product-types-table-wrap">
-        <h3 class="product-table-title">Détail par type de produit</h3>
-        <div class="product-types-table" id="productTypesTable"></div>
-      </div>
-    </section>
+    </div>
+  </div><!-- /subtab-data-produits -->
 
-  </main>
-  </div><!-- /tab-dashboard -->
-
-  <!-- TAB: META ANALYSIS -->
-  <div class="tab-content" id="tab-meta-analysis">
+  <!-- SUB-TAB: ACQUISITION -->
+  <div class="subtab-content" id="subtab-acquisition">
     <div class="meta-page">
 
-      <!-- META TOOLBAR -->
-      <div class="meta-toolbar">
-        <div class="meta-period-btns">
-          <button class="btn btn-ghost active" data-meta-days="15">15 jours</button>
-          <button class="btn btn-ghost" data-meta-days="30">30 jours</button>
+      <!-- Acquisition sub-sub-tabs -->
+      <nav class="subsubtab-nav">
+        <button class="subsubtab-btn active" data-acq-tab="meta">Meta</button>
+        <button class="subsubtab-btn" data-acq-tab="tiktok">TikTok</button>
+      </nav>
+
+      <!-- META content -->
+      <div class="acq-content active" id="acq-meta">
+        <!-- META TOOLBAR -->
+        <div class="meta-toolbar">
+          <div class="meta-period-btns">
+            <button class="btn btn-ghost active" data-meta-days="15">15 jours</button>
+            <button class="btn btn-ghost" data-meta-days="30">30 jours</button>
+          </div>
+          <span class="meta-period-label" id="metaPeriodLabel"></span>
         </div>
-        <span class="meta-period-label" id="metaPeriodLabel"></span>
-      </div>
 
-      <!-- META LOADING -->
-      <div class="meta-loading" id="metaLoading">
-        <div class="spinner"></div>
-        <p>Analyse Meta en cours... (peut prendre 30s)</p>
-      </div>
+        <!-- META LOADING -->
+        <div class="meta-loading" id="metaLoading">
+          <div class="spinner"></div>
+          <p>Analyse Meta en cours... (peut prendre 30s)</p>
+        </div>
 
-      <div class="meta-results" id="metaResults" style="display:none;">
+        <div class="meta-results" id="metaResults" style="display:none;">
+          <section class="meta-section">
+            <h2 class="meta-section-title">Top 5 Ads — Performers</h2>
+            <div class="meta-ads-grid" id="metaTopAds"></div>
+          </section>
+          <section class="meta-section">
+            <h2 class="meta-section-title">Propositions de nouvelles publicités</h2>
+            <div class="meta-analysis-content" id="metaNewAdsProposals"></div>
+          </section>
+          <section class="meta-section">
+            <h2 class="meta-section-title">Top Adsets — Comment les scaler</h2>
+            <div class="meta-adsets-grid" id="metaTopAdsets"></div>
+            <div class="meta-analysis-content" id="metaScalingAnalysis"></div>
+          </section>
+          <section class="meta-section">
+            <h2 class="meta-section-title">Worst Performing Adsets</h2>
+            <div class="meta-adsets-grid" id="metaWorstAdsets"></div>
+          </section>
+          <section class="meta-section">
+            <h2 class="meta-section-title">Analyse globale du compte</h2>
+            <div class="meta-analysis-content" id="metaGlobalAnalysis"></div>
+          </section>
+        </div>
+      </div><!-- /acq-meta -->
 
-        <!-- 1. TOP 5 ADS -->
-        <section class="meta-section">
-          <h2 class="meta-section-title">Top 5 Ads — Performers</h2>
-          <div class="meta-ads-grid" id="metaTopAds"></div>
-        </section>
+      <!-- TIKTOK content -->
+      <div class="acq-content" id="acq-tiktok">
+        <div class="card" style="text-align:center;padding:40px;">
+          <h3 style="margin-bottom:8px;">TikTok Ads</h3>
+          <p style="color:var(--text-muted);font-size:14px;">Analyse TikTok Ads — bientôt disponible.</p>
+        </div>
+      </div><!-- /acq-tiktok -->
 
-        <!-- 2. NEW ADS PROPOSALS -->
-        <section class="meta-section">
-          <h2 class="meta-section-title">Propositions de nouvelles publicités</h2>
-          <div class="meta-analysis-content" id="metaNewAdsProposals"></div>
-        </section>
-
-        <!-- 3. TOP ADSETS + SCALING -->
-        <section class="meta-section">
-          <h2 class="meta-section-title">Top Adsets — Comment les scaler</h2>
-          <div class="meta-adsets-grid" id="metaTopAdsets"></div>
-          <div class="meta-analysis-content" id="metaScalingAnalysis"></div>
-        </section>
-
-        <!-- 4. WORST ADSETS -->
-        <section class="meta-section">
-          <h2 class="meta-section-title">Worst Performing Adsets</h2>
-          <div class="meta-adsets-grid" id="metaWorstAdsets"></div>
-        </section>
-
-        <!-- 5. GLOBAL ANALYSIS -->
-        <section class="meta-section">
-          <h2 class="meta-section-title">Analyse globale du compte</h2>
-          <div class="meta-analysis-content" id="metaGlobalAnalysis"></div>
-        </section>
-
-      </div>
     </div>
-  </div><!-- /tab-meta-analysis -->
+  </div><!-- /subtab-acquisition -->
+
+  </div><!-- /tab-ecommerce -->
 
   <!-- TAB: AMAZON -->
   <div class="tab-content" id="tab-amazon">

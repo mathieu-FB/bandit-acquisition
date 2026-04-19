@@ -589,9 +589,12 @@ async function loadDashboard() {
 // PRODUCT BREAKDOWN
 // ============================================================
 
-async function loadProductBreakdown() {
+let productPeriod = 'mtd';
+
+async function loadProductBreakdown(period) {
+  if (period) productPeriod = period;
   try {
-    const res = await fetch('/api/product-breakdown');
+    const res = await fetch(`/api/product-breakdown?period=${productPeriod}`);
     const data = await res.json();
     const section = document.getElementById('productBreakdownSection');
 
@@ -601,7 +604,7 @@ async function loadProductBreakdown() {
     }
 
     section.style.display = 'block';
-    document.getElementById('productPeriodLabel').textContent = `— ${data.period.label} (J${data.period.daysElapsed}/${data.period.daysTotal})`;
+    document.getElementById('productPeriodLabel').textContent = `${data.period.label} — J${data.period.daysElapsed}/${data.period.daysTotal}`;
 
     // Doughnut chart
     const ctx = document.getElementById('chart-productBreakdown');
@@ -1009,7 +1012,7 @@ function renderAmzObjectivePeriod(prefix, data) {
 }
 
 // ============================================================
-// TABS
+// TABS + SUB-TABS
 // ============================================================
 
 function switchTab(tabId) {
@@ -1019,8 +1022,45 @@ function switchTab(tabId) {
   document.querySelector(`.tab-btn[data-tab="${tabId}"]`).classList.add('active');
   document.getElementById(`tab-${tabId}`).classList.add('active');
 
-  if (tabId === 'meta-analysis') loadMetaAnalysis();
   if (tabId === 'amazon') loadAmazonDashboard();
+
+  // Show/hide toolbar based on context
+  updateToolbarVisibility();
+}
+
+function switchSubTab(subtabId) {
+  document.querySelectorAll('.subtab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.subtab-content').forEach(c => c.classList.remove('active'));
+
+  document.querySelector(`.subtab-btn[data-subtab="${subtabId}"]`).classList.add('active');
+  document.getElementById(`subtab-${subtabId}`).classList.add('active');
+
+  if (subtabId === 'data-produits') loadProductBreakdown();
+  if (subtabId === 'acquisition') loadMetaAnalysis();
+
+  updateToolbarVisibility();
+}
+
+function switchAcqTab(acqId) {
+  document.querySelectorAll('.subsubtab-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.acq-content').forEach(c => c.classList.remove('active'));
+
+  document.querySelector(`.subsubtab-btn[data-acq-tab="${acqId}"]`).classList.add('active');
+  document.getElementById(`acq-${acqId}`).classList.add('active');
+
+  if (acqId === 'meta') loadMetaAnalysis();
+}
+
+function updateToolbarVisibility() {
+  const toolbar = document.querySelector('.toolbar');
+  const activeTab = document.querySelector('.tab-btn.active');
+  const activeSubTab = document.querySelector('.subtab-btn.active');
+
+  if (activeTab && activeTab.dataset.tab === 'ecommerce' && activeSubTab && activeSubTab.dataset.subtab === 'reporting') {
+    toolbar.style.display = 'flex';
+  } else {
+    toolbar.style.display = 'none';
+  }
 }
 
 // ============================================================
@@ -1032,15 +1072,14 @@ document.addEventListener('DOMContentLoaded', () => {
   loadStatus();
   loadObjectives();
   loadDashboard();
-  loadProductBreakdown();
 
   // Auto-refresh dashboard every 5 minutes
   setInterval(() => {
-    const onDashboard = document.querySelector('.tab-btn[data-tab="dashboard"]').classList.contains('active');
-    if (onDashboard) {
+    const onEcommerce = document.querySelector('.tab-btn[data-tab="ecommerce"]').classList.contains('active');
+    const onReporting = document.querySelector('.subtab-btn[data-subtab="reporting"]')?.classList.contains('active');
+    if (onEcommerce && onReporting) {
       loadObjectives();
       loadDashboard();
-      loadProductBreakdown();
     }
   }, 5 * 60 * 1000);
 
@@ -1050,14 +1089,21 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   document.getElementById('btnRefresh').addEventListener('click', () => {
-    if (document.querySelector('.tab-btn[data-tab="meta-analysis"]').classList.contains('active')) {
-      metaAnalysisLoadedDays = null;
-      loadMetaAnalysis();
-    } else if (document.querySelector('.tab-btn[data-tab="amazon"]').classList.contains('active')) {
+    const activeTab = document.querySelector('.tab-btn.active')?.dataset.tab;
+    const activeSubTab = document.querySelector('.subtab-btn.active')?.dataset.subtab;
+
+    if (activeTab === 'amazon') {
       amazonLoaded = false;
       loadAmazonDashboard(true);
-    } else {
-      loadDashboard();
+    } else if (activeTab === 'ecommerce') {
+      if (activeSubTab === 'acquisition') {
+        metaAnalysisLoadedDays = null;
+        loadMetaAnalysis();
+      } else if (activeSubTab === 'data-produits') {
+        loadProductBreakdown();
+      } else {
+        loadDashboard();
+      }
     }
   });
 
@@ -1067,10 +1113,31 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   });
 
+  // Rank 1 tabs
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => switchTab(btn.dataset.tab));
   });
 
+  // E-commerce sub-tabs
+  document.querySelectorAll('.subtab-btn').forEach(btn => {
+    btn.addEventListener('click', () => switchSubTab(btn.dataset.subtab));
+  });
+
+  // Acquisition sub-sub-tabs (META / TIKTOK)
+  document.querySelectorAll('.subsubtab-btn').forEach(btn => {
+    btn.addEventListener('click', () => switchAcqTab(btn.dataset.acqTab));
+  });
+
+  // Product period buttons (MTD / QTD / YTD)
+  document.querySelectorAll('[data-product-period]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('[data-product-period]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      loadProductBreakdown(btn.dataset.productPeriod);
+    });
+  });
+
+  // Meta period buttons (15j / 30j)
   document.querySelectorAll('[data-meta-days]').forEach(btn => {
     btn.addEventListener('click', () => {
       const days = parseInt(btn.dataset.metaDays);
