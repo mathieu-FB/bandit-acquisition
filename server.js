@@ -12,6 +12,7 @@ const { sendReport } = require('./daily-report');
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+app.set('trust proxy', true);
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
 
