@@ -2932,6 +2932,44 @@ async function fetchAllWonDeals() {
   return deals;
 }
 
+// Cache for Pipedrive deal fields (custom field keys + option labels)
+let pipedriveFieldsCache = null;
+
+async function fetchPipedriveDealFields() {
+  if (pipedriveFieldsCache) return pipedriveFieldsCache;
+  const token = process.env.PIPEDRIVE_API_TOKEN;
+  const base = pipedriveBase();
+  const fields = [];
+  let start = 0;
+  let more = true;
+  while (more) {
+    const url = `${base}/api/v1/dealFields?start=${start}&limit=500&api_token=${token}`;
+    const res = await fetch(url);
+    if (!res.ok) break;
+    const data = await res.json();
+    if (data.data) fields.push(...data.data);
+    more = data.additional_data?.pagination?.more_items_in_collection || false;
+    start += 500;
+  }
+  pipedriveFieldsCache = fields;
+  console.log(`[Pipedrive] Cached ${fields.length} deal fields`);
+  return fields;
+}
+
+// Find a custom field by name, return { key, options: { id → label } }
+async function findPipedriveField(fieldName) {
+  const fields = await fetchPipedriveDealFields();
+  const field = fields.find(f => f.name && f.name.toLowerCase() === fieldName.toLowerCase());
+  if (!field) return null;
+  const optionMap = {};
+  if (field.options) {
+    for (const opt of field.options) {
+      optionMap[String(opt.id)] = opt.label;
+    }
+  }
+  return { key: field.key, options: optionMap };
+}
+
 // B2B Objectives
 const B2B_EXCLUDED_CLIENTS = ['VETO SANTE'];
 const B2B_OBJECTIVES = {
@@ -3013,11 +3051,21 @@ app.get('/api/pipedrive/b2b-report', async (req, res) => {
     // Panier moyen
     const panierMoyen = filtered.length > 0 ? ca / filtered.length : 0;
 
-    // Revenue by source — use origin with readable labels
+    // Revenue by source — use "Canal d'Origine" custom field
+    const canalField = await findPipedriveField("Canal d'Origine");
     const bySource = {};
     for (const d of filtered) {
-      const rawOrigin = d.origin || 'Non défini';
-      const src = ORIGIN_LABELS[rawOrigin] || rawOrigin;
+      let src = 'Non défini';
+      if (canalField) {
+        const raw = d[canalField.key];
+        if (raw != null && raw !== '') {
+          src = canalField.options[String(raw)] || String(raw);
+        }
+      } else {
+        // Fallback to origin if custom field not found
+        const rawOrigin = d.origin || 'Non défini';
+        src = ORIGIN_LABELS[rawOrigin] || rawOrigin;
+      }
       bySource[src] = (bySource[src] || 0) + (d.value || 0);
     }
 
