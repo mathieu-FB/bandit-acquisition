@@ -1657,10 +1657,12 @@ app.get('/api/amazon/dashboard', async (req, res) => {
     let todayCA = 0, todayOrders = 0;
     const dailyCA = {};
 
+    const AMAZON_TVA_RATE = 0.20; // 20% French VAT
     if (salesQTD && Array.isArray(salesQTD)) {
       salesQTD.forEach(day => {
         const date = (day.interval || '').split('T')[0] || (day.date || '');
-        const amount = parseFloat(day.totalSales?.amount || day.orderItemCount || 0);
+        const amountTTC = parseFloat(day.totalSales?.amount || day.orderItemCount || 0);
+        const amount = amountTTC / (1 + AMAZON_TVA_RATE); // Convert TTC → HT
         const orders = parseInt(day.orderCount || day.unitCount || 0);
         dailyCA[date] = { ca: amount, orders };
         totalCA += amount;
@@ -2479,7 +2481,8 @@ app.post('/api/tiktok/create-spark-campaign', async (req, res) => {
       pacing: 'PACING_MODE_SMOOTH',
     };
 
-    // Apply targeting if provided
+    // Apply targeting if provided, default to France
+    agBody.location_ids = ['6250000']; // France
     if (targeting) {
       if (targeting.age) agBody.age_groups = targeting.age;
       if (targeting.gender) agBody.gender = targeting.gender;
