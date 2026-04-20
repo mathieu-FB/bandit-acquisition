@@ -3244,7 +3244,7 @@ app.get('/api/linkedin/auth', (req, res) => {
 
   const redirectUri = `${req.protocol}://${req.get('host')}/api/linkedin/auth/callback`;
   const state = Math.random().toString(36).substring(2);
-  const scopes = 'openid profile w_member_social';
+  const scopes = process.env.LINKEDIN_SCOPES || 'openid profile w_member_social';
 
   const url = `https://www.linkedin.com/oauth/v2/authorization?` +
     `response_type=code&client_id=${process.env.LINKEDIN_CLIENT_ID}` +
