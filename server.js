@@ -3333,7 +3333,7 @@ app.post('/api/linkedin/import', async (req, res) => {
       const r = await fetch(url, {
         headers: {
           Authorization: `Bearer ${accessToken}`,
-          'LinkedIn-Version': '202401',
+          'LinkedIn-Version': '202504',
           'X-Restli-Protocol-Version': '2.0.0',
         },
       });
