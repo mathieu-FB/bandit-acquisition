@@ -3586,26 +3586,28 @@ app.post('/api/linkedin/import-file', linkedinUpload.single('file'), async (req,
     let imported = 0;
 
     // Try to parse as CSV (LinkedIn export format)
-    const lines = content.split('\n');
-    const header = lines[0]?.toLowerCase() || '';
+    const firstLine = content.split('\n')[0]?.toLowerCase() || '';
 
-    if (header.includes('shareco') || header.includes('date') || header.includes('commentary') || req.file.originalname.endsWith('.csv')) {
-      // CSV parsing — LinkedIn exports use various column names
-      // Find the text column and date column
-      const cols = parseCSVLine(lines[0]);
-      const textIdx = cols.findIndex(c => /share.*comment|commentary|content|texte|post/i.test(c));
+    if (firstLine.includes('shareco') || firstLine.includes('date') || firstLine.includes('commentary') || firstLine.includes('media') || req.file.originalname.endsWith('.csv')) {
+      // Full CSV parsing with multiline field support
+      const rows = parseCSV(content);
+      if (rows.length < 2) {
+        return res.status(400).json({ error: 'Fichier CSV vide ou invalide' });
+      }
+
+      const cols = rows[0];
+      // Support various LinkedIn export formats: Shares.csv, Rich_Media.csv, etc.
+      const textIdx = cols.findIndex(c => /share.*comment|commentary|content|texte|post|media\s*description|description/i.test(c));
       const dateIdx = cols.findIndex(c => /date|created|time/i.test(c));
 
       if (textIdx === -1) {
-        // Fallback: treat each non-empty line as a post
         return res.status(400).json({ error: `Colonnes trouvées: ${cols.join(', ')}. Impossible de trouver la colonne de contenu des posts.` });
       }
 
-      for (let i = 1; i < lines.length; i++) {
-        if (!lines[i].trim()) continue;
-        const row = parseCSVLine(lines[i]);
+      for (let i = 1; i < rows.length; i++) {
+        const row = rows[i];
         const text = row[textIdx]?.trim();
-        if (!text || text.length < 10) continue;
+        if (!text || text.length < 10 || text === '-') continue;
         if (existingContents.has(text.substring(0, 100))) continue;
 
         existingPosts.push({
@@ -3644,7 +3646,37 @@ app.post('/api/linkedin/import-file', linkedinUpload.single('file'), async (req,
   }
 });
 
-// Simple CSV line parser (handles quoted fields)
+// Full CSV parser that handles multiline quoted fields
+function parseCSV(content) {
+  const rows = [];
+  let current = '';
+  let inQuotes = false;
+  const row = [];
+
+  for (let i = 0; i < content.length; i++) {
+    const ch = content[i];
+    if (ch === '"') {
+      if (inQuotes && content[i + 1] === '"') { current += '"'; i++; }
+      else inQuotes = !inQuotes;
+    } else if (ch === ',' && !inQuotes) {
+      row.push(current);
+      current = '';
+    } else if ((ch === '\n' || ch === '\r') && !inQuotes) {
+      if (ch === '\r' && content[i + 1] === '\n') i++; // skip \r\n
+      row.push(current);
+      current = '';
+      if (row.some(c => c.trim())) rows.push([...row]);
+      row.length = 0;
+    } else {
+      current += ch;
+    }
+  }
+  row.push(current);
+  if (row.some(c => c.trim())) rows.push(row);
+  return rows;
+}
+
+// Simple CSV line parser (handles quoted fields, single line)
 function parseCSVLine(line) {
   const result = [];
   let current = '';
