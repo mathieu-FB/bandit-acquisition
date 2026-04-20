@@ -2932,6 +2932,23 @@ async function fetchAllWonDeals() {
   return deals;
 }
 
+// B2B Objectives
+const B2B_EXCLUDED_CLIENTS = ['VETO SANTE'];
+const B2B_OBJECTIVES = {
+  monthly: {
+    '2026-04': 296000,
+    '2026-05': 55000,
+    '2026-06': 30000,
+  },
+  quarterly: {
+    '2026-Q2': 381000,
+  },
+  annual: {
+    '2026': 626000,
+  },
+  avgOrdersPerClientYear: 3,
+};
+
 app.get('/api/pipedrive/b2b-report', async (req, res) => {
   if (!isPipedriveConfigured()) {
     return res.json({ error: 'Pipedrive not configured' });
@@ -2956,10 +2973,13 @@ app.get('/api/pipedrive/b2b-report', async (req, res) => {
     const endDate = new Date(end + 'T23:59:59Z');
     const filtered = allDeals.filter(d => {
       const wt = d.won_time ? new Date(d.won_time) : null;
-      return wt && wt >= startDate && wt <= endDate;
+      if (!wt || wt < startDate || wt > endDate) return false;
+      // Exclude specific clients
+      const name = d.org_id?.name || d.org_name || '';
+      return !B2B_EXCLUDED_CLIENTS.some(ex => name.toUpperCase().includes(ex.toUpperCase()));
     });
 
-    console.log(`[Pipedrive] Deals in range ${start} → ${end}: ${filtered.length}`);
+    console.log(`[Pipedrive] Deals in range ${start} → ${end}: ${filtered.length} (excl. ${B2B_EXCLUDED_CLIENTS.join(', ')})`);
 
     // v1 helper: org_id / person_id are objects in v1, extract .value for IDs
     const getOrgId = d => d.org_id?.value || d.org_id || null;
@@ -3030,6 +3050,62 @@ app.get('/api/pipedrive/b2b-report', async (req, res) => {
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value);
 
+    // Compute objectives based on the date range
+    const startY = startDate.getUTCFullYear();
+    const startM = startDate.getUTCMonth(); // 0-indexed
+    const endY = endDate.getUTCFullYear();
+    const endM = endDate.getUTCMonth();
+
+    // Determine which objectives apply
+    const objectives = {};
+
+    // Monthly objective — if start and end are in the same month
+    if (startY === endY && startM === endM) {
+      const monthKey = `${startY}-${String(startM + 1).padStart(2, '0')}`;
+      if (B2B_OBJECTIVES.monthly[monthKey]) {
+        objectives.monthly = { label: monthKey, target: B2B_OBJECTIVES.monthly[monthKey] };
+      }
+    }
+
+    // Quarterly objective
+    const startQ = Math.floor(startM / 3) + 1;
+    const endQ = Math.floor(endM / 3) + 1;
+    if (startY === endY && startQ === endQ) {
+      const qKey = `${startY}-Q${startQ}`;
+      if (B2B_OBJECTIVES.quarterly[qKey]) {
+        objectives.quarterly = { label: qKey, target: B2B_OBJECTIVES.quarterly[qKey] };
+      }
+    }
+
+    // Annual objective
+    if (startY === endY) {
+      const yKey = String(startY);
+      if (B2B_OBJECTIVES.annual[yKey]) {
+        objectives.annual = { label: yKey, target: B2B_OBJECTIVES.annual[yKey] };
+      }
+    }
+
+    // Avg orders per client (YTD scope) — filter all deals this year, excl. excluded clients
+    const ytdStart = new Date(`${endY}-01-01T00:00:00Z`);
+    const ytdDeals = allDeals.filter(d => {
+      const wt = d.won_time ? new Date(d.won_time) : null;
+      if (!wt || wt < ytdStart || wt > endDate) return false;
+      const name = d.org_id?.name || d.org_name || '';
+      return !B2B_EXCLUDED_CLIENTS.some(ex => name.toUpperCase().includes(ex.toUpperCase()));
+    });
+    const ytdClientDeals = {};
+    for (const d of ytdDeals) {
+      const key = (d.org_id?.value || d.org_id) || (d.person_id?.value || d.person_id) || 'unknown';
+      ytdClientDeals[key] = (ytdClientDeals[key] || 0) + 1;
+    }
+    const ytdClientCount = Object.keys(ytdClientDeals).filter(k => k !== 'unknown').length;
+    const avgOrdersPerClient = ytdClientCount > 0 ? ytdDeals.length / ytdClientCount : 0;
+
+    objectives.avgOrders = {
+      current: avgOrdersPerClient,
+      target: B2B_OBJECTIVES.avgOrdersPerClientYear,
+    };
+
     res.json({
       ca,
       nbClients,
@@ -3038,6 +3114,7 @@ app.get('/api/pipedrive/b2b-report', async (req, res) => {
       sources,
       top5,
       totalWonDeals: allDeals.length,
+      objectives,
     });
   } catch (err) {
     console.error('[Pipedrive] B2B report error:', err);

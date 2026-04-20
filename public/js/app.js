@@ -1487,6 +1487,9 @@ async function loadB2BReport(range) {
     document.getElementById('b2b-deals').textContent = data.nbDeals;
     document.getElementById('b2b-panier').textContent = fmtB2BCurrency(data.panierMoyen);
 
+    // Objectives
+    renderB2BObjectives(data.ca, data.objectives);
+
     // Pie chart — CA par source
     renderB2BSourceChart(data.sources);
 
@@ -1501,6 +1504,68 @@ async function loadB2BReport(range) {
     loading.style.display = 'none';
     kpis.style.opacity = '1';
   }
+}
+
+function renderB2BObjectives(ca, objectives) {
+  const container = document.getElementById('b2bObjectives');
+  if (!objectives) { container.innerHTML = ''; return; }
+
+  const cards = [];
+
+  const MONTH_NAMES = { '01': 'Janvier', '02': 'Février', '03': 'Mars', '04': 'Avril', '05': 'Mai', '06': 'Juin', '07': 'Juillet', '08': 'Août', '09': 'Septembre', '10': 'Octobre', '11': 'Novembre', '12': 'Décembre' };
+
+  const makeCard = (label, current, target) => {
+    const pct = target > 0 ? (current / target) * 100 : 0;
+    const barWidth = Math.min(pct, 100);
+    const status = pct >= 80 ? 'on-track' : 'behind';
+    return `<div class="b2b-obj-card">
+      <div class="b2b-obj-header">
+        <span class="b2b-obj-label">${label}</span>
+        <span class="b2b-obj-pct ${status}">${pct.toFixed(0)}%</span>
+      </div>
+      <div class="b2b-obj-values">
+        <span class="b2b-obj-current">${fmtB2BCurrency(current)}</span>
+        <span class="b2b-obj-target">/ ${fmtB2BCurrency(target)}</span>
+      </div>
+      <div class="b2b-obj-bar-bg">
+        <div class="b2b-obj-bar ${status}" style="width:${barWidth}%"></div>
+      </div>
+    </div>`;
+  };
+
+  if (objectives.monthly) {
+    const m = objectives.monthly.label.split('-')[1];
+    cards.push(makeCard(`Objectif ${MONTH_NAMES[m] || m}`, ca, objectives.monthly.target));
+  }
+  if (objectives.quarterly) {
+    cards.push(makeCard(`Objectif ${objectives.quarterly.label}`, ca, objectives.quarterly.target));
+  }
+  if (objectives.annual) {
+    cards.push(makeCard(`Objectif ${objectives.annual.label}`, ca, objectives.annual.target));
+  }
+
+  // Avg orders per client
+  if (objectives.avgOrders) {
+    const avg = objectives.avgOrders;
+    const pct = avg.target > 0 ? (avg.current / avg.target) * 100 : 0;
+    const barWidth = Math.min(pct, 100);
+    const status = pct >= 80 ? 'on-track' : 'behind';
+    cards.push(`<div class="b2b-obj-card">
+      <div class="b2b-obj-header">
+        <span class="b2b-obj-label">Commandes / client (YTD)</span>
+        <span class="b2b-obj-pct ${status}">${pct.toFixed(0)}%</span>
+      </div>
+      <div class="b2b-obj-values">
+        <span class="b2b-obj-current">${avg.current.toFixed(1)}</span>
+        <span class="b2b-obj-target">/ ${avg.target} objectif</span>
+      </div>
+      <div class="b2b-obj-bar-bg">
+        <div class="b2b-obj-bar ${status}" style="width:${barWidth}%"></div>
+      </div>
+    </div>`);
+  }
+
+  container.innerHTML = cards.join('');
 }
 
 const B2B_COLORS = ['#1a1a1a', '#2d9d5c', '#d94040', '#0984e3', '#f39c12', '#8b5cf6', '#00b894', '#e17055', '#636e72'];
