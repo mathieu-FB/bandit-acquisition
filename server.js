@@ -32,6 +32,15 @@ function toParisDate(utcStr) {
   return new Date(utcStr).toLocaleDateString('en-CA', { timeZone: 'Europe/Paris' });
 }
 
+// Get Paris UTC offset string for a given date (handles DST: +01:00 or +02:00)
+function getParisOffset(date) {
+  const formatter = new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Paris', timeZoneName: 'longOffset' });
+  const parts = formatter.formatToParts(date);
+  const tz = parts.find(p => p.type === 'timeZoneName');
+  // Returns something like "GMT+01:00" or "GMT+02:00"
+  return tz ? tz.value.replace('GMT', '') : '+01:00';
+}
+
 function buildDateRange(query) {
   const now = new Date();
   let start, end, compStart, compEnd;
@@ -103,10 +112,13 @@ const ALLOWED_SOURCES = new Set([
 
 async function fetchAllShopifyOrders(start, end) {
   const orders = [];
+  // Use Europe/Paris timezone offsets so date boundaries match Shopify Analytics
+  const startOffset = getParisOffset(new Date(`${start}T00:00:00`));
+  const endOffset = getParisOffset(new Date(`${end}T23:59:59`));
   let url = `https://${process.env.SHOPIFY_STORE_URL}/admin/api/2024-01/orders.json?` +
     new URLSearchParams({
-      created_at_min: `${start}T00:00:00+00:00`,
-      created_at_max: `${end}T23:59:59+00:00`,
+      created_at_min: `${start}T00:00:00${startOffset}`,
+      created_at_max: `${end}T23:59:59${endOffset}`,
       status: 'any',
       limit: '250',
       fields: 'id,created_at,total_price,subtotal_price,total_discounts,total_tax,source_name,customer,financial_status,refunds',
@@ -828,10 +840,12 @@ async function getProductTypeMap() {
 
 async function fetchOrdersWithLineItems(start, end) {
   const orders = [];
+  const startOffset = getParisOffset(new Date(`${start}T00:00:00`));
+  const endOffset = getParisOffset(new Date(`${end}T23:59:59`));
   let url = `https://${process.env.SHOPIFY_STORE_URL}/admin/api/2024-01/orders.json?` +
     new URLSearchParams({
-      created_at_min: `${start}T00:00:00+00:00`,
-      created_at_max: `${end}T23:59:59+00:00`,
+      created_at_min: `${start}T00:00:00${startOffset}`,
+      created_at_max: `${end}T23:59:59${endOffset}`,
       status: 'any',
       limit: '250',
       fields: 'id,created_at,financial_status,source_name,line_items,refunds',
@@ -868,6 +882,66 @@ function getObjective(year, month) {
   }
   return null;
 }
+
+// Debug: verify Shopify net sales calculation vs Shopify Analytics
+app.get('/api/shopify/verify', async (req, res) => {
+  try {
+    const start = req.query.start || formatDate(new Date());
+    const end = req.query.end || start;
+    const orders = await fetchAllShopifyOrders(start, end);
+    const metrics = computeShopifyMetrics(orders);
+
+    // Detailed breakdown
+    const validOrders = orders.filter(o => o.financial_status !== 'voided');
+    const details = validOrders.map(o => {
+      const gross = parseFloat(o.subtotal_price || 0);
+      const tax = parseFloat(o.total_tax || 0);
+      const total = parseFloat(o.total_price || 0);
+      const discount = parseFloat(o.total_discounts || 0);
+      let refunded = 0;
+      (o.refunds || []).forEach(r => {
+        (r.refund_line_items || []).forEach(rli => { refunded += parseFloat(rli.subtotal || 0); });
+      });
+      return {
+        id: o.id,
+        date: toParisDate(o.created_at),
+        source: o.source_name,
+        status: o.financial_status,
+        subtotal_HT: gross,
+        total_TTC: total,
+        tax: tax,
+        discount,
+        refunded_HT: refunded,
+        net_HT: gross - refunded,
+      };
+    });
+
+    // Totals
+    const sumSubtotal = details.reduce((s, d) => s + d.subtotal_HT, 0);
+    const sumTotal = details.reduce((s, d) => s + d.total_TTC, 0);
+    const sumTax = details.reduce((s, d) => s + d.tax, 0);
+    const sumRefunds = details.reduce((s, d) => s + d.refunded_HT, 0);
+    const sumNetHT = details.reduce((s, d) => s + d.net_HT, 0);
+
+    res.json({
+      period: { start, end },
+      timezone: 'Europe/Paris',
+      orderCount: details.length,
+      countableOrders: metrics.totalOrders,
+      totals: {
+        subtotal_HT: Math.round(sumSubtotal * 100) / 100,
+        total_TTC: Math.round(sumTotal * 100) / 100,
+        tax: Math.round(sumTax * 100) / 100,
+        refunds_HT: Math.round(sumRefunds * 100) / 100,
+        netSales_HT: Math.round(sumNetHT * 100) / 100,
+        netSales_TTC: Math.round((sumTotal - sumRefunds - sumTax) * 100) / 100,
+      },
+      dashboardNetSales: Math.round(metrics.netSales * 100) / 100,
+      hint: 'Comparez netSales_HT avec "Ventes nettes" Shopify. Si Shopify montre TTC, comparez avec total_TTC - refunds.',
+      orders: details,
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
 
 app.get('/api/objectives', async (req, res) => {
   try {
