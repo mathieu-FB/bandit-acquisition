@@ -1533,15 +1533,16 @@ function renderB2BObjectives(ca, objectives) {
     </div>`;
   };
 
+  // Each objective uses its own CA (MTD, QTD, YTD), not the selected period CA
   if (objectives.monthly) {
     const m = objectives.monthly.label.split('-')[1];
-    cards.push(makeCard(`Objectif ${MONTH_NAMES[m] || m}`, ca, objectives.monthly.target));
+    cards.push(makeCard(`Objectif ${MONTH_NAMES[m] || m}`, objectives.monthly.ca, objectives.monthly.target));
   }
   if (objectives.quarterly) {
-    cards.push(makeCard(`Objectif ${objectives.quarterly.label}`, ca, objectives.quarterly.target));
+    cards.push(makeCard(`Objectif ${objectives.quarterly.label}`, objectives.quarterly.ca, objectives.quarterly.target));
   }
   if (objectives.annual) {
-    cards.push(makeCard(`Objectif ${objectives.annual.label}`, ca, objectives.annual.target));
+    cards.push(makeCard(`Objectif ${objectives.annual.label}`, objectives.annual.ca, objectives.annual.target));
   }
 
   // Avg orders per client

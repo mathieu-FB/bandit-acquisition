@@ -3050,48 +3050,52 @@ app.get('/api/pipedrive/b2b-report', async (req, res) => {
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value);
 
-    // Compute objectives based on the date range
-    const startY = startDate.getUTCFullYear();
-    const startM = startDate.getUTCMonth(); // 0-indexed
-    const endY = endDate.getUTCFullYear();
-    const endM = endDate.getUTCMonth();
+    // Objectives — always computed from "now", independent of selected period
+    const isExcluded = d => {
+      const name = d.org_id?.name || d.org_name || '';
+      return B2B_EXCLUDED_CLIENTS.some(ex => name.toUpperCase().includes(ex.toUpperCase()));
+    };
+    const now = new Date();
+    const currentYear = now.getUTCFullYear();
+    const currentMonth = now.getUTCMonth(); // 0-indexed
+    const currentQ = Math.floor(currentMonth / 3) + 1;
 
-    // Determine which objectives apply
+    // Helper: sum CA from won deals (excl. excluded clients) in a date range
+    const sumCA = (from, to) => allDeals.filter(d => {
+      const wt = d.won_time ? new Date(d.won_time) : null;
+      return wt && wt >= from && wt <= to && !isExcluded(d);
+    }).reduce((s, d) => s + (d.value || 0), 0);
+
     const objectives = {};
 
-    // Monthly objective — if start and end are in the same month
-    if (startY === endY && startM === endM) {
-      const monthKey = `${startY}-${String(startM + 1).padStart(2, '0')}`;
-      if (B2B_OBJECTIVES.monthly[monthKey]) {
-        objectives.monthly = { label: monthKey, target: B2B_OBJECTIVES.monthly[monthKey] };
-      }
+    // Monthly objective (current month)
+    const monthKey = `${currentYear}-${String(currentMonth + 1).padStart(2, '0')}`;
+    if (B2B_OBJECTIVES.monthly[monthKey]) {
+      const mtdFrom = new Date(`${currentYear}-${String(currentMonth + 1).padStart(2, '0')}-01T00:00:00Z`);
+      const mtdTo = now;
+      objectives.monthly = { label: monthKey, target: B2B_OBJECTIVES.monthly[monthKey], ca: sumCA(mtdFrom, mtdTo) };
     }
 
-    // Quarterly objective
-    const startQ = Math.floor(startM / 3) + 1;
-    const endQ = Math.floor(endM / 3) + 1;
-    if (startY === endY && startQ === endQ) {
-      const qKey = `${startY}-Q${startQ}`;
-      if (B2B_OBJECTIVES.quarterly[qKey]) {
-        objectives.quarterly = { label: qKey, target: B2B_OBJECTIVES.quarterly[qKey] };
-      }
+    // Quarterly objective (current quarter)
+    const qKey = `${currentYear}-Q${currentQ}`;
+    if (B2B_OBJECTIVES.quarterly[qKey]) {
+      const qStartMonth = (currentQ - 1) * 3;
+      const qtdFrom = new Date(`${currentYear}-${String(qStartMonth + 1).padStart(2, '0')}-01T00:00:00Z`);
+      objectives.quarterly = { label: qKey, target: B2B_OBJECTIVES.quarterly[qKey], ca: sumCA(qtdFrom, now) };
     }
 
     // Annual objective
-    if (startY === endY) {
-      const yKey = String(startY);
-      if (B2B_OBJECTIVES.annual[yKey]) {
-        objectives.annual = { label: yKey, target: B2B_OBJECTIVES.annual[yKey] };
-      }
+    const yKey = String(currentYear);
+    if (B2B_OBJECTIVES.annual[yKey]) {
+      const ytdFrom = new Date(`${currentYear}-01-01T00:00:00Z`);
+      objectives.annual = { label: yKey, target: B2B_OBJECTIVES.annual[yKey], ca: sumCA(ytdFrom, now) };
     }
 
-    // Avg orders per client (YTD scope) — filter all deals this year, excl. excluded clients
-    const ytdStart = new Date(`${endY}-01-01T00:00:00Z`);
+    // Avg orders per client (YTD scope)
+    const ytdStart = new Date(`${currentYear}-01-01T00:00:00Z`);
     const ytdDeals = allDeals.filter(d => {
       const wt = d.won_time ? new Date(d.won_time) : null;
-      if (!wt || wt < ytdStart || wt > endDate) return false;
-      const name = d.org_id?.name || d.org_name || '';
-      return !B2B_EXCLUDED_CLIENTS.some(ex => name.toUpperCase().includes(ex.toUpperCase()));
+      return wt && wt >= ytdStart && wt <= now && !isExcluded(d);
     });
     const ytdClientDeals = {};
     for (const d of ytdDeals) {
