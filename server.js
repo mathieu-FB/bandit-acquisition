@@ -3244,7 +3244,7 @@ app.get('/api/linkedin/auth', (req, res) => {
 
   const redirectUri = `${req.protocol}://${req.get('host')}/api/linkedin/auth/callback`;
   const state = Math.random().toString(36).substring(2);
-  const scopes = process.env.LINKEDIN_SCOPES || 'openid profile w_member_social';
+  const scopes = process.env.LINKEDIN_SCOPES || 'w_member_social';
 
   const url = `https://www.linkedin.com/oauth/v2/authorization?` +
     `response_type=code&client_id=${process.env.LINKEDIN_CLIENT_ID}` +
@@ -3277,24 +3277,26 @@ app.get('/api/linkedin/auth/callback', async (req, res) => {
     const tokenData = await tokenRes.json();
     if (!tokenData.access_token) throw new Error(JSON.stringify(tokenData));
 
-    // Get member profile (sub = member URN)
-    const profileRes = await fetch('https://api.linkedin.com/v2/userinfo', {
+    // Get member profile via /v2/me (works with w_member_social scope)
+    const profileRes = await fetch('https://api.linkedin.com/v2/me', {
       headers: { Authorization: `Bearer ${tokenData.access_token}` },
     });
     const profile = await profileRes.json();
+    const memberName = [profile.localizedFirstName, profile.localizedLastName].filter(Boolean).join(' ') || 'Utilisateur';
+    const memberId = profile.id;
 
     saveLinkedinToken({
       accessToken: tokenData.access_token,
       expiresIn: tokenData.expires_in,
       savedAt: new Date().toISOString(),
-      memberId: profile.sub,
-      name: profile.name,
+      memberId,
+      name: memberName,
     });
 
-    console.log(`[LinkedIn] OAuth success for ${profile.name} (${profile.sub})`);
+    console.log(`[LinkedIn] OAuth success for ${memberName} (${memberId})`);
     res.send(`<html><body style="font-family:sans-serif;text-align:center;padding:60px;">
       <h2>LinkedIn connecté !</h2>
-      <p>Bienvenue ${profile.name}. Vous pouvez maintenant importer vos posts.</p>
+      <p>Bienvenue ${memberName}. Vous pouvez maintenant importer vos posts.</p>
       <a href="/" style="color:#1a1a1a;font-weight:bold;">Retour au dashboard</a>
     </body></html>`);
   } catch (err) {
