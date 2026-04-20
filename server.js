@@ -2278,6 +2278,41 @@ app.get('/api/tiktok/check-permissions', async (req, res) => {
   res.json({ advertiserId, checks });
 });
 
+// Debug: list TikTok identities and try business video list
+app.get('/api/tiktok/debug-identities', async (req, res) => {
+  const token = process.env.TIKTOK_ACCESS_TOKEN;
+  const advertiserId = process.env.TIKTOK_ADVERTISER_ID;
+  if (!token || !advertiserId) return res.json({ error: 'TikTok non configuré' });
+
+  try {
+    // 1. List all identities
+    const idRes = await fetch(`https://business-api.tiktok.com/open_api/v1.3/identity/get/?advertiser_id=${advertiserId}&page_size=100`, {
+      headers: { 'Access-Token': token },
+    });
+    const idJson = await idRes.json();
+
+    // 2. Try business video list endpoint
+    const bizRes = await fetch(`https://business-api.tiktok.com/open_api/v1.3/business/video/list/?business_id=${advertiserId}&page_size=20`, {
+      headers: { 'Access-Token': token },
+    });
+    const bizJson = await bizRes.json();
+
+    // 3. Try creative/video/list (ad account uploaded videos)
+    const creativeRes = await fetch(`https://business-api.tiktok.com/open_api/v1.3/creative/video/list/?advertiser_id=${advertiserId}&page_size=20`, {
+      headers: { 'Access-Token': token },
+    });
+    const creativeJson = await creativeRes.json();
+
+    res.json({
+      identities: idJson,
+      businessVideos: bizJson,
+      creativeVideos: creativeJson,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Search authorized Spark Ads posts by keywords
 app.get('/api/tiktok/spark-posts', async (req, res) => {
   const token = process.env.TIKTOK_ACCESS_TOKEN;
