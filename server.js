@@ -2278,47 +2278,6 @@ app.get('/api/tiktok/check-permissions', async (req, res) => {
   res.json({ advertiserId, checks });
 });
 
-// Debug: list TikTok identities and try business video list
-app.get('/api/tiktok/debug-identities', async (req, res) => {
-  const token = process.env.TIKTOK_ACCESS_TOKEN;
-  const advertiserId = process.env.TIKTOK_ADVERTISER_ID;
-  if (!token || !advertiserId) return res.json({ error: 'TikTok non configuré' });
-
-  const results = {};
-  const tryFetch = async (name, url) => {
-    try {
-      const r = await fetch(url, { headers: { 'Access-Token': token } });
-      const text = await r.text();
-      try { results[name] = JSON.parse(text); } catch { results[name] = { raw: text.substring(0, 500) }; }
-    } catch (e) { results[name] = { error: e.message }; }
-  };
-
-  // Get identities first
-  await tryFetch('identities', `https://business-api.tiktok.com/open_api/v1.3/identity/get/?advertiser_id=${advertiserId}&page_size=100`);
-
-  const ttUser = results.identities?.data?.identity_list?.find(id => id.identity_type === 'TT_USER');
-  const ttUserId = ttUser?.identity_id || '';
-
-  // Try multiple endpoints to find organic posts
-  if (ttUserId) {
-    // 1. tt_video/list filtered by TT_USER identity
-    await tryFetch('ttVideo_TT_USER', `https://business-api.tiktok.com/open_api/v1.3/tt_video/list/?advertiser_id=${advertiserId}&identity_type=TT_USER&identity_id=${encodeURIComponent(ttUserId)}&page_size=20`);
-
-    // 2. identity/video/info for a known French Bandit post (if we can find one)
-    // We can't list, but we can try the organic video endpoints
-
-    // 3. Try the creative/smart_video approach
-    await tryFetch('organicVideos', `https://business-api.tiktok.com/open_api/v1.3/creative/tiktok_video/list/?advertiser_id=${advertiserId}&identity_type=TT_USER&identity_id=${encodeURIComponent(ttUserId)}&page_size=20`);
-
-    // 4. Try creative/organic
-    await tryFetch('creativeOrganic', `https://business-api.tiktok.com/open_api/v1.3/tt_video/list/?advertiser_id=${advertiserId}&filtering={"identity_type":"TT_USER"}&page_size=20`);
-
-    // 5. Try ad/get with spark type
-    await tryFetch('sparkRecommend', `https://business-api.tiktok.com/open_api/v1.3/creative/spark_ads/recommend/?advertiser_id=${advertiserId}&identity_id=${encodeURIComponent(ttUserId)}&identity_type=TT_USER&page_size=20`);
-  }
-
-  res.json(results);
-});
 
 // Search authorized Spark Ads posts by keywords
 app.get('/api/tiktok/spark-posts', async (req, res) => {
