@@ -149,15 +149,19 @@ async function fetchAllShopifyOrders(start, end) {
 
 // Compute HT (excl. tax) net sales for an order, minus refunds
 function orderNetSalesHT(order) {
-  // subtotal_price = line items after discounts, before tax & shipping = HT
-  const grossHT = parseFloat(order.subtotal_price || 0);
+  // In tax-inclusive stores (France), subtotal_price INCLUDES tax
+  // True HT = subtotal_price - total_tax
+  const subtotalTTC = parseFloat(order.subtotal_price || 0);
+  const tax = parseFloat(order.total_tax || 0);
+  const grossHT = subtotalTTC - tax;
 
-  // Subtract refund amounts (HT: refund subtotal, not including tax refunds)
+  // Subtract refund amounts
   let refundedHT = 0;
   if (order.refunds && order.refunds.length > 0) {
     order.refunds.forEach(refund => {
       if (refund.refund_line_items) {
         refund.refund_line_items.forEach(rli => {
+          // In tax-inclusive stores, refund subtotal is pre-tax
           refundedHT += parseFloat(rli.subtotal || 0);
         });
       }
@@ -894,8 +898,9 @@ app.get('/api/shopify/verify', async (req, res) => {
     // Detailed breakdown
     const validOrders = orders.filter(o => o.financial_status !== 'voided');
     const details = validOrders.map(o => {
-      const gross = parseFloat(o.subtotal_price || 0);
+      const subtotalTTC = parseFloat(o.subtotal_price || 0);
       const tax = parseFloat(o.total_tax || 0);
+      const subtotalHT = subtotalTTC - tax;
       const total = parseFloat(o.total_price || 0);
       const discount = parseFloat(o.total_discounts || 0);
       let refunded = 0;
@@ -907,20 +912,22 @@ app.get('/api/shopify/verify', async (req, res) => {
         date: toParisDate(o.created_at),
         source: o.source_name,
         status: o.financial_status,
-        subtotal_HT: gross,
+        subtotal_TTC: subtotalTTC,
+        subtotal_HT: subtotalHT,
         total_TTC: total,
-        tax: tax,
+        tax,
         discount,
-        refunded_HT: refunded,
-        net_HT: gross - refunded,
+        refunded,
+        net_HT: subtotalHT - refunded,
       };
     });
 
     // Totals
-    const sumSubtotal = details.reduce((s, d) => s + d.subtotal_HT, 0);
+    const sumSubtotalTTC = details.reduce((s, d) => s + d.subtotal_TTC, 0);
+    const sumSubtotalHT = details.reduce((s, d) => s + d.subtotal_HT, 0);
     const sumTotal = details.reduce((s, d) => s + d.total_TTC, 0);
     const sumTax = details.reduce((s, d) => s + d.tax, 0);
-    const sumRefunds = details.reduce((s, d) => s + d.refunded_HT, 0);
+    const sumRefunds = details.reduce((s, d) => s + d.refunded, 0);
     const sumNetHT = details.reduce((s, d) => s + d.net_HT, 0);
 
     res.json({
@@ -929,15 +936,15 @@ app.get('/api/shopify/verify', async (req, res) => {
       orderCount: details.length,
       countableOrders: metrics.totalOrders,
       totals: {
-        subtotal_HT: Math.round(sumSubtotal * 100) / 100,
+        subtotal_TTC: Math.round(sumSubtotalTTC * 100) / 100,
+        subtotal_HT: Math.round(sumSubtotalHT * 100) / 100,
         total_TTC: Math.round(sumTotal * 100) / 100,
         tax: Math.round(sumTax * 100) / 100,
-        refunds_HT: Math.round(sumRefunds * 100) / 100,
+        refunds: Math.round(sumRefunds * 100) / 100,
         netSales_HT: Math.round(sumNetHT * 100) / 100,
-        netSales_TTC: Math.round((sumTotal - sumRefunds - sumTax) * 100) / 100,
       },
       dashboardNetSales: Math.round(metrics.netSales * 100) / 100,
-      hint: 'Comparez netSales_HT avec "Ventes nettes" Shopify. Si Shopify montre TTC, comparez avec total_TTC - refunds.',
+      hint: 'Comparez netSales_HT avec "Ventes nettes" Shopify (les deux sont HT après remboursements).',
       orders: details,
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
