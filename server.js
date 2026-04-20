@@ -2293,9 +2293,25 @@ app.get('/api/tiktok/debug-identities', async (req, res) => {
     } catch (e) { results[name] = { error: e.message }; }
   };
 
+  // Get identities first
   await tryFetch('identities', `https://business-api.tiktok.com/open_api/v1.3/identity/get/?advertiser_id=${advertiserId}&page_size=100`);
-  await tryFetch('businessVideos', `https://business-api.tiktok.com/open_api/v1.3/business/video/list/?business_id=${advertiserId}&page_size=20`);
-  await tryFetch('creativeVideos', `https://business-api.tiktok.com/open_api/v1.3/file/video/ad/search/?advertiser_id=${advertiserId}&page_size=20`);
+
+  // Find TT_USER identity (own account)
+  const ttUserIdentity = results.identities?.data?.identity_list?.find(id => id.identity_type === 'TT_USER');
+  const ttUserId = ttUserIdentity?.identity_id || '';
+
+  // Try tt_video/list with identity params
+  if (ttUserId) {
+    await tryFetch('ttVideoWithIdentity', `https://business-api.tiktok.com/open_api/v1.3/tt_video/list/?advertiser_id=${advertiserId}&identity_type=TT_USER&identity_id=${ttUserId}&page_size=20`);
+  }
+
+  // Try creative video list (uploaded ad videos)
+  await tryFetch('creativeVideos', `https://business-api.tiktok.com/open_api/v1.3/file/video/ad/search/?advertiser_id=${advertiserId}&page_size=5`);
+
+  // Try content publish video list
+  if (ttUserId) {
+    await tryFetch('contentVideos', `https://business-api.tiktok.com/open_api/v1.3/business/video/list/?business_id=${advertiserId}&filtering={"identity_type":"TT_USER","identity_id":"${ttUserId}"}&page_size=20`);
+  }
 
   res.json(results);
 });
