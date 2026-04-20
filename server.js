@@ -138,7 +138,7 @@ async function fetchAllShopifyOrders(start, end) {
       created_at_max: `${end}T23:59:59${endOffset}`,
       status: 'any',
       limit: '250',
-      fields: 'id,created_at,total_price,subtotal_price,total_discounts,total_tax,source_name,customer,financial_status,refunds',
+      fields: 'id,created_at,total_price,subtotal_price,total_discounts,total_tax,source_name,customer,financial_status,refunds,shipping_address',
     }).toString();
 
   const token = process.env.SHOPIFY_ACCESS_TOKEN;
@@ -587,6 +587,7 @@ async function ensureCached(startStr, endStr) {
     const countable = valid.filter(o => o.financial_status !== 'refunded');
 
     const customers = {};
+    const countries = {};
     countable.forEach(o => {
       if (o.customer?.id) {
         if (!customers[o.customer.id]) {
@@ -595,6 +596,8 @@ async function ensureCached(startStr, endStr) {
         customers[o.customer.id].orders++;
         customers[o.customer.id].netSales += orderNetSalesHT(o);
       }
+      const country = o.shipping_address?.country || 'Inconnu';
+      countries[country] = (countries[country] || 0) + 1;
     });
 
     dailyCache[day] = {
@@ -604,6 +607,7 @@ async function ensureCached(startStr, endStr) {
         orders: countable.length,
         discounts: valid.reduce((s, o) => s + parseFloat(o.total_discounts || 0), 0),
         customers,
+        countries,
       },
       meta: metaAgg.daily[day] || { spend: 0, impressions: 0, clicks: 0, purchases: 0, revenue: 0 },
       google: googleAgg.daily[day] || { spend: 0, impressions: 0, clicks: 0, conversions: 0, revenue: 0 },
@@ -625,6 +629,7 @@ function aggregateFromCache(startStr, endStr) {
 
   let netSales = 0, shippingHT = 0, totalOrders = 0, totalDiscounts = 0;
   const mergedCustomers = {};
+  const mergedCountries = {};
 
   const metaTotals = { spend: 0, impressions: 0, clicks: 0, purchases: 0, revenue: 0 };
   const googleTotals = { spend: 0, impressions: 0, clicks: 0, conversions: 0, revenue: 0 };
@@ -647,6 +652,11 @@ function aggregateFromCache(startStr, endStr) {
         if (!mergedCustomers[id]) mergedCustomers[id] = { orders: 0, netSales: 0, globalCount: data.globalCount };
         mergedCustomers[id].orders += data.orders;
         mergedCustomers[id].netSales += data.netSales;
+      });
+    }
+    if (c.shopify.countries) {
+      Object.entries(c.shopify.countries).forEach(([country, count]) => {
+        mergedCountries[country] = (mergedCountries[country] || 0) + count;
       });
     }
 
@@ -680,7 +690,7 @@ function aggregateFromCache(startStr, endStr) {
   const tiktokRoas = tiktokTotals.spend > 0 ? tiktokTotals.revenue / tiktokTotals.spend : 0;
 
   return {
-    shopify: { netSales, shippingHT, totalOrders, totalDiscounts, aov, repeatRate, repeatNetSales },
+    shopify: { netSales, shippingHT, totalOrders, totalDiscounts, aov, repeatRate, repeatNetSales, countries: mergedCountries },
     meta: { ...metaTotals, cpm: metaCpm, roas: metaRoas, daily: metaDaily },
     google: { ...googleTotals, cpm: googleCpm, roas: googleRoas, daily: googleDaily },
     tiktok: { ...tiktokTotals, cpm: tiktokCpm, roas: tiktokRoas, daily: tiktokDaily },
@@ -824,6 +834,7 @@ app.get('/api/dashboard', async (req, res) => {
         google: { spend: google.spend, roas: google.roas, cpm: google.cpm, impressions: google.impressions, clicks: google.clicks },
         tiktok: { spend: tiktok.spend, roas: tiktok.roas, cpm: tiktok.cpm, impressions: tiktok.impressions, clicks: tiktok.clicks },
       },
+      ordersByCountry: shopify.countries || {},
       charts: { dailySpendByChannel, dailyRoasByChannel, dailyCpmByChannel, dailySales, dailyMarketingCosts, dailyPercentMarketing },
     });
   } catch (err) {

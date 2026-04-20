@@ -384,6 +384,71 @@ function createBarChart(canvasId, dailyData, color) {
   });
 }
 
+function createCountryPieChart(canvasId, legendId, countryData) {
+  const ctx = document.getElementById(canvasId);
+  if (!ctx) return;
+  if (chartInstances[canvasId]) chartInstances[canvasId].destroy();
+
+  // Sort by count descending, group small countries into "Autres"
+  const entries = Object.entries(countryData).sort((a, b) => b[1] - a[1]);
+  const total = entries.reduce((s, e) => s + e[1], 0);
+  const labels = [], values = [];
+  let autresCount = 0;
+  entries.forEach(([country, count]) => {
+    if (count / total < 0.02 && entries.length > 6) {
+      autresCount += count;
+    } else {
+      labels.push(country);
+      values.push(count);
+    }
+  });
+  if (autresCount > 0) { labels.push('Autres'); values.push(autresCount); }
+
+  const colors = ['#1a1a1a', '#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#6366f1', '#14b8a6', '#f97316', '#9ca3af'];
+
+  chartInstances[canvasId] = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels,
+      datasets: [{
+        data: values,
+        backgroundColor: colors.slice(0, labels.length),
+        borderWidth: 2,
+        borderColor: '#fff',
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          ...TOOLTIP_CONFIG,
+          callbacks: {
+            label: function(ctx) {
+              const pct = total > 0 ? ((ctx.parsed / total) * 100).toFixed(1) : 0;
+              return `${ctx.label}: ${ctx.parsed} commandes (${pct}%)`;
+            },
+          },
+        },
+      },
+      animation: { duration: 800 },
+    },
+  });
+
+  // Custom legend
+  const legendEl = document.getElementById(legendId);
+  if (legendEl) {
+    legendEl.innerHTML = labels.map((label, i) => {
+      const pct = total > 0 ? ((values[i] / total) * 100).toFixed(1) : 0;
+      return `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:12px;font-size:12px;">
+        <span style="width:10px;height:10px;border-radius:50%;background:${colors[i]};display:inline-block;"></span>
+        ${label} ${pct}%
+      </span>`;
+    }).join('');
+  }
+}
+
 // ============================================================
 // OBJECTIVES
 // ============================================================
@@ -577,6 +642,11 @@ async function loadDashboard() {
       { meta: channels.meta.cpm, google: channels.google.cpm, tiktok: channels.tiktok.cpm },
       fmtCurrency
     );
+
+    // Country pie chart
+    if (data.ordersByCountry && Object.keys(data.ordersByCountry).length > 0) {
+      createCountryPieChart('chart-ordersByCountry', 'legend-countries', data.ordersByCountry);
+    }
 
   } catch (err) {
     console.error('Failed to load dashboard:', err);

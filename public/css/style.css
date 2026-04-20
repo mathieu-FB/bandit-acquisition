@@ -294,6 +294,11 @@ body {
   gap: 20px;
 }
 
+.grid-1 {
+  grid-template-columns: 1fr;
+  max-width: 500px;
+}
+
 .grid-3 {
   grid-template-columns: repeat(3, 1fr);
 }
