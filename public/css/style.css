@@ -2038,6 +2038,56 @@ body {
   margin: 0 auto;
 }
 
+/* Connect bar */
+.li-connect-bar {
+  margin-bottom: 20px;
+}
+
+.li-connect-status {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 20px;
+  box-shadow: var(--shadow);
+  font-size: 14px;
+}
+
+.li-connect-name {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.li-connect-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--green);
+}
+
+.li-connect-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+}
+
+.li-connect-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+
+.li-import-result {
+  margin-left: 12px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
 /* Knowledge Base toggle */
 .li-kb-section {
   margin-bottom: 28px;

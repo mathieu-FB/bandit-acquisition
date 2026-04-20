@@ -1859,11 +1859,72 @@ function copyPost(elementId) {
   });
 }
 
+// --- LinkedIn Auth + Import ---
+
+async function checkLinkedinAuth() {
+  const statusEl = document.getElementById('liConnectStatus');
+  try {
+    const res = await fetch('/api/linkedin/auth/status');
+    const data = await res.json();
+
+    if (data.connected) {
+      statusEl.innerHTML = `
+        <span class="li-connect-badge"><span class="li-connect-dot"></span> Connecté</span>
+        <span class="li-connect-name">${escapeHtml(data.name)}</span>
+        <div class="li-connect-actions">
+          <button class="btn btn-primary" onclick="importLinkedinPosts(this)">Importer mes posts</button>
+        </div>
+        <span class="li-import-result" id="liImportResult"></span>`;
+    } else if (data.configured) {
+      statusEl.innerHTML = `
+        <span style="color:var(--text-muted);">LinkedIn non connecté</span>
+        <div class="li-connect-actions">
+          <a href="/api/linkedin/auth" class="btn btn-primary">Connecter LinkedIn</a>
+        </div>`;
+    } else {
+      statusEl.innerHTML = `<span style="color:var(--text-muted);font-size:13px;">Pour importer vos posts automatiquement, configurez LINKEDIN_CLIENT_ID et LINKEDIN_CLIENT_SECRET sur Railway.</span>`;
+    }
+  } catch (err) {
+    console.error('[LinkedIn] Auth check error:', err);
+  }
+}
+
+async function importLinkedinPosts(btn) {
+  btn.disabled = true;
+  btn.textContent = 'Import en cours...';
+  const resultEl = document.getElementById('liImportResult');
+  resultEl.textContent = '';
+
+  try {
+    const res = await fetch('/api/linkedin/import', { method: 'POST' });
+    const data = await res.json();
+
+    if (data.error) {
+      resultEl.textContent = data.error;
+      resultEl.style.color = 'var(--red)';
+    } else {
+      resultEl.textContent = `${data.imported} nouveaux posts importés (${data.total} au total)`;
+      resultEl.style.color = 'var(--green)';
+      await loadLinkedinKB();
+      linkedinIdeasLoaded = false;
+      if (data.total > 0) loadLinkedinIdeas();
+    }
+  } catch (err) {
+    resultEl.textContent = 'Erreur: ' + err.message;
+    resultEl.style.color = 'var(--red)';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Importer mes posts';
+  }
+}
+
 // --- Init LinkedIn tab ---
 
 function initLinkedinTab() {
   if (linkedinLoaded) return;
   linkedinLoaded = true;
+
+  checkLinkedinAuth();
 
   loadLinkedinKB().then(posts => {
     if (posts.length > 0 && !linkedinIdeasLoaded) {

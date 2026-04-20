@@ -3217,6 +3217,179 @@ app.delete('/api/linkedin/posts/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+// LinkedIn OAuth + Import
+const LINKEDIN_TOKEN_PATH = path.join(__dirname, 'linkedin-token.json');
+
+function getLinkedinToken() {
+  try {
+    if (fs.existsSync(LINKEDIN_TOKEN_PATH)) {
+      return JSON.parse(fs.readFileSync(LINKEDIN_TOKEN_PATH, 'utf-8'));
+    }
+  } catch (e) {}
+  return null;
+}
+
+function saveLinkedinToken(data) {
+  fs.writeFileSync(LINKEDIN_TOKEN_PATH, JSON.stringify(data, null, 2));
+}
+
+function isLinkedinConfigured() {
+  return !!(process.env.LINKEDIN_CLIENT_ID && process.env.LINKEDIN_CLIENT_SECRET);
+}
+
+// OAuth step 1: redirect to LinkedIn
+app.get('/api/linkedin/auth', (req, res) => {
+  if (!isLinkedinConfigured()) return res.status(500).json({ error: 'LINKEDIN_CLIENT_ID and LINKEDIN_CLIENT_SECRET not configured' });
+
+  const redirectUri = `${req.protocol}://${req.get('host')}/api/linkedin/auth/callback`;
+  const state = Math.random().toString(36).substring(2);
+  const scopes = 'openid profile w_member_social';
+
+  const url = `https://www.linkedin.com/oauth/v2/authorization?` +
+    `response_type=code&client_id=${process.env.LINKEDIN_CLIENT_ID}` +
+    `&redirect_uri=${encodeURIComponent(redirectUri)}` +
+    `&state=${state}&scope=${encodeURIComponent(scopes)}`;
+
+  res.redirect(url);
+});
+
+// OAuth step 2: callback
+app.get('/api/linkedin/auth/callback', async (req, res) => {
+  const { code, error } = req.query;
+  if (error || !code) return res.send(`<h2>Erreur LinkedIn</h2><p>${error || 'Code manquant'}</p><a href="/">Retour</a>`);
+
+  const redirectUri = `${req.protocol}://${req.get('host')}/api/linkedin/auth/callback`;
+
+  try {
+    // Exchange code for access token
+    const tokenRes = await fetch('https://www.linkedin.com/oauth/v2/accessToken', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'authorization_code',
+        code,
+        client_id: process.env.LINKEDIN_CLIENT_ID,
+        client_secret: process.env.LINKEDIN_CLIENT_SECRET,
+        redirect_uri: redirectUri,
+      }).toString(),
+    });
+    const tokenData = await tokenRes.json();
+    if (!tokenData.access_token) throw new Error(JSON.stringify(tokenData));
+
+    // Get member profile (sub = member URN)
+    const profileRes = await fetch('https://api.linkedin.com/v2/userinfo', {
+      headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    });
+    const profile = await profileRes.json();
+
+    saveLinkedinToken({
+      accessToken: tokenData.access_token,
+      expiresIn: tokenData.expires_in,
+      savedAt: new Date().toISOString(),
+      memberId: profile.sub,
+      name: profile.name,
+    });
+
+    console.log(`[LinkedIn] OAuth success for ${profile.name} (${profile.sub})`);
+    res.send(`<html><body style="font-family:sans-serif;text-align:center;padding:60px;">
+      <h2>LinkedIn connecté !</h2>
+      <p>Bienvenue ${profile.name}. Vous pouvez maintenant importer vos posts.</p>
+      <a href="/" style="color:#1a1a1a;font-weight:bold;">Retour au dashboard</a>
+    </body></html>`);
+  } catch (err) {
+    console.error('[LinkedIn] OAuth error:', err);
+    res.status(500).send(`<h2>Erreur OAuth</h2><pre>${err.message}</pre><a href="/">Retour</a>`);
+  }
+});
+
+// Status — is LinkedIn connected?
+app.get('/api/linkedin/auth/status', (req, res) => {
+  const token = getLinkedinToken();
+  if (!token) return res.json({ connected: false, configured: isLinkedinConfigured() });
+  res.json({ connected: true, name: token.name, memberId: token.memberId });
+});
+
+// Import posts from LinkedIn
+app.post('/api/linkedin/import', async (req, res) => {
+  const tokenData = getLinkedinToken();
+  if (!tokenData) return res.status(401).json({ error: 'LinkedIn non connecté' });
+
+  const { accessToken, memberId } = tokenData;
+  const urn = `urn:li:person:${memberId}`;
+
+  try {
+    console.log(`[LinkedIn] Importing posts for ${urn}...`);
+    const allPosts = [];
+    let start = 0;
+    const count = 50;
+    let hasMore = true;
+
+    while (hasMore) {
+      const url = `https://api.linkedin.com/rest/posts?author=${encodeURIComponent(urn)}&q=author&count=${count}&start=${start}`;
+      console.log(`[LinkedIn] Fetching posts start=${start}...`);
+      const r = await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'LinkedIn-Version': '202401',
+          'X-Restli-Protocol-Version': '2.0.0',
+        },
+      });
+
+      if (!r.ok) {
+        const errText = await r.text();
+        console.error(`[LinkedIn] Posts API ${r.status}:`, errText);
+        // If 403, might need different scope or approval
+        if (r.status === 403) {
+          return res.status(403).json({ error: 'Permissions insuffisantes. Vérifiez que le produit "Share on LinkedIn" est activé sur votre app LinkedIn.', details: errText });
+        }
+        throw new Error(`LinkedIn API ${r.status}: ${errText}`);
+      }
+
+      const data = await r.json();
+      const posts = data.elements || [];
+      allPosts.push(...posts);
+      hasMore = posts.length === count;
+      start += count;
+    }
+
+    console.log(`[LinkedIn] Fetched ${allPosts.length} posts total`);
+
+    // Parse posts — extract text content
+    const existingPosts = loadLinkedinPosts();
+    const existingIds = new Set(existingPosts.map(p => p.linkedinId));
+    let imported = 0;
+
+    for (const post of allPosts) {
+      // Skip if already imported
+      if (existingIds.has(post.id)) continue;
+
+      // Extract text from commentary
+      const text = post.commentary || '';
+      if (!text.trim()) continue; // skip posts without text (shares, etc.)
+
+      const createdAt = post.createdAt ? new Date(post.createdAt).toISOString().split('T')[0] : '';
+
+      existingPosts.push({
+        id: Date.now().toString() + '_' + imported,
+        linkedinId: post.id,
+        content: text.trim(),
+        date: createdAt,
+        addedAt: new Date().toISOString(),
+        source: 'linkedin-import',
+      });
+      imported++;
+    }
+
+    saveLinkedinPosts(existingPosts);
+    console.log(`[LinkedIn] Imported ${imported} new posts (${existingPosts.length} total in KB)`);
+
+    res.json({ imported, total: existingPosts.length, fetched: allPosts.length });
+  } catch (err) {
+    console.error('[LinkedIn] Import error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Generate 3 post ideas
 app.get('/api/linkedin/ideas', async (req, res) => {
   const apiKey = process.env.ANTHROPIC_API_KEY;
