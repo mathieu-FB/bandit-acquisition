@@ -2351,13 +2351,7 @@ app.get('/api/tiktok/spark-posts', async (req, res) => {
       authEnd: post.auth_info?.auth_end_time || '',
     }));
 
-    // Include raw sample for debugging field mapping
-    const rawSample = allPosts.length > 0 ? {
-      keys: Object.keys(allPosts[0]),
-      sample: JSON.parse(JSON.stringify(allPosts[0])),
-    } : null;
-
-    res.json({ total: allPosts.length, filtered: results.length, keywords, posts: results, _debug: rawSample });
+    res.json({ total: allPosts.length, filtered: results.length, keywords, posts: results });
   } catch (err) {
     console.error('[TikTok] Spark posts error:', err.message);
     res.status(500).json({ error: err.message });

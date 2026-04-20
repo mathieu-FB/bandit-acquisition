@@ -1093,12 +1093,6 @@ async function searchSparkPosts(showAll) {
       return;
     }
 
-    // DEBUG: show raw API structure
-    if (data._debug) {
-      console.log('[TikTok DEBUG] Keys:', data._debug.keys);
-      console.log('[TikTok DEBUG] Sample:', JSON.stringify(data._debug.sample, null, 2));
-    }
-
     if (data.posts.length === 0) {
       status.innerHTML = `<p style="color:var(--text-muted)">Aucun post trouvé${keywords ? ` pour "${keywords}"` : ''} (${data.total} posts autorisés au total)</p>`;
       return;
