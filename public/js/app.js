@@ -1068,22 +1068,24 @@ async function loadTiktokAnalysis(forceDays) {
 
 let sparkSelectedPosts = [];
 
-async function searchSparkPosts() {
-  const keywords = document.getElementById('sparkKeywords').value.trim();
-  if (!keywords) return;
+async function searchSparkPosts(showAll) {
+  const keywords = showAll ? '' : document.getElementById('sparkKeywords').value.trim();
 
   const status = document.getElementById('sparkSearchStatus');
   const grid = document.getElementById('sparkPostsGrid');
   const selBar = document.getElementById('sparkSelectionBar');
 
   status.style.display = 'flex';
-  status.innerHTML = '<div class="spinner" style="width:20px;height:20px;"></div><span style="margin-left:8px;">Recherche en cours...</span>';
+  status.innerHTML = '<div class="spinner" style="width:20px;height:20px;"></div><span style="margin-left:8px;">Chargement des posts...</span>';
   grid.style.display = 'none';
   selBar.style.display = 'none';
   sparkSelectedPosts = [];
 
   try {
-    const res = await fetch(`/api/tiktok/spark-posts?keywords=${encodeURIComponent(keywords)}`);
+    const url = keywords
+      ? `/api/tiktok/spark-posts?keywords=${encodeURIComponent(keywords)}`
+      : `/api/tiktok/spark-posts`;
+    const res = await fetch(url);
     const data = await res.json();
 
     if (data.error) {
@@ -1092,11 +1094,13 @@ async function searchSparkPosts() {
     }
 
     if (data.posts.length === 0) {
-      status.innerHTML = `<p style="color:var(--text-muted)">Aucun post trouvé pour "${keywords}" (${data.total} posts autorisés au total)</p>`;
+      status.innerHTML = `<p style="color:var(--text-muted)">Aucun post trouvé${keywords ? ` pour "${keywords}"` : ''} (${data.total} posts autorisés au total)</p>`;
       return;
     }
 
-    status.innerHTML = `<span style="color:var(--text-secondary)">${data.filtered} post(s) trouvé(s) sur ${data.total} autorisés</span>`;
+    status.innerHTML = keywords
+      ? `<span style="color:var(--text-secondary)">${data.filtered} post(s) trouvé(s) sur ${data.total} autorisés</span>`
+      : `<span style="color:var(--text-secondary)">${data.total} posts autorisés</span>`;
 
     grid.innerHTML = data.posts.map(post => `
       <label class="spark-post-card" data-item-id="${post.itemId}">

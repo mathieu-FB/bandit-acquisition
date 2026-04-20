@@ -2310,12 +2310,33 @@ app.get('/api/tiktok/spark-posts', async (req, res) => {
       page++;
     }
 
-    // Filter by keywords if provided
+    // Log sample post structure for debugging
+    if (allPosts.length > 0) {
+      console.log('[TikTok] Sample post keys:', JSON.stringify(Object.keys(allPosts[0])));
+      console.log('[TikTok] Sample post:', JSON.stringify(allPosts[0]).substring(0, 500));
+    }
+
+    // Build searchable text from all possible fields
+    const getPostText = post => {
+      const parts = [
+        post.item_info?.caption,
+        post.item_info?.video_description,
+        post.video_info?.title,
+        post.video_info?.video_text,
+        post.display_name,
+        post.caption,
+        post.title,
+        post.text,
+      ];
+      return parts.filter(Boolean).join(' ').toLowerCase();
+    };
+
+    // Filter by keywords if provided (empty keywords = show all)
     const keywords = (req.query.keywords || '').toLowerCase().split(',').map(k => k.trim()).filter(Boolean);
     let filtered = allPosts;
     if (keywords.length > 0) {
       filtered = allPosts.filter(post => {
-        const text = ((post.item_info?.caption || '') + ' ' + (post.video_info?.title || '') + ' ' + (post.display_name || '')).toLowerCase();
+        const text = getPostText(post);
         return keywords.some(kw => text.includes(kw));
       });
     }
@@ -2323,13 +2344,13 @@ app.get('/api/tiktok/spark-posts', async (req, res) => {
     // Return posts with useful info
     const results = filtered.map(post => ({
       itemId: post.item_id || post.tiktok_item_id,
-      caption: post.item_info?.caption || post.video_info?.title || '',
-      coverUrl: post.item_info?.cover_image_url || post.video_info?.cover_url || '',
+      caption: post.item_info?.caption || post.item_info?.video_description || post.video_info?.title || post.caption || post.title || '',
+      coverUrl: post.item_info?.cover_image_url || post.video_info?.cover_url || post.cover_url || '',
       duration: post.item_info?.duration || post.video_info?.duration || 0,
-      likes: post.item_info?.like_count || 0,
-      comments: post.item_info?.comment_count || 0,
-      shares: post.item_info?.share_count || 0,
-      views: post.item_info?.view_count || 0,
+      likes: post.item_info?.like_count || post.like_count || 0,
+      comments: post.item_info?.comment_count || post.comment_count || 0,
+      shares: post.item_info?.share_count || post.share_count || 0,
+      views: post.item_info?.view_count || post.view_count || 0,
       createTime: post.item_info?.create_time || post.create_time || '',
       identityId: post.identity_id || '',
       identityName: post.display_name || '',
