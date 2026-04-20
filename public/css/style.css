@@ -1320,12 +1320,35 @@ body {
   color: var(--text-muted);
 }
 
+.spark-post-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 4px;
+}
 .spark-post-author {
   font-size: 11px;
   color: var(--accent);
   font-weight: 500;
-  margin-top: 4px;
   display: inline-block;
+}
+.spark-post-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+.spark-post-link:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(0,0,0,0.03);
 }
 
 .spark-selection-bar {
