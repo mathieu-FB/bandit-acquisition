@@ -899,7 +899,13 @@
         <div class="li-result" id="liIdeaResult" style="display:none;">
           <h4>Post généré</h4>
           <div class="li-result-post" id="liIdeaResultPost"></div>
-          <button class="btn btn-outline" onclick="copyPost('liIdeaResultPost')">Copier</button>
+          <div class="li-result-actions">
+            <button class="btn btn-outline" onclick="copyPost('liIdeaResultPost')">Copier</button>
+          </div>
+          <div class="li-refine">
+            <textarea class="li-textarea" id="liIdeaRefineInput" rows="2" placeholder="Ex: plus court, ton plus décontracté, ajoute un CTA, enlève les emojis..."></textarea>
+            <button class="btn btn-primary li-refine-btn" onclick="refinePost('idea')">Modifier</button>
+          </div>
         </div>
       </div>
 
@@ -923,7 +929,13 @@
         <div class="li-result" id="liFreeResult" style="display:none;">
           <h4>Post généré</h4>
           <div class="li-result-post" id="liFreeResultPost"></div>
-          <button class="btn btn-outline" onclick="copyPost('liFreeResultPost')">Copier</button>
+          <div class="li-result-actions">
+            <button class="btn btn-outline" onclick="copyPost('liFreeResultPost')">Copier</button>
+          </div>
+          <div class="li-refine">
+            <textarea class="li-textarea" id="liFreeRefineInput" rows="2" placeholder="Ex: plus court, ton plus décontracté, ajoute un CTA, enlève les emojis..."></textarea>
+            <button class="btn btn-primary li-refine-btn" onclick="refinePost('free')">Modifier</button>
+          </div>
         </div>
       </div>
 

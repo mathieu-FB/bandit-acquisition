@@ -1928,6 +1928,41 @@ async function generateFreePost() {
   }
 }
 
+// --- Refine post ---
+
+async function refinePost(type) {
+  const prefix = type === 'idea' ? 'liIdea' : 'liFree';
+  const postEl = document.getElementById(`${prefix}ResultPost`);
+  const inputEl = document.getElementById(`${prefix}RefineInput`);
+  const btn = inputEl.parentElement.querySelector('.li-refine-btn');
+
+  const currentPost = postEl.textContent.trim();
+  const feedback = inputEl.value.trim();
+  if (!feedback) return;
+
+  btn.disabled = true;
+  btn.textContent = 'Modification...';
+
+  try {
+    const res = await fetch('/api/linkedin/refine', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ post: currentPost, feedback }),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+
+    postEl.textContent = data.post;
+    inputEl.value = '';
+  } catch (err) {
+    console.error('[LinkedIn] Refine error:', err);
+    alert('Erreur : ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Modifier';
+  }
+}
+
 // --- Copy post ---
 
 function copyPost(elementId) {

@@ -3922,6 +3922,52 @@ ${filesContext ? `\nContenu des fichiers fournis :${filesContext}` : ''}
   }
 });
 
+app.post('/api/linkedin/refine', async (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured' });
+
+  const { post, feedback } = req.body;
+  if (!post || !feedback) return res.status(400).json({ error: 'post and feedback required' });
+
+  const Anthropic = require('@anthropic-ai/sdk').default;
+  const anthropic = new Anthropic({ apiKey });
+
+  const posts = loadLinkedinPosts();
+  const postsSample = posts.slice(-10).map((p, i) => `--- Post ${i + 1} ---\n${p.content}`).join('\n\n');
+
+  try {
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 2000,
+      messages: [
+        { role: 'user', content: `Tu es un ghostwriter LinkedIn expert pour Mathieu, CEO de French Bandit (marque premium d'accessoires pour chiens et chats).
+
+Voici des exemples de ses posts pour le style de référence :
+${postsSample || '(aucun)'}
+
+Voici le post actuel :
+---
+${post}
+---
+
+Applique cette modification demandée par Mathieu : "${feedback}"
+
+Règles :
+- Garde le même sujet et les informations clés du post original
+- Applique UNIQUEMENT les modifications demandées
+- Conserve le format LinkedIn (phrases courtes, retours à la ligne, emojis si présents)
+- Écris UNIQUEMENT le post modifié, sans explication ni commentaire.` },
+      ],
+    });
+
+    const refined = response.content[0].text.trim();
+    res.json({ post: refined });
+  } catch (err) {
+    console.error('[LinkedIn] Refine error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ============================================================
 // START
 // ============================================================
