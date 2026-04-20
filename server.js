@@ -2319,14 +2319,8 @@ app.get('/api/tiktok/spark-posts', async (req, res) => {
     // Build searchable text from all possible fields
     const getPostText = post => {
       const parts = [
-        post.item_info?.caption,
-        post.item_info?.video_description,
-        post.video_info?.title,
-        post.video_info?.video_text,
-        post.display_name,
-        post.caption,
-        post.title,
-        post.text,
+        post.item_info?.text,
+        post.user_info?.tiktok_name,
       ];
       return parts.filter(Boolean).join(' ').toLowerCase();
     };
@@ -2341,19 +2335,20 @@ app.get('/api/tiktok/spark-posts', async (req, res) => {
       });
     }
 
-    // Return posts with useful info
+    // Return posts with useful info (mapped from actual TikTok API structure)
     const results = filtered.map(post => ({
-      itemId: post.item_id || post.tiktok_item_id,
-      caption: post.item_info?.caption || post.item_info?.video_description || post.video_info?.title || post.caption || post.title || '',
-      coverUrl: post.item_info?.cover_image_url || post.video_info?.cover_url || post.cover_url || '',
-      duration: post.item_info?.duration || post.video_info?.duration || 0,
-      likes: post.item_info?.like_count || post.like_count || 0,
-      comments: post.item_info?.comment_count || post.comment_count || 0,
-      shares: post.item_info?.share_count || post.share_count || 0,
-      views: post.item_info?.view_count || post.view_count || 0,
-      createTime: post.item_info?.create_time || post.create_time || '',
-      identityId: post.identity_id || '',
-      identityName: post.display_name || '',
+      itemId: post.item_info?.item_id || '',
+      authCode: post.item_info?.auth_code || '',
+      caption: post.item_info?.text || '',
+      coverUrl: post.video_info?.poster_url || '',
+      previewUrl: post.video_info?.preview_url || '',
+      duration: post.video_info?.duration || 0,
+      width: post.video_info?.width || 0,
+      height: post.video_info?.height || 0,
+      identityId: post.user_info?.identity_id || '',
+      identityName: post.user_info?.tiktok_name || '',
+      authStatus: post.auth_info?.ad_auth_status || '',
+      authEnd: post.auth_info?.auth_end_time || '',
     }));
 
     // Include raw sample for debugging field mapping

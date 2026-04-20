@@ -1108,11 +1108,15 @@ async function searchSparkPosts(showAll) {
       ? `<span style="color:var(--text-secondary)">${data.filtered} post(s) trouvé(s) sur ${data.total} autorisés</span>`
       : `<span style="color:var(--text-secondary)">${data.total} posts autorisés</span>`;
 
-    grid.innerHTML = data.posts.map(post => `
+    grid.innerHTML = data.posts.map(post => {
+      const durationStr = post.duration ? `${Math.floor(post.duration)}s` : '';
+      const captionShort = (post.caption || '').replace(/"/g, '&quot;').substring(0, 60);
+      return `
       <label class="spark-post-card" data-item-id="${post.itemId}">
         <input type="checkbox" class="spark-post-check" value="${post.itemId}"
-          data-caption="${(post.caption || '').replace(/"/g, '&quot;').substring(0, 60)}"
+          data-caption="${captionShort}"
           data-identity-id="${post.identityId || ''}"
+          data-auth-code="${post.authCode || ''}"
           data-cover="${post.coverUrl || ''}"
           onchange="updateSparkSelection()" />
         <div class="spark-post-visual">
@@ -1121,15 +1125,14 @@ async function searchSparkPosts(showAll) {
         <div class="spark-post-info">
           <p class="spark-post-caption">${post.caption || 'Sans caption'}</p>
           <div class="spark-post-stats">
-            ${post.views ? `<span>${formatNumber(post.views)} vues</span>` : ''}
-            ${post.likes ? `<span>${formatNumber(post.likes)} likes</span>` : ''}
-            ${post.shares ? `<span>${formatNumber(post.shares)} partages</span>` : ''}
+            ${durationStr ? `<span>${durationStr}</span>` : ''}
+            ${post.authStatus === 'AUTHORIZED' ? '<span style="color:var(--green)">Autorisé</span>' : ''}
           </div>
           ${post.identityName ? `<span class="spark-post-author">${post.identityName}</span>` : ''}
         </div>
         <div class="spark-post-check-icon"></div>
       </label>
-    `).join('');
+    `;}).join('');
 
     grid.style.display = 'grid';
     selBar.style.display = 'flex';
