@@ -2027,3 +2027,331 @@ body {
   .b2b-kpi-grid { grid-template-columns: 1fr; }
   .b2b-toolbar { flex-direction: column; align-items: flex-start; }
 }
+
+/* ============================================================
+   LINKEDIN TAB
+   ============================================================ */
+
+.li-page {
+  padding: 24px 32px;
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+/* Knowledge Base toggle */
+.li-kb-section {
+  margin-bottom: 28px;
+}
+
+.li-kb-toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 20px;
+  font-family: var(--font);
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  cursor: pointer;
+  box-shadow: var(--shadow);
+  transition: box-shadow 0.15s;
+}
+
+.li-kb-toggle:hover { box-shadow: var(--shadow-hover); }
+
+.li-kb-count {
+  font-weight: 400;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.li-kb-arrow {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-muted);
+  transition: transform 0.2s;
+}
+
+.li-kb-toggle.open .li-kb-arrow { transform: rotate(180deg); }
+
+.li-kb-body {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-top: none;
+  border-radius: 0 0 var(--radius) var(--radius);
+  padding: 20px;
+}
+
+/* Add post form */
+.li-kb-add {
+  margin-bottom: 16px;
+}
+
+.li-kb-add-row {
+  display: flex;
+  gap: 10px;
+  margin-top: 10px;
+  align-items: center;
+}
+
+.li-textarea {
+  width: 100%;
+  font-family: var(--font);
+  font-size: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  resize: vertical;
+  color: var(--text);
+  background: var(--bg);
+  line-height: 1.5;
+}
+
+.li-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.li-input {
+  width: 100%;
+  font-family: var(--font);
+  font-size: 14px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  background: var(--bg);
+}
+
+.li-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* KB post list */
+.li-kb-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.li-kb-item {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  background: var(--bg);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+.li-kb-item-content {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  max-height: 80px;
+  overflow: hidden;
+}
+
+.li-kb-item-date {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.li-kb-item-del {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 16px;
+  padding: 0 4px;
+  line-height: 1;
+}
+
+.li-kb-item-del:hover { color: var(--red); }
+
+/* Section */
+.li-section {
+  margin-bottom: 32px;
+}
+
+.li-section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.li-section-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  padding-bottom: 8px;
+  border-bottom: 2px solid var(--accent);
+}
+
+.li-refresh-btn { font-size: 12px; }
+
+/* Ideas */
+.li-ideas-loading,
+.li-generating {
+  text-align: center;
+  padding: 40px 20px;
+  color: var(--text-muted);
+}
+
+.li-ideas-loading .spinner,
+.li-generating .spinner {
+  margin: 0 auto 12px;
+}
+
+.li-ideas-empty {
+  text-align: center;
+  padding: 32px 20px;
+  color: var(--text-muted);
+  font-size: 14px;
+  background: var(--card-bg);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+
+.li-ideas-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.li-idea-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 22px;
+  cursor: pointer;
+  box-shadow: var(--shadow);
+  transition: box-shadow 0.15s, border-color 0.15s;
+}
+
+.li-idea-card:hover {
+  box-shadow: var(--shadow-hover);
+  border-color: var(--accent);
+}
+
+.li-idea-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.li-idea-desc {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+/* Compose / generate */
+.li-compose {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 24px;
+  margin-bottom: 28px;
+  box-shadow: var(--shadow);
+}
+
+.li-compose-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.li-compose-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.li-compose-desc {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+  line-height: 1.5;
+}
+
+.li-compose-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.li-file-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.li-file-input { display: none; }
+
+.li-file-label {
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.li-file-names {
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.li-generate-btn {
+  align-self: flex-start;
+  padding: 10px 24px;
+}
+
+/* Result */
+.li-result {
+  margin-top: 20px;
+  padding: 20px;
+  background: var(--bg);
+  border-radius: 10px;
+  border: 1px solid var(--border);
+}
+
+.li-result h4 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 12px;
+}
+
+.li-result-post {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text);
+  white-space: pre-wrap;
+  margin-bottom: 14px;
+}
+
+.li-result .btn { font-size: 12px; }
+
+/* Responsive */
+@media (max-width: 600px) {
+  .li-page { padding: 16px; }
+  .li-compose { padding: 16px; }
+  .li-kb-add-row { flex-direction: column; }
+}

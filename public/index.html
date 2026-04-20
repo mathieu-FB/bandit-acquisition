@@ -61,6 +61,7 @@
     <button class="tab-btn active" data-tab="ecommerce">E-commerce</button>
     <button class="tab-btn" data-tab="amazon">Amazon</button>
     <button class="tab-btn" data-tab="b2b">B2B</button>
+    <button class="tab-btn" data-tab="linkedin">LinkedIn</button>
   </nav>
 
   <!-- LOADING OVERLAY -->
@@ -813,6 +814,95 @@
 
     </div>
   </div><!-- /tab-b2b -->
+
+  <!-- TAB: LINKEDIN -->
+  <div class="tab-content" id="tab-linkedin">
+    <div class="li-page">
+
+      <!-- Knowledge Base (collapsible) -->
+      <div class="li-kb-section">
+        <button class="li-kb-toggle" id="liKbToggle">
+          Base de connaissances <span class="li-kb-count" id="liKbCount">0 posts</span>
+          <span class="li-kb-arrow">&#9662;</span>
+        </button>
+        <div class="li-kb-body" id="liKbBody" style="display:none;">
+          <div class="li-kb-add">
+            <textarea class="li-textarea" id="liNewPost" rows="4" placeholder="Collez un de vos posts LinkedIn ici..."></textarea>
+            <div class="li-kb-add-row">
+              <input type="date" id="liPostDate" class="date-input">
+              <button class="btn btn-primary" onclick="addLinkedinPost()">Ajouter à la base</button>
+            </div>
+          </div>
+          <div class="li-kb-list" id="liKbList"></div>
+        </div>
+      </div>
+
+      <!-- Ideas Section -->
+      <div class="li-section">
+        <div class="li-section-header">
+          <h2 class="li-section-title">Idées de posts</h2>
+          <button class="btn btn-outline li-refresh-btn" onclick="loadLinkedinIdeas()" id="liRefreshIdeas">Rafraîchir</button>
+        </div>
+        <div class="li-ideas-loading" id="liIdeasLoading" style="display:none;">
+          <div class="spinner"></div>
+          <p>L'IA analyse vos posts...</p>
+        </div>
+        <div class="li-ideas-empty" id="liIdeasEmpty" style="display:none;">
+          Ajoutez des posts à la base de connaissances pour que l'IA puisse proposer des idées.
+        </div>
+        <div class="li-ideas-grid" id="liIdeasGrid"></div>
+      </div>
+
+      <!-- Expanded idea detail (hidden by default) -->
+      <div class="li-compose" id="liComposeFromIdea" style="display:none;">
+        <div class="li-compose-header">
+          <h3 class="li-compose-title" id="liComposeIdeaTitle"></h3>
+          <button class="btn btn-outline" onclick="closeIdeaCompose()">Retour</button>
+        </div>
+        <p class="li-compose-desc" id="liComposeIdeaDesc"></p>
+        <div class="li-compose-fields">
+          <textarea class="li-textarea" id="liIdeaContext" rows="3" placeholder="Ajoutez du contexte, des chiffres, une anecdote..."></textarea>
+          <input type="text" class="li-input" id="liIdeaUrls" placeholder="URLs (séparées par des virgules)">
+          <div class="li-file-row">
+            <input type="file" id="liIdeaFiles" multiple class="li-file-input">
+            <label for="liIdeaFiles" class="btn btn-outline li-file-label">Ajouter des fichiers</label>
+            <span class="li-file-names" id="liIdeaFileNames"></span>
+          </div>
+          <button class="btn btn-primary li-generate-btn" onclick="generateFromIdea()">Générer le post</button>
+        </div>
+        <div class="li-result" id="liIdeaResult" style="display:none;">
+          <h4>Post généré</h4>
+          <div class="li-result-post" id="liIdeaResultPost"></div>
+          <button class="btn btn-outline" onclick="copyPost('liIdeaResultPost')">Copier</button>
+        </div>
+      </div>
+
+      <!-- Free-form post generation -->
+      <div class="li-section">
+        <h2 class="li-section-title">Écrire un post sur mesure</h2>
+        <div class="li-compose-fields">
+          <textarea class="li-textarea" id="liFreeContext" rows="4" placeholder="Décrivez le sujet, partagez du contexte, des idées, des chiffres..."></textarea>
+          <input type="text" class="li-input" id="liFreeUrls" placeholder="URLs (séparées par des virgules)">
+          <div class="li-file-row">
+            <input type="file" id="liFreeFiles" multiple class="li-file-input">
+            <label for="liFreeFiles" class="btn btn-outline li-file-label">Ajouter des fichiers</label>
+            <span class="li-file-names" id="liFreeFileNames"></span>
+          </div>
+          <button class="btn btn-primary li-generate-btn" onclick="generateFreePost()">Générer le post</button>
+        </div>
+        <div class="li-generating" id="liFreeLoading" style="display:none;">
+          <div class="spinner"></div>
+          <p>Rédaction en cours...</p>
+        </div>
+        <div class="li-result" id="liFreeResult" style="display:none;">
+          <h4>Post généré</h4>
+          <div class="li-result-post" id="liFreeResultPost"></div>
+          <button class="btn btn-outline" onclick="copyPost('liFreeResultPost')">Copier</button>
+        </div>
+      </div>
+
+    </div>
+  </div><!-- /tab-linkedin -->
 
   <script src="js/app.js"></script>
 </body>

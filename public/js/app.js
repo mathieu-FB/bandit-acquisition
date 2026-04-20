@@ -1640,6 +1640,258 @@ function renderB2BTopClients(top5) {
 }
 
 // ============================================================
+// LINKEDIN — Knowledge Base + AI Post Generation
+// ============================================================
+
+let linkedinLoaded = false;
+let linkedinIdeasLoaded = false;
+
+// --- Knowledge Base ---
+
+async function loadLinkedinKB() {
+  try {
+    const res = await fetch('/api/linkedin/posts');
+    const posts = await res.json();
+    renderKBList(posts);
+    document.getElementById('liKbCount').textContent = `${posts.length} post${posts.length !== 1 ? 's' : ''}`;
+    return posts;
+  } catch (err) {
+    console.error('[LinkedIn] KB load error:', err);
+    return [];
+  }
+}
+
+function renderKBList(posts) {
+  const list = document.getElementById('liKbList');
+  if (!posts.length) {
+    list.innerHTML = '<div style="text-align:center;padding:16px;color:var(--text-muted);font-size:13px;">Aucun post enregistré</div>';
+    return;
+  }
+  list.innerHTML = posts.slice().reverse().map(p => `
+    <div class="li-kb-item">
+      <div class="li-kb-item-content">${escapeHtml(p.content)}</div>
+      <span class="li-kb-item-date">${p.date || ''}</span>
+      <button class="li-kb-item-del" onclick="deleteLinkedinPost('${p.id}')" title="Supprimer">&times;</button>
+    </div>
+  `).join('');
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+async function addLinkedinPost() {
+  const textarea = document.getElementById('liNewPost');
+  const dateInput = document.getElementById('liPostDate');
+  const content = textarea.value.trim();
+  if (!content) return;
+
+  try {
+    await fetch('/api/linkedin/posts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content, date: dateInput.value || undefined }),
+    });
+    textarea.value = '';
+    dateInput.value = '';
+    await loadLinkedinKB();
+    // Reset ideas since KB changed
+    linkedinIdeasLoaded = false;
+  } catch (err) {
+    console.error('[LinkedIn] Add post error:', err);
+  }
+}
+
+async function deleteLinkedinPost(id) {
+  try {
+    await fetch(`/api/linkedin/posts/${id}`, { method: 'DELETE' });
+    await loadLinkedinKB();
+    linkedinIdeasLoaded = false;
+  } catch (err) {
+    console.error('[LinkedIn] Delete error:', err);
+  }
+}
+
+// --- Ideas ---
+
+async function loadLinkedinIdeas() {
+  const grid = document.getElementById('liIdeasGrid');
+  const loading = document.getElementById('liIdeasLoading');
+  const empty = document.getElementById('liIdeasEmpty');
+
+  grid.innerHTML = '';
+  empty.style.display = 'none';
+  loading.style.display = 'block';
+
+  try {
+    const res = await fetch('/api/linkedin/ideas');
+    const data = await res.json();
+    loading.style.display = 'none';
+
+    if (data.error === 'no_posts' || !data.ideas || data.ideas.length === 0) {
+      empty.style.display = 'block';
+      return;
+    }
+
+    grid.innerHTML = data.ideas.map((idea, i) => `
+      <div class="li-idea-card" onclick="openIdeaCompose(${i})">
+        <div class="li-idea-title">${escapeHtml(idea.title)}</div>
+        <div class="li-idea-desc">${escapeHtml(idea.description)}</div>
+      </div>
+    `).join('');
+
+    window._linkedinIdeas = data.ideas;
+    linkedinIdeasLoaded = true;
+  } catch (err) {
+    loading.style.display = 'none';
+    console.error('[LinkedIn] Ideas error:', err);
+  }
+}
+
+// --- Compose from idea ---
+
+function openIdeaCompose(index) {
+  const idea = window._linkedinIdeas[index];
+  if (!idea) return;
+
+  document.getElementById('liComposeIdeaTitle').textContent = idea.title;
+  document.getElementById('liComposeIdeaDesc').textContent = idea.description;
+  document.getElementById('liIdeaContext').value = '';
+  document.getElementById('liIdeaUrls').value = '';
+  document.getElementById('liIdeaFiles').value = '';
+  document.getElementById('liIdeaFileNames').textContent = '';
+  document.getElementById('liIdeaResult').style.display = 'none';
+  document.getElementById('liComposeFromIdea').style.display = 'block';
+  document.getElementById('liComposeFromIdea').scrollIntoView({ behavior: 'smooth' });
+}
+
+function closeIdeaCompose() {
+  document.getElementById('liComposeFromIdea').style.display = 'none';
+}
+
+async function generateFromIdea() {
+  const idea = document.getElementById('liComposeIdeaTitle').textContent + ' — ' + document.getElementById('liComposeIdeaDesc').textContent;
+  const context = document.getElementById('liIdeaContext').value;
+  const urls = document.getElementById('liIdeaUrls').value;
+  const files = document.getElementById('liIdeaFiles').files;
+
+  const resultDiv = document.getElementById('liIdeaResult');
+  const resultPost = document.getElementById('liIdeaResultPost');
+  resultDiv.style.display = 'none';
+
+  const btn = document.querySelector('#liComposeFromIdea .li-generate-btn');
+  btn.disabled = true;
+  btn.textContent = 'Génération en cours...';
+
+  try {
+    const formData = new FormData();
+    formData.append('idea', idea);
+    if (context) formData.append('context', context);
+    if (urls) formData.append('urls', urls);
+    for (const f of files) formData.append('files', f);
+
+    const res = await fetch('/api/linkedin/generate', { method: 'POST', body: formData });
+    const data = await res.json();
+
+    if (data.error) throw new Error(data.error);
+
+    resultPost.textContent = data.post;
+    resultDiv.style.display = 'block';
+    resultDiv.scrollIntoView({ behavior: 'smooth' });
+  } catch (err) {
+    console.error('[LinkedIn] Generate error:', err);
+    resultPost.textContent = 'Erreur : ' + err.message;
+    resultDiv.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Générer le post';
+  }
+}
+
+// --- Free-form post ---
+
+async function generateFreePost() {
+  const context = document.getElementById('liFreeContext').value.trim();
+  const urls = document.getElementById('liFreeUrls').value;
+  const files = document.getElementById('liFreeFiles').files;
+
+  if (!context && files.length === 0) return;
+
+  const loading = document.getElementById('liFreeLoading');
+  const resultDiv = document.getElementById('liFreeResult');
+  const resultPost = document.getElementById('liFreeResultPost');
+  resultDiv.style.display = 'none';
+  loading.style.display = 'block';
+
+  try {
+    const formData = new FormData();
+    if (context) formData.append('context', context);
+    if (urls) formData.append('urls', urls);
+    for (const f of files) formData.append('files', f);
+
+    const res = await fetch('/api/linkedin/generate', { method: 'POST', body: formData });
+    const data = await res.json();
+
+    loading.style.display = 'none';
+    if (data.error) throw new Error(data.error);
+
+    resultPost.textContent = data.post;
+    resultDiv.style.display = 'block';
+    resultDiv.scrollIntoView({ behavior: 'smooth' });
+  } catch (err) {
+    loading.style.display = 'none';
+    console.error('[LinkedIn] Free generate error:', err);
+    resultPost.textContent = 'Erreur : ' + err.message;
+    resultDiv.style.display = 'block';
+  }
+}
+
+// --- Copy post ---
+
+function copyPost(elementId) {
+  const el = document.getElementById(elementId);
+  const text = el.textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    const btn = el.parentElement.querySelector('.btn');
+    const orig = btn.textContent;
+    btn.textContent = 'Copié !';
+    setTimeout(() => btn.textContent = orig, 2000);
+  });
+}
+
+// --- Init LinkedIn tab ---
+
+function initLinkedinTab() {
+  if (linkedinLoaded) return;
+  linkedinLoaded = true;
+
+  loadLinkedinKB().then(posts => {
+    if (posts.length > 0 && !linkedinIdeasLoaded) {
+      loadLinkedinIdeas();
+    } else if (posts.length === 0) {
+      document.getElementById('liIdeasEmpty').style.display = 'block';
+    }
+  });
+
+  // KB toggle
+  const toggle = document.getElementById('liKbToggle');
+  const body = document.getElementById('liKbBody');
+  toggle.addEventListener('click', () => {
+    const open = body.style.display !== 'none';
+    body.style.display = open ? 'none' : 'block';
+    toggle.classList.toggle('open', !open);
+  });
+
+  // File input display names
+  document.getElementById('liIdeaFiles').addEventListener('change', function() {
+    document.getElementById('liIdeaFileNames').textContent = Array.from(this.files).map(f => f.name).join(', ');
+  });
+  document.getElementById('liFreeFiles').addEventListener('change', function() {
+    document.getElementById('liFreeFileNames').textContent = Array.from(this.files).map(f => f.name).join(', ');
+  });
+}
+
+// ============================================================
 // TABS + SUB-TABS
 // ============================================================
 
@@ -1652,6 +1904,7 @@ function switchTab(tabId) {
 
   if (tabId === 'amazon') loadAmazonDashboard();
   if (tabId === 'b2b' && !b2bLoaded) loadB2BReport('mtd');
+  if (tabId === 'linkedin') initLinkedinTab();
 
   // Show/hide toolbar based on context
   updateToolbarVisibility();

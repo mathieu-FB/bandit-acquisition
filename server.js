@@ -5,6 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const zlib = require('zlib');
 const cron = require('node-cron');
+const multer = require('multer');
 const { GoogleAdsApi, fromMicros } = require('google-ads-api');
 const { sendReport } = require('./daily-report');
 
@@ -3170,6 +3171,167 @@ app.get('/api/pipedrive/b2b-report', async (req, res) => {
     });
   } catch (err) {
     console.error('[Pipedrive] B2B report error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// LINKEDIN — Knowledge Base + AI Post Generation
+// ============================================================
+
+const LINKEDIN_KB_PATH = path.join(__dirname, 'linkedin-posts.json');
+const linkedinUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+
+function loadLinkedinPosts() {
+  try {
+    if (fs.existsSync(LINKEDIN_KB_PATH)) {
+      return JSON.parse(fs.readFileSync(LINKEDIN_KB_PATH, 'utf-8'));
+    }
+  } catch (e) { console.error('[LinkedIn] Error loading KB:', e.message); }
+  return [];
+}
+
+function saveLinkedinPosts(posts) {
+  fs.writeFileSync(LINKEDIN_KB_PATH, JSON.stringify(posts, null, 2));
+}
+
+// CRUD — knowledge base
+app.get('/api/linkedin/posts', (req, res) => {
+  res.json(loadLinkedinPosts());
+});
+
+app.post('/api/linkedin/posts', express.json(), (req, res) => {
+  const { content, date } = req.body;
+  if (!content || !content.trim()) return res.status(400).json({ error: 'content required' });
+  const posts = loadLinkedinPosts();
+  const post = { id: Date.now().toString(), content: content.trim(), date: date || new Date().toISOString().split('T')[0], addedAt: new Date().toISOString() };
+  posts.push(post);
+  saveLinkedinPosts(posts);
+  res.json(post);
+});
+
+app.delete('/api/linkedin/posts/:id', (req, res) => {
+  let posts = loadLinkedinPosts();
+  posts = posts.filter(p => p.id !== req.params.id);
+  saveLinkedinPosts(posts);
+  res.json({ ok: true });
+});
+
+// Generate 3 post ideas
+app.get('/api/linkedin/ideas', async (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured' });
+
+  const posts = loadLinkedinPosts();
+  if (posts.length === 0) return res.json({ ideas: [], error: 'no_posts', message: 'Ajoutez des posts à la base de connaissances pour générer des idées.' });
+
+  const Anthropic = require('@anthropic-ai/sdk').default;
+  const anthropic = new Anthropic({ apiKey });
+
+  const postsSample = posts.slice(-20).map((p, i) => `--- Post ${i + 1} (${p.date}) ---\n${p.content}`).join('\n\n');
+
+  try {
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1000,
+      messages: [{ role: 'user', content: `Tu es un expert LinkedIn et ghostwriter. Tu analyses les posts LinkedIn suivants écrits par Mathieu, CEO de French Bandit (marque premium d'accessoires pour chiens et chats).
+
+Voici ses posts précédents :
+${postsSample}
+
+Génère exactement 3 idées de posts LinkedIn que Mathieu devrait publier prochainement. Chaque idée doit :
+- Être cohérente avec son style, sa tonalité et ses thématiques habituelles
+- Être formulée en 2 phrases max (un titre accrocheur + une phrase qui décrit l'angle)
+- Être variée (pas toutes sur le même thème)
+- Tenir compte de l'actualité business / entrepreneuriat / e-commerce
+
+Réponds UNIQUEMENT en JSON valide, sans markdown :
+[{"title":"...","description":"..."},{"title":"...","description":"..."},{"title":"...","description":"..."}]` }],
+    });
+
+    const text = response.content[0].text.trim();
+    const jsonStr = text.replace(/^```json\s*/i, '').replace(/\s*```$/, '');
+    const ideas = JSON.parse(jsonStr);
+    res.json({ ideas });
+  } catch (err) {
+    console.error('[LinkedIn] Ideas error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Generate a full post
+app.post('/api/linkedin/generate', linkedinUpload.array('files', 5), async (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured' });
+
+  const { idea, context, urls } = req.body;
+  if (!idea && !context) return res.status(400).json({ error: 'idea or context required' });
+
+  const Anthropic = require('@anthropic-ai/sdk').default;
+  const anthropic = new Anthropic({ apiKey });
+
+  const posts = loadLinkedinPosts();
+  const postsSample = posts.slice(-15).map((p, i) => `--- Post ${i + 1} ---\n${p.content}`).join('\n\n');
+
+  // Build context from files
+  let filesContext = '';
+  if (req.files && req.files.length > 0) {
+    for (const file of req.files) {
+      const text = file.buffer.toString('utf-8');
+      filesContext += `\n--- Fichier: ${file.originalname} ---\n${text.substring(0, 3000)}\n`;
+    }
+  }
+
+  // Build context from URLs
+  let urlsContext = '';
+  if (urls) {
+    const urlList = typeof urls === 'string' ? urls.split(',').map(u => u.trim()).filter(Boolean) : [];
+    for (const url of urlList.slice(0, 3)) {
+      try {
+        const r = await fetch(url, { timeout: 10000, headers: { 'User-Agent': 'Mozilla/5.0' } });
+        if (r.ok) {
+          const html = await r.text();
+          // Extract text content roughly
+          const textContent = html.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().substring(0, 3000);
+          urlsContext += `\n--- URL: ${url} ---\n${textContent}\n`;
+        }
+      } catch (e) { urlsContext += `\n--- URL: ${url} — erreur de chargement ---\n`; }
+    }
+  }
+
+  const prompt = `Tu es un ghostwriter LinkedIn expert. Tu écris un post LinkedIn pour Mathieu, CEO de French Bandit (marque premium d'accessoires pour chiens et chats, vendue en DTC et B2B).
+
+STYLE À REPRODUIRE — voici ses posts précédents :
+${postsSample || '(aucun post de référence)'}
+
+CONSIGNES :
+- Reproduis fidèlement le style, la tonalité, la structure et le rythme de ses posts
+- Format LinkedIn : phrases courtes, retours à la ligne fréquents, emojis si Mathieu en utilise habituellement
+- Hook puissant en première ligne
+- Storytelling authentique
+- Call-to-action ou question ouverte en fin de post
+- Longueur : 800-1500 caractères (format LinkedIn optimal)
+- Ne mets PAS de hashtags sauf si Mathieu en utilise habituellement
+
+SUJET DU POST :
+${idea ? `Idée : ${idea}` : ''}
+${context ? `Contexte / brief : ${context}` : ''}
+${urlsContext ? `\nContenu des URLs fournies :${urlsContext}` : ''}
+${filesContext ? `\nContenu des fichiers fournis :${filesContext}` : ''}
+
+Écris UNIQUEMENT le post LinkedIn, prêt à copier-coller. Pas d'explication, pas de commentaire.`;
+
+  try {
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 2000,
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    const post = response.content[0].text.trim();
+    res.json({ post });
+  } catch (err) {
+    console.error('[LinkedIn] Generate error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
