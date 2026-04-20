@@ -2279,6 +2279,50 @@ app.get('/api/tiktok/check-permissions', async (req, res) => {
 });
 
 
+// Debug: check all auth statuses in tt_video/list
+app.get('/api/tiktok/debug-auth-status', async (req, res) => {
+  const token = process.env.TIKTOK_ACCESS_TOKEN;
+  const advertiserId = process.env.TIKTOK_ADVERTISER_ID;
+  if (!token || !advertiserId) return res.json({ error: 'TikTok non configuré' });
+  try {
+    let allPosts = [], page = 1, hasMore = true;
+    while (hasMore && page <= 10) {
+      const r = await fetch(`https://business-api.tiktok.com/open_api/v1.3/tt_video/list/?advertiser_id=${advertiserId}&page=${page}&page_size=50`, {
+        headers: { 'Access-Token': token },
+      });
+      const j = await r.json();
+      if (j.code !== 0) break;
+      const posts = j.data?.list || [];
+      allPosts = allPosts.concat(posts);
+      hasMore = posts.length === 50;
+      page++;
+    }
+    // Group by auth status and identity
+    const byStatus = {};
+    const byIdentity = {};
+    allPosts.forEach(p => {
+      const status = p.auth_info?.ad_auth_status || 'UNKNOWN';
+      const name = p.user_info?.tiktok_name || 'Unknown';
+      byStatus[status] = (byStatus[status] || 0) + 1;
+      if (!byIdentity[name]) byIdentity[name] = { total: 0, statuses: {} };
+      byIdentity[name].total++;
+      byIdentity[name].statuses[status] = (byIdentity[name].statuses[status] || 0) + 1;
+    });
+    // French Bandit specific
+    const fbPosts = allPosts.filter(p => (p.user_info?.tiktok_name || '').toLowerCase().includes('french bandit'));
+    res.json({
+      totalPosts: allPosts.length,
+      byStatus,
+      frenchBandit: fbPosts.map(p => ({
+        itemId: p.item_info?.item_id,
+        text: (p.item_info?.text || '').substring(0, 80),
+        authStatus: p.auth_info?.ad_auth_status,
+        authEnd: p.auth_info?.auth_end_time,
+      })),
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // Search authorized Spark Ads posts by keywords
 app.get('/api/tiktok/spark-posts', async (req, res) => {
   const token = process.env.TIKTOK_ACCESS_TOKEN;
