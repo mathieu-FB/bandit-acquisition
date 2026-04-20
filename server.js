@@ -181,6 +181,17 @@ function orderNetSalesHT(order) {
   return grossHT - refundedHT;
 }
 
+// Compute shipping HT for an order
+function orderShippingHT(order) {
+  if (order.financial_status === 'refunded' || order.financial_status === 'voided') return 0;
+  // shipping_TTC = total_price - subtotal_price (both TTC in tax-inclusive stores)
+  const totalTTC = parseFloat(order.total_price || 0);
+  const subtotalTTC = parseFloat(order.subtotal_price || 0);
+  const shippingTTC = Math.max(0, totalTTC - subtotalTTC);
+  // French VAT on shipping = 20%
+  return shippingTTC / 1.20;
+}
+
 function computeShopifyMetrics(orders) {
   // Exclude fully refunded and voided orders
   const validOrders = orders.filter(o =>
@@ -193,6 +204,7 @@ function computeShopifyMetrics(orders) {
 
   // Net sales HT = subtotal (HT) minus refunds (HT) for all non-voided orders
   const netSales = validOrders.reduce((sum, o) => sum + orderNetSalesHT(o), 0);
+  const shippingHT = validOrders.reduce((sum, o) => sum + orderShippingHT(o), 0);
   const totalDiscounts = validOrders.reduce((sum, o) => sum + parseFloat(o.total_discounts || 0), 0);
   const aov = totalOrders > 0 ? netSales / totalOrders : 0;
 
@@ -219,7 +231,7 @@ function computeShopifyMetrics(orders) {
   const uniqueCustomers = Object.keys(customerOrders).length;
   const repeatRate = uniqueCustomers > 0 ? (repeatCustomerCount / uniqueCustomers) * 100 : 0;
 
-  return { totalOrders, netSales, totalDiscounts, aov, repeatRate, repeatNetSales };
+  return { totalOrders, netSales, shippingHT, totalDiscounts, aov, repeatRate, repeatNetSales };
 }
 
 // Compute daily breakdown for charts (HT, minus refunds)
@@ -571,6 +583,7 @@ async function ensureCached(startStr, endStr) {
     dailyCache[day] = {
       shopify: {
         netSales: valid.reduce((s, o) => s + orderNetSalesHT(o), 0),
+        shippingHT: valid.reduce((s, o) => s + orderShippingHT(o), 0),
         orders: countable.length,
         discounts: valid.reduce((s, o) => s + parseFloat(o.total_discounts || 0), 0),
         customers,
@@ -593,7 +606,7 @@ function aggregateFromCache(startStr, endStr) {
     d.setDate(d.getDate() + 1);
   }
 
-  let netSales = 0, totalOrders = 0, totalDiscounts = 0;
+  let netSales = 0, shippingHT = 0, totalOrders = 0, totalDiscounts = 0;
   const mergedCustomers = {};
 
   const metaTotals = { spend: 0, impressions: 0, clicks: 0, purchases: 0, revenue: 0 };
@@ -607,6 +620,7 @@ function aggregateFromCache(startStr, endStr) {
     if (!c) return;
 
     netSales += c.shopify.netSales;
+    shippingHT += c.shopify.shippingHT || 0;
     totalOrders += c.shopify.orders;
     totalDiscounts += c.shopify.discounts;
     shopifyDaily[day] = { sales: c.shopify.netSales, orders: c.shopify.orders };
@@ -649,7 +663,7 @@ function aggregateFromCache(startStr, endStr) {
   const tiktokRoas = tiktokTotals.spend > 0 ? tiktokTotals.revenue / tiktokTotals.spend : 0;
 
   return {
-    shopify: { netSales, totalOrders, totalDiscounts, aov, repeatRate, repeatNetSales },
+    shopify: { netSales, shippingHT, totalOrders, totalDiscounts, aov, repeatRate, repeatNetSales },
     meta: { ...metaTotals, cpm: metaCpm, roas: metaRoas, daily: metaDaily },
     google: { ...googleTotals, cpm: googleCpm, roas: googleRoas, daily: googleDaily },
     tiktok: { ...tiktokTotals, cpm: tiktokCpm, roas: tiktokRoas, daily: tiktokDaily },
@@ -724,6 +738,7 @@ app.get('/api/dashboard', async (req, res) => {
       dates: { start: dates.start, end: dates.end, compStart: dates.compStart, compEnd: dates.compEnd },
       kpis: {
         netSales: { current: shopify.netSales, previous: shopifyPrev.netSales },
+        shippingHT: { current: shopify.shippingHT, previous: shopifyPrev.shippingHT },
         marketingCosts: { current: totalSpend, previous: totalSpendPrev },
         percentMarketing: { current: percentMarketing, previous: percentMarketingPrev },
         orders: { current: shopify.totalOrders, previous: shopifyPrev.totalOrders },
