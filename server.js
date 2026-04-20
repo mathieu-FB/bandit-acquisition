@@ -2961,30 +2961,53 @@ app.get('/api/pipedrive/b2b-report', async (req, res) => {
 
     console.log(`[Pipedrive] Deals in range ${start} → ${end}: ${filtered.length}`);
 
+    // v1 helper: org_id / person_id are objects in v1, extract .value for IDs
+    const getOrgId = d => d.org_id?.value || d.org_id || null;
+    const getPersonId = d => d.person_id?.value || d.person_id || null;
+    const getClientKey = d => getOrgId(d) || getPersonId(d) || 'unknown';
+    const getClientName = d => d.org_id?.name || d.org_name || d.person_id?.name || d.person_name || `Client #${getClientKey(d)}`;
+
+    // Origin labels (Pipedrive internal values → display names)
+    const ORIGIN_LABELS = {
+      ManuallyCreated: 'Création manuelle',
+      Import: 'Import',
+      API: 'API',
+      Leadbooster: 'Leadbooster',
+      WebForms: 'Formulaire web',
+      Messaging: 'Messagerie',
+      LeadIn: 'Lead entrant',
+      Prospector: 'Prospector',
+      Marketplace: 'Marketplace',
+      CallLog: 'Appel',
+      EmailSync: 'Email',
+      Dealbot: 'Dealbot',
+    };
+
     // CA total
     const ca = filtered.reduce((s, d) => s + (d.value || 0), 0);
 
-    // Unique clients (by org_id, fallback person_id)
-    const clientSet = new Set(filtered.map(d => d.org_id || d.person_id).filter(Boolean));
+    // Unique clients
+    const clientSet = new Set(filtered.map(d => getClientKey(d)).filter(v => v !== 'unknown'));
     const nbClients = clientSet.size;
 
     // Panier moyen
     const panierMoyen = filtered.length > 0 ? ca / filtered.length : 0;
 
-    // Revenue by source — use channel, then origin, then label
+    // Revenue by source — use origin with readable labels
     const bySource = {};
     for (const d of filtered) {
-      const src = d.channel || d.origin || d.label || 'Non défini';
+      const rawOrigin = d.origin || 'Non défini';
+      const src = ORIGIN_LABELS[rawOrigin] || rawOrigin;
       bySource[src] = (bySource[src] || 0) + (d.value || 0);
     }
 
-    // Top 5 clients — v1 gives us org_name & person_name directly
+    // Top 5 clients — v1 gives us org_id.name & person_id.name
     const clientDeals = {};
     for (const d of filtered) {
-      const key = d.org_id || d.person_id || 'unknown';
+      const key = getClientKey(d);
       if (!clientDeals[key]) {
         clientDeals[key] = {
-          name: d.org_name || d.person_name || `Client #${key}`,
+          name: getClientName(d),
           total: 0,
           count: 0,
         };
