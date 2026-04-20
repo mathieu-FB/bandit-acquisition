@@ -2284,33 +2284,20 @@ app.get('/api/tiktok/debug-identities', async (req, res) => {
   const advertiserId = process.env.TIKTOK_ADVERTISER_ID;
   if (!token || !advertiserId) return res.json({ error: 'TikTok non configuré' });
 
-  try {
-    // 1. List all identities
-    const idRes = await fetch(`https://business-api.tiktok.com/open_api/v1.3/identity/get/?advertiser_id=${advertiserId}&page_size=100`, {
-      headers: { 'Access-Token': token },
-    });
-    const idJson = await idRes.json();
+  const results = {};
+  const tryFetch = async (name, url) => {
+    try {
+      const r = await fetch(url, { headers: { 'Access-Token': token } });
+      const text = await r.text();
+      try { results[name] = JSON.parse(text); } catch { results[name] = { raw: text.substring(0, 500) }; }
+    } catch (e) { results[name] = { error: e.message }; }
+  };
 
-    // 2. Try business video list endpoint
-    const bizRes = await fetch(`https://business-api.tiktok.com/open_api/v1.3/business/video/list/?business_id=${advertiserId}&page_size=20`, {
-      headers: { 'Access-Token': token },
-    });
-    const bizJson = await bizRes.json();
+  await tryFetch('identities', `https://business-api.tiktok.com/open_api/v1.3/identity/get/?advertiser_id=${advertiserId}&page_size=100`);
+  await tryFetch('businessVideos', `https://business-api.tiktok.com/open_api/v1.3/business/video/list/?business_id=${advertiserId}&page_size=20`);
+  await tryFetch('creativeVideos', `https://business-api.tiktok.com/open_api/v1.3/file/video/ad/search/?advertiser_id=${advertiserId}&page_size=20`);
 
-    // 3. Try creative/video/list (ad account uploaded videos)
-    const creativeRes = await fetch(`https://business-api.tiktok.com/open_api/v1.3/creative/video/list/?advertiser_id=${advertiserId}&page_size=20`, {
-      headers: { 'Access-Token': token },
-    });
-    const creativeJson = await creativeRes.json();
-
-    res.json({
-      identities: idJson,
-      businessVideos: bizJson,
-      creativeVideos: creativeJson,
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  res.json(results);
 });
 
 // Search authorized Spark Ads posts by keywords
