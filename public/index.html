@@ -819,11 +819,6 @@
   <div class="tab-content" id="tab-linkedin">
     <div class="li-page">
 
-      <!-- LinkedIn Connect + Import -->
-      <div class="li-connect-bar" id="liConnectBar">
-        <div class="li-connect-status" id="liConnectStatus"></div>
-      </div>
-
       <!-- Knowledge Base (collapsible) -->
       <div class="li-kb-section">
         <button class="li-kb-toggle" id="liKbToggle">
@@ -831,11 +826,24 @@
           <span class="li-kb-arrow">&#9662;</span>
         </button>
         <div class="li-kb-body" id="liKbBody" style="display:none;">
+          <!-- Import from file -->
+          <div class="li-kb-import">
+            <div class="li-kb-import-row">
+              <input type="file" id="liImportFile" accept=".csv,.txt,.json" class="li-file-input">
+              <label for="liImportFile" class="btn btn-outline li-file-label">Importer un fichier (CSV / TXT)</label>
+              <button class="btn btn-primary" onclick="importLinkedinFile()" id="liImportBtn" style="display:none;">Importer</button>
+              <span class="li-import-result" id="liImportResult"></span>
+            </div>
+            <div class="li-kb-import-help">
+              LinkedIn > Paramètres > Confidentialité > Obtenir une copie de vos données > Publications
+            </div>
+          </div>
+          <!-- Add manually -->
           <div class="li-kb-add">
-            <textarea class="li-textarea" id="liNewPost" rows="4" placeholder="Collez un de vos posts LinkedIn ici..."></textarea>
+            <textarea class="li-textarea" id="liNewPost" rows="4" placeholder="Ou collez un post LinkedIn manuellement..."></textarea>
             <div class="li-kb-add-row">
               <input type="date" id="liPostDate" class="date-input">
-              <button class="btn btn-primary" onclick="addLinkedinPost()">Ajouter à la base</button>
+              <button class="btn btn-primary" onclick="addLinkedinPost()">Ajouter</button>
             </div>
           </div>
           <div class="li-kb-list" id="liKbList"></div>

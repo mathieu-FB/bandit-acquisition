@@ -3312,7 +3312,97 @@ app.get('/api/linkedin/auth/status', (req, res) => {
   res.json({ connected: true, name: token.name, memberId: token.memberId });
 });
 
-// Import posts from LinkedIn
+// Import posts from LinkedIn data export (CSV file upload)
+app.post('/api/linkedin/import-file', linkedinUpload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Fichier requis' });
+
+  try {
+    const content = req.file.buffer.toString('utf-8');
+    const existingPosts = loadLinkedinPosts();
+    const existingContents = new Set(existingPosts.map(p => p.content.substring(0, 100)));
+    let imported = 0;
+
+    // Try to parse as CSV (LinkedIn export format)
+    const lines = content.split('\n');
+    const header = lines[0]?.toLowerCase() || '';
+
+    if (header.includes('shareco') || header.includes('date') || header.includes('commentary') || req.file.originalname.endsWith('.csv')) {
+      // CSV parsing — LinkedIn exports use various column names
+      // Find the text column and date column
+      const cols = parseCSVLine(lines[0]);
+      const textIdx = cols.findIndex(c => /share.*comment|commentary|content|texte|post/i.test(c));
+      const dateIdx = cols.findIndex(c => /date|created|time/i.test(c));
+
+      if (textIdx === -1) {
+        // Fallback: treat each non-empty line as a post
+        return res.status(400).json({ error: `Colonnes trouvées: ${cols.join(', ')}. Impossible de trouver la colonne de contenu des posts.` });
+      }
+
+      for (let i = 1; i < lines.length; i++) {
+        if (!lines[i].trim()) continue;
+        const row = parseCSVLine(lines[i]);
+        const text = row[textIdx]?.trim();
+        if (!text || text.length < 10) continue;
+        if (existingContents.has(text.substring(0, 100))) continue;
+
+        existingPosts.push({
+          id: Date.now().toString() + '_' + imported,
+          content: text,
+          date: row[dateIdx]?.trim() || '',
+          addedAt: new Date().toISOString(),
+          source: 'file-import',
+        });
+        existingContents.add(text.substring(0, 100));
+        imported++;
+      }
+    } else {
+      // Plain text — split by double newlines (each block = one post)
+      const blocks = content.split(/\n\s*\n\s*\n/).map(b => b.trim()).filter(b => b.length > 10);
+      for (const block of blocks) {
+        if (existingContents.has(block.substring(0, 100))) continue;
+        existingPosts.push({
+          id: Date.now().toString() + '_' + imported,
+          content: block,
+          date: '',
+          addedAt: new Date().toISOString(),
+          source: 'file-import',
+        });
+        existingContents.add(block.substring(0, 100));
+        imported++;
+      }
+    }
+
+    saveLinkedinPosts(existingPosts);
+    console.log(`[LinkedIn] File import: ${imported} posts imported (${existingPosts.length} total)`);
+    res.json({ imported, total: existingPosts.length });
+  } catch (err) {
+    console.error('[LinkedIn] File import error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Simple CSV line parser (handles quoted fields)
+function parseCSVLine(line) {
+  const result = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') { current += '"'; i++; }
+      else inQuotes = !inQuotes;
+    } else if (ch === ',' && !inQuotes) {
+      result.push(current);
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  result.push(current);
+  return result;
+}
+
+// Import posts from LinkedIn API (requires r_member_social — Community Management API)
 app.post('/api/linkedin/import', async (req, res) => {
   const tokenData = getLinkedinToken();
   if (!tokenData) return res.status(401).json({ error: 'LinkedIn non connecté' });
