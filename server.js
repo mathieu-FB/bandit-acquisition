@@ -652,7 +652,7 @@ function aggregateFromCache(startStr, endStr) {
     }
   });
 
-  const aov = totalOrders > 0 ? netSales / totalOrders : 0;
+  const aov = totalOrders > 0 ? (netSales + shippingHT) / totalOrders : 0;
   const repeatRate = unique > 0 ? (repeatCount / unique) * 100 : 0;
 
   const metaCpm = metaTotals.impressions > 0 ? (metaTotals.spend / metaTotals.impressions) * 1000 : 0;
@@ -695,12 +695,16 @@ app.get('/api/dashboard', async (req, res) => {
     const totalSpend = meta.spend + google.spend + tiktok.spend;
     const totalSpendPrev = comp.meta.spend + comp.google.spend + comp.tiktok.spend;
 
-    const percentMarketing = shopify.netSales > 0 ? (totalSpend / shopify.netSales) * 100 : 0;
-    const percentMarketingPrev = shopifyPrev.netSales > 0 ? (totalSpendPrev / shopifyPrev.netSales) * 100 : 0;
+    // Total CA HT = net sales + transport
+    const totalCA = shopify.netSales + (shopify.shippingHT || 0);
+    const totalCAPrev = shopifyPrev.netSales + (shopifyPrev.shippingHT || 0);
+
+    const percentMarketing = totalCA > 0 ? (totalSpend / totalCA) * 100 : 0;
+    const percentMarketingPrev = totalCAPrev > 0 ? (totalSpendPrev / totalCAPrev) * 100 : 0;
     const blendedCac = shopify.totalOrders > 0 ? totalSpend / shopify.totalOrders : 0;
     const blendedCacPrev = shopifyPrev.totalOrders > 0 ? totalSpendPrev / shopifyPrev.totalOrders : 0;
-    const blendedRoas = totalSpend > 0 ? shopify.netSales / totalSpend : 0;
-    const blendedRoasPrev = totalSpendPrev > 0 ? shopifyPrev.netSales / totalSpendPrev : 0;
+    const blendedRoas = totalSpend > 0 ? totalCA / totalSpend : 0;
+    const blendedRoasPrev = totalSpendPrev > 0 ? totalCAPrev / totalSpendPrev : 0;
 
     // Build daily chart series
     const dailySpendByChannel = allDates.map(day => ({
@@ -724,12 +728,17 @@ app.get('/api/dashboard', async (req, res) => {
       };
     });
 
-    const dailySales = allDates.map(day => ({ date: day, sales: shopifyDaily[day]?.sales || 0, orders: shopifyDaily[day]?.orders || 0 }));
+    const dailySales = allDates.map(day => {
+      const c = dailyCache[day];
+      const sales = (c?.shopify?.netSales || 0) + (c?.shopify?.shippingHT || 0);
+      return { date: day, sales, orders: shopifyDaily[day]?.orders || 0 };
+    });
     const dailyMarketingCosts = allDates.map(day => ({
       date: day, total: (meta.daily[day]?.spend || 0) + (google.daily[day]?.spend || 0) + (tiktok.daily[day]?.spend || 0),
     }));
     const dailyPercentMarketing = allDates.map(day => {
-      const sales = shopifyDaily[day]?.sales || 0;
+      const c = dailyCache[day];
+      const sales = (c?.shopify?.netSales || 0) + (c?.shopify?.shippingHT || 0);
       const spend = (meta.daily[day]?.spend || 0) + (google.daily[day]?.spend || 0) + (tiktok.daily[day]?.spend || 0);
       return { date: day, percent: sales > 0 ? (spend / sales) * 100 : 0 };
     });
@@ -737,8 +746,7 @@ app.get('/api/dashboard', async (req, res) => {
     res.json({
       dates: { start: dates.start, end: dates.end, compStart: dates.compStart, compEnd: dates.compEnd },
       kpis: {
-        netSales: { current: shopify.netSales, previous: shopifyPrev.netSales },
-        shippingHT: { current: shopify.shippingHT, previous: shopifyPrev.shippingHT },
+        netSales: { current: totalCA, previous: totalCAPrev },
         marketingCosts: { current: totalSpend, previous: totalSpendPrev },
         percentMarketing: { current: percentMarketing, previous: percentMarketingPrev },
         orders: { current: shopify.totalOrders, previous: shopifyPrev.totalOrders },

@@ -537,7 +537,6 @@ async function loadDashboard() {
 
     // Render KPIs
     renderKPI('netSales', kpis.netSales.current, kpis.netSales.previous, fmtCurrency, false);
-    renderKPI('shippingHT', kpis.shippingHT.current, kpis.shippingHT.previous, fmtCurrency, false);
     renderKPI('marketingCosts', kpis.marketingCosts.current, kpis.marketingCosts.previous, fmtCurrency, true);
     renderKPI('percentMarketing', kpis.percentMarketing.current, kpis.percentMarketing.previous, fmtPercent, true);
     renderKPI('orders', kpis.orders.current, kpis.orders.previous, fmtNumber, false);
