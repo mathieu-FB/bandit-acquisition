@@ -2795,9 +2795,50 @@ app.get('/api/status', (req, res) => {
 // TIKTOK OAUTH CALLBACK
 // ============================================================
 
-app.get('/api/tiktok/callback', (req, res) => {
+app.get('/api/tiktok/auth', (req, res) => {
+  const appId = process.env.TIKTOK_APP_ID;
+  if (!appId) return res.status(500).send('TIKTOK_APP_ID not configured');
+  const redirectUri = `${req.protocol}://${req.get('host')}/api/tiktok/callback`;
+  const authUrl = `https://business-api.tiktok.com/portal/auth?app_id=${appId}&redirect_uri=${encodeURIComponent(redirectUri)}&state=bandit`;
+  res.redirect(authUrl);
+});
+
+app.get('/api/tiktok/callback', async (req, res) => {
   const authCode = req.query.auth_code || req.query.code;
-  res.send(`<h2>TikTok Auth Code</h2><p>Copie ce code et lance :</p><pre>node tiktok-auth.js ${authCode}</pre>`);
+  if (!authCode) return res.send('<h2>Erreur</h2><p>Pas de code reçu.</p><a href="/">Retour</a>');
+
+  const appId = process.env.TIKTOK_APP_ID;
+  const appSecret = process.env.TIKTOK_APP_SECRET;
+
+  try {
+    const tokenRes = await fetch('https://business-api.tiktok.com/open_api/v1.3/oauth2/access_token/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ app_id: appId, secret: appSecret, auth_code: authCode }),
+    });
+    const data = await tokenRes.json();
+
+    if (data.code === 0 && data.data) {
+      const token = data.data.access_token;
+      const advIds = data.data.advertiser_ids || [];
+      console.log(`[TikTok] New token obtained. Advertiser IDs: ${advIds.join(', ')}`);
+
+      res.send(`<html><body style="font-family:sans-serif;max-width:600px;margin:40px auto;padding:20px;">
+        <h2>TikTok autorisé !</h2>
+        <p>Mets à jour ces variables sur Railway :</p>
+        <div style="background:#f5f5f5;padding:16px;border-radius:8px;font-family:monospace;font-size:13px;word-break:break-all;">
+          <strong>TIKTOK_ACCESS_TOKEN</strong>=<br>${token}<br><br>
+          ${advIds.length ? `<strong>TIKTOK_ADVERTISER_ID</strong>=${advIds[0]}` : ''}
+        </div>
+        <p style="margin-top:16px;color:#666;font-size:13px;">Copie le token ci-dessus, colle-le dans Railway > Variables, puis redéploie.</p>
+        <a href="/" style="color:#1a1a1a;font-weight:bold;">Retour au dashboard</a>
+      </body></html>`);
+    } else {
+      res.send(`<h2>Erreur TikTok</h2><pre>${JSON.stringify(data, null, 2)}</pre><a href="/">Retour</a>`);
+    }
+  } catch (err) {
+    res.status(500).send(`<h2>Erreur</h2><pre>${err.message}</pre><a href="/">Retour</a>`);
+  }
 });
 
 // Amazon Ads OAuth callback — exchanges code for refresh token
