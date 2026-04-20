@@ -41,6 +41,23 @@ function getParisOffset(date) {
   return tz ? tz.value.replace('GMT', '') : '+01:00';
 }
 
+// Fixed monthly freelance cost (ads management)
+const FREELANCE_MONTHLY_COST = 1280;
+
+function getFreelanceCostForRange(startStr, endStr) {
+  // Pro-rata the monthly cost across the date range
+  let total = 0;
+  const start = new Date(startStr);
+  const end = new Date(endStr);
+  const d = new Date(start);
+  while (d <= end) {
+    const daysInMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+    total += FREELANCE_MONTHLY_COST / daysInMonth;
+    d.setDate(d.getDate() + 1);
+  }
+  return Math.round(total * 100) / 100;
+}
+
 function buildDateRange(query) {
   const now = new Date();
   let start, end, compStart, compEnd;
@@ -692,8 +709,10 @@ app.get('/api/dashboard', async (req, res) => {
     const { shopify, meta, google, tiktok, shopifyDaily, allDates } = current;
     const shopifyPrev = comp.shopify;
 
-    const totalSpend = meta.spend + google.spend + tiktok.spend;
-    const totalSpendPrev = comp.meta.spend + comp.google.spend + comp.tiktok.spend;
+    const freelanceCost = getFreelanceCostForRange(dates.start, dates.end);
+    const freelanceCostPrev = getFreelanceCostForRange(dates.compStart, dates.compEnd);
+    const totalSpend = meta.spend + google.spend + tiktok.spend + freelanceCost;
+    const totalSpendPrev = comp.meta.spend + comp.google.spend + comp.tiktok.spend + freelanceCostPrev;
 
     // Total CA HT = net sales + transport
     const totalCA = shopify.netSales + (shopify.shippingHT || 0);
@@ -733,13 +752,17 @@ app.get('/api/dashboard', async (req, res) => {
       const sales = (c?.shopify?.netSales || 0) + (c?.shopify?.shippingHT || 0);
       return { date: day, sales, orders: shopifyDaily[day]?.orders || 0 };
     });
-    const dailyMarketingCosts = allDates.map(day => ({
-      date: day, total: (meta.daily[day]?.spend || 0) + (google.daily[day]?.spend || 0) + (tiktok.daily[day]?.spend || 0),
-    }));
+    const dailyMarketingCosts = allDates.map(day => {
+      const daysInMonth = new Date(new Date(day).getFullYear(), new Date(day).getMonth() + 1, 0).getDate();
+      const dailyFreelance = FREELANCE_MONTHLY_COST / daysInMonth;
+      return { date: day, total: (meta.daily[day]?.spend || 0) + (google.daily[day]?.spend || 0) + (tiktok.daily[day]?.spend || 0) + dailyFreelance };
+    });
     const dailyPercentMarketing = allDates.map(day => {
       const c = dailyCache[day];
       const sales = (c?.shopify?.netSales || 0) + (c?.shopify?.shippingHT || 0);
-      const spend = (meta.daily[day]?.spend || 0) + (google.daily[day]?.spend || 0) + (tiktok.daily[day]?.spend || 0);
+      const daysInMonth = new Date(new Date(day).getFullYear(), new Date(day).getMonth() + 1, 0).getDate();
+      const dailyFreelance = FREELANCE_MONTHLY_COST / daysInMonth;
+      const spend = (meta.daily[day]?.spend || 0) + (google.daily[day]?.spend || 0) + (tiktok.daily[day]?.spend || 0) + dailyFreelance;
       return { date: day, percent: sales > 0 ? (spend / sales) * 100 : 0 };
     });
 
@@ -1021,7 +1044,8 @@ app.get('/api/objectives', async (req, res) => {
 
     // Daily stats (today)
     const dayData = aggregateFromCache(todayStr, todayStr);
-    const daySpend = dayData.meta.spend + dayData.google.spend + dayData.tiktok.spend;
+    const dayFreelance = FREELANCE_MONTHLY_COST / daysInMonth;
+    const daySpend = dayData.meta.spend + dayData.google.spend + dayData.tiktok.spend + dayFreelance;
     const dayCA = getCA(dayData);
     const dayRatio = dayCA > 0 ? (daySpend / dayCA) * 100 : 0;
     const dailyCATarget = obj.monthObj.ca / daysInMonth;
@@ -1029,7 +1053,8 @@ app.get('/api/objectives', async (req, res) => {
 
     const mtd = aggregateFromCache(monthStart, todayStr);
     const mtdCA = getCA(mtd);
-    const spendMTD = mtd.meta.spend + mtd.google.spend + mtd.tiktok.spend;
+    const freelanceMTD = getFreelanceCostForRange(monthStart, todayStr);
+    const spendMTD = mtd.meta.spend + mtd.google.spend + mtd.tiktok.spend + freelanceMTD;
     const ratioMTD = mtdCA > 0 ? (spendMTD / mtdCA) * 100 : 0;
     const projectedCA_month = daysElapsedMonth > 0 ? (mtdCA / daysElapsedMonth) * daysInMonth : 0;
     const projectedSpend_month = daysElapsedMonth > 0 ? (spendMTD / daysElapsedMonth) * daysInMonth : 0;
@@ -1037,7 +1062,8 @@ app.get('/api/objectives', async (req, res) => {
 
     const qtd = aggregateFromCache(quarterStart, todayStr);
     const qtdCA = getCA(qtd);
-    const spendQTD = qtd.meta.spend + qtd.google.spend + qtd.tiktok.spend;
+    const freelanceQTD = getFreelanceCostForRange(quarterStart, todayStr);
+    const spendQTD = qtd.meta.spend + qtd.google.spend + qtd.tiktok.spend + freelanceQTD;
     const ratioQTD = qtdCA > 0 ? (spendQTD / qtdCA) * 100 : 0;
     const projectedCA_quarter = daysElapsedQuarter > 0 ? (qtdCA / daysElapsedQuarter) * totalDaysQuarter : 0;
     const projectedSpend_quarter = daysElapsedQuarter > 0 ? (spendQTD / daysElapsedQuarter) * totalDaysQuarter : 0;
