@@ -3327,23 +3327,39 @@ app.post('/api/linkedin/import', async (req, res) => {
     const count = 50;
     let hasMore = true;
 
+    // Try v2 ugcPosts endpoint (works with w_member_social)
     while (hasMore) {
-      const url = `https://api.linkedin.com/rest/posts?author=${encodeURIComponent(urn)}&q=author&count=${count}&start=${start}`;
-      console.log(`[LinkedIn] Fetching posts start=${start}...`);
+      const url = `https://api.linkedin.com/v2/ugcPosts?q=authors&authors=List(${encodeURIComponent(urn)})&count=${count}&start=${start}`;
+      console.log(`[LinkedIn] Fetching ugcPosts start=${start}...`);
       const r = await fetch(url, {
         headers: {
           Authorization: `Bearer ${accessToken}`,
-          'LinkedIn-Version': '202604',
           'X-Restli-Protocol-Version': '2.0.0',
         },
       });
 
       if (!r.ok) {
         const errText = await r.text();
-        console.error(`[LinkedIn] Posts API ${r.status}:`, errText);
-        // If 403, might need different scope or approval
-        if (r.status === 403) {
-          return res.status(403).json({ error: 'Permissions insuffisantes. Vérifiez que le produit "Share on LinkedIn" est activé sur votre app LinkedIn.', details: errText });
+        console.error(`[LinkedIn] ugcPosts API ${r.status}:`, errText);
+
+        // If v2 fails, try REST /rest/posts as fallback
+        if (r.status === 403 || r.status === 401) {
+          console.log('[LinkedIn] ugcPosts failed, trying /rest/posts...');
+          const r2 = await fetch(`https://api.linkedin.com/rest/posts?author=${encodeURIComponent(urn)}&q=author&count=${count}&start=0`, {
+            headers: {
+              Authorization: `Bearer ${accessToken}`,
+              'LinkedIn-Version': '202604',
+              'X-Restli-Protocol-Version': '2.0.0',
+            },
+          });
+          const err2 = await r2.text();
+          console.error(`[LinkedIn] REST posts API ${r2.status}:`, err2);
+          return res.status(r.status).json({
+            error: `LinkedIn refuse l'accès aux posts (${r.status}). Assurez-vous que le produit "Share on LinkedIn" est bien activé et que vous avez ré-autorisé l'app après l'ajout du produit.`,
+            details_ugc: errText,
+            details_rest: err2,
+            tip: 'Essayez de vous déconnecter et reconnecter LinkedIn pour rafraîchir les permissions.',
+          });
         }
         throw new Error(`LinkedIn API ${r.status}: ${errText}`);
       }
@@ -3355,7 +3371,7 @@ app.post('/api/linkedin/import', async (req, res) => {
       start += count;
     }
 
-    console.log(`[LinkedIn] Fetched ${allPosts.length} posts total`);
+    console.log(`[LinkedIn] Fetched ${allPosts.length} ugcPosts total`);
 
     // Parse posts — extract text content
     const existingPosts = loadLinkedinPosts();
@@ -3364,17 +3380,26 @@ app.post('/api/linkedin/import', async (req, res) => {
 
     for (const post of allPosts) {
       // Skip if already imported
-      if (existingIds.has(post.id)) continue;
+      const postId = post.id || post.urn;
+      if (existingIds.has(postId)) continue;
 
-      // Extract text from commentary
-      const text = post.commentary || '';
-      if (!text.trim()) continue; // skip posts without text (shares, etc.)
+      // Extract text — ugcPosts use specificContent.com.linkedin.ugc.ShareContent
+      let text = '';
+      if (post.specificContent) {
+        const share = post.specificContent['com.linkedin.ugc.ShareContent'];
+        text = share?.shareCommentary?.text || '';
+      } else if (post.commentary) {
+        text = post.commentary;
+      }
+      if (!text.trim()) continue;
 
-      const createdAt = post.createdAt ? new Date(post.createdAt).toISOString().split('T')[0] : '';
+      // ugcPosts use created.time (epoch ms), REST posts use createdAt
+      const ts = post.created?.time || post.createdAt;
+      const createdAt = ts ? new Date(ts).toISOString().split('T')[0] : '';
 
       existingPosts.push({
         id: Date.now().toString() + '_' + imported,
-        linkedinId: post.id,
+        linkedinId: postId,
         content: text.trim(),
         date: createdAt,
         addedAt: new Date().toISOString(),
