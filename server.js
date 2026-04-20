@@ -690,6 +690,44 @@ function aggregateFromCache(startStr, endStr) {
 }
 
 // ============================================================
+// CACHE PURGE ENDPOINT
+// ============================================================
+
+app.post('/api/cache/purge', (req, res) => {
+  const { dates } = req.body; // array of "YYYY-MM-DD" strings
+  if (!dates || !Array.isArray(dates) || dates.length === 0) {
+    return res.status(400).json({ error: 'Provide a "dates" array of YYYY-MM-DD strings' });
+  }
+  const purged = [];
+  dates.forEach(day => {
+    if (dailyCache[day]) {
+      delete dailyCache[day];
+      purged.push(day);
+    }
+  });
+  console.log(`[Cache] Purged ${purged.length} days: ${purged.join(', ')}`);
+  res.json({ purged, remaining: Object.keys(dailyCache).length });
+});
+
+// GET version: /api/cache/purge?dates=2026-04-15,2026-04-16
+app.get('/api/cache/purge', (req, res) => {
+  const datesParam = req.query.dates;
+  if (!datesParam) {
+    return res.status(400).json({ error: 'Provide ?dates=YYYY-MM-DD,YYYY-MM-DD,...' });
+  }
+  const dates = datesParam.split(',').map(d => d.trim());
+  const purged = [];
+  dates.forEach(day => {
+    if (dailyCache[day]) {
+      delete dailyCache[day];
+      purged.push(day);
+    }
+  });
+  console.log(`[Cache] Purged ${purged.length} days: ${purged.join(', ')}`);
+  res.json({ purged, remaining: Object.keys(dailyCache).length });
+});
+
+// ============================================================
 // MAIN DASHBOARD ENDPOINT
 // ============================================================
 
