@@ -1016,25 +1016,30 @@ app.get('/api/objectives', async (req, res) => {
     // Use cache for QTD (which includes MTD) + today
     await ensureCached(quarterStart, todayStr);
 
+    // Helper: total CA HT = netSales + shippingHT
+    const getCA = (agg) => agg.shopify.netSales + (agg.shopify.shippingHT || 0);
+
     // Daily stats (today)
     const dayData = aggregateFromCache(todayStr, todayStr);
     const daySpend = dayData.meta.spend + dayData.google.spend + dayData.tiktok.spend;
-    const dayCA = dayData.shopify.netSales;
+    const dayCA = getCA(dayData);
     const dayRatio = dayCA > 0 ? (daySpend / dayCA) * 100 : 0;
     const dailyCATarget = obj.monthObj.ca / daysInMonth;
     const dayProgressCA = dailyCATarget > 0 ? (dayCA / dailyCATarget) * 100 : 0;
 
     const mtd = aggregateFromCache(monthStart, todayStr);
+    const mtdCA = getCA(mtd);
     const spendMTD = mtd.meta.spend + mtd.google.spend + mtd.tiktok.spend;
-    const ratioMTD = mtd.shopify.netSales > 0 ? (spendMTD / mtd.shopify.netSales) * 100 : 0;
-    const projectedCA_month = daysElapsedMonth > 0 ? (mtd.shopify.netSales / daysElapsedMonth) * daysInMonth : 0;
+    const ratioMTD = mtdCA > 0 ? (spendMTD / mtdCA) * 100 : 0;
+    const projectedCA_month = daysElapsedMonth > 0 ? (mtdCA / daysElapsedMonth) * daysInMonth : 0;
     const projectedSpend_month = daysElapsedMonth > 0 ? (spendMTD / daysElapsedMonth) * daysInMonth : 0;
     const projectedRatio_month = projectedCA_month > 0 ? (projectedSpend_month / projectedCA_month) * 100 : 0;
 
     const qtd = aggregateFromCache(quarterStart, todayStr);
+    const qtdCA = getCA(qtd);
     const spendQTD = qtd.meta.spend + qtd.google.spend + qtd.tiktok.spend;
-    const ratioQTD = qtd.shopify.netSales > 0 ? (spendQTD / qtd.shopify.netSales) * 100 : 0;
-    const projectedCA_quarter = daysElapsedQuarter > 0 ? (qtd.shopify.netSales / daysElapsedQuarter) * totalDaysQuarter : 0;
+    const ratioQTD = qtdCA > 0 ? (spendQTD / qtdCA) * 100 : 0;
+    const projectedCA_quarter = daysElapsedQuarter > 0 ? (qtdCA / daysElapsedQuarter) * totalDaysQuarter : 0;
     const projectedSpend_quarter = daysElapsedQuarter > 0 ? (spendQTD / daysElapsedQuarter) * totalDaysQuarter : 0;
     const projectedRatio_quarter = projectedCA_quarter > 0 ? (projectedSpend_quarter / projectedCA_quarter) * 100 : 0;
 
@@ -1057,17 +1062,17 @@ app.get('/api/objectives', async (req, res) => {
       month: {
         label: monthNames[month] + ' ' + year,
         objectiveCA: obj.monthObj.ca, objectiveRatio: obj.monthObj.ratio,
-        currentCA: mtd.shopify.netSales, currentSpend: spendMTD, currentRatio: ratioMTD,
+        currentCA: mtdCA, currentSpend: spendMTD, currentRatio: ratioMTD,
         projectedCA: projectedCA_month, projectedRatio: projectedRatio_month,
-        progressCA: (mtd.shopify.netSales / obj.monthObj.ca) * 100,
+        progressCA: (mtdCA / obj.monthObj.ca) * 100,
         daysElapsed: daysElapsedMonth, daysTotal: daysInMonth,
       },
       quarter: {
         label: obj.quarter + ' ' + year,
         objectiveCA: obj.quarterObj.ca, objectiveRatio: obj.quarterObj.ratio,
-        currentCA: qtd.shopify.netSales, currentSpend: spendQTD, currentRatio: ratioQTD,
+        currentCA: qtdCA, currentSpend: spendQTD, currentRatio: ratioQTD,
         projectedCA: projectedCA_quarter, projectedRatio: projectedRatio_quarter,
-        progressCA: (qtd.shopify.netSales / obj.quarterObj.ca) * 100,
+        progressCA: (qtdCA / obj.quarterObj.ca) * 100,
         daysElapsed: daysElapsedQuarter, daysTotal: totalDaysQuarter,
       },
     });
