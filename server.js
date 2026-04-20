@@ -1393,7 +1393,8 @@ async function fetchAmazonSalesMetrics(start, end) {
 // AMAZON PRODUCT STATS — Persistent JSON storage + incremental fetch
 // ============================================================
 
-const AMAZON_DATA_DIR = process.env.AMAZON_DATA_DIR || path.join(__dirname, 'data');
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+const AMAZON_DATA_DIR = process.env.AMAZON_DATA_DIR || DATA_DIR;
 const AMAZON_PRODUCTS_FILE = path.join(AMAZON_DATA_DIR, 'amazon-products.json');
 
 function loadAmazonProductData() {
@@ -3443,7 +3444,8 @@ app.get('/api/pipedrive/b2b-report', async (req, res) => {
 // LINKEDIN — Knowledge Base + AI Post Generation
 // ============================================================
 
-const LINKEDIN_KB_PATH = path.join(__dirname, 'linkedin-posts.json');
+const LINKEDIN_KB_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+const LINKEDIN_KB_PATH = path.join(LINKEDIN_KB_DIR, 'linkedin-posts.json');
 const linkedinUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 function loadLinkedinPosts() {
@@ -3456,6 +3458,7 @@ function loadLinkedinPosts() {
 }
 
 function saveLinkedinPosts(posts) {
+  if (!fs.existsSync(LINKEDIN_KB_DIR)) fs.mkdirSync(LINKEDIN_KB_DIR, { recursive: true });
   fs.writeFileSync(LINKEDIN_KB_PATH, JSON.stringify(posts, null, 2));
 }
 
