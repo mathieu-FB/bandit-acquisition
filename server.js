@@ -2604,8 +2604,7 @@ app.post('/api/tiktok/create-spark-campaign', async (req, res) => {
       bid_type: 'BID_TYPE_NO_BID',
       optimization_goal: 'CONVERT',
       billing_event: 'OCPM',
-      schedule_type: 'SCHEDULE_START_END',
-      schedule_start_time: new Date().toISOString().replace('T', ' ').substring(0, 19),
+      schedule_type: 'SCHEDULE_FROM_NOW',
       pacing: 'PACING_MODE_SMOOTH',
     };
 
