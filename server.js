@@ -344,13 +344,15 @@ function aggregateMetaData(dailyData) {
 // GOOGLE ADS API (gRPC via google-ads-api library)
 // ============================================================
 
-function getGoogleAdsCustomer() {
+function getGoogleAdsCustomer(overrideCustomerId) {
   const clientId = process.env.GOOGLE_ADS_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_ADS_CLIENT_SECRET;
   const devToken = process.env.GOOGLE_ADS_DEVELOPER_TOKEN;
   const refreshToken = process.env.GOOGLE_ADS_REFRESH_TOKEN;
   const customerId = (process.env.GOOGLE_ADS_CUSTOMER_ID || '').replace(/-/g, '');
-  if (!clientId || !clientSecret || !devToken || !refreshToken || !customerId) return null;
+  const loginCustomerId = (process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID || customerId).replace(/-/g, '');
+  const targetId = overrideCustomerId || (process.env.GOOGLE_ADS_CLIENT_ACCOUNT_ID || '').replace(/-/g, '') || customerId;
+  if (!clientId || !clientSecret || !devToken || !refreshToken || !targetId) return null;
 
   const client = new GoogleAdsApi({
     client_id: clientId,
@@ -359,7 +361,8 @@ function getGoogleAdsCustomer() {
   });
 
   return client.Customer({
-    customer_id: customerId,
+    customer_id: targetId,
+    login_customer_id: loginCustomerId,
     refresh_token: refreshToken,
   });
 }
@@ -436,29 +439,26 @@ function aggregateGoogleData(rawData) {
 app.get('/api/google-ads/debug', async (req, res) => {
   try {
     const customer = getGoogleAdsCustomer();
-    if (!customer) return res.json({ error: 'Google Ads not configured', envKeys: {
-      clientId: !!process.env.GOOGLE_ADS_CLIENT_ID,
-      clientSecret: !!process.env.GOOGLE_ADS_CLIENT_SECRET,
-      devToken: !!process.env.GOOGLE_ADS_DEVELOPER_TOKEN,
-      refreshToken: !!process.env.GOOGLE_ADS_REFRESH_TOKEN,
-      customerId: process.env.GOOGLE_ADS_CUSTOMER_ID || 'MISSING',
-    }});
+    if (!customer) return res.json({ error: 'Google Ads not configured' });
 
-    const results = await customer.query(`
+    // List client accounts under this manager
+    const clients = await customer.query(`
       SELECT
-        segments.date,
-        campaign.name,
-        metrics.cost_micros,
-        metrics.impressions,
-        metrics.clicks,
-        metrics.conversions
-      FROM campaign
-      WHERE segments.date BETWEEN '2026-04-14' AND '2026-04-20'
-      ORDER BY segments.date
-      LIMIT 10
+        customer_client.id,
+        customer_client.descriptive_name,
+        customer_client.manager,
+        customer_client.status
+      FROM customer_client
+      WHERE customer_client.manager = false
     `);
 
-    res.json({ rowCount: results.length, sample: results.slice(0, 5) });
+    const accounts = clients.map(r => ({
+      id: r.customer_client?.id,
+      name: r.customer_client?.descriptive_name,
+      status: r.customer_client?.status,
+    }));
+
+    res.json({ managerAccount: process.env.GOOGLE_ADS_CUSTOMER_ID, clientAccounts: accounts });
   } catch (err) {
     res.json({ error: err.message, details: err.errors?.[0] || null });
   }
