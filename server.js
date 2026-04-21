@@ -432,6 +432,38 @@ function aggregateGoogleData(rawData) {
   };
 }
 
+// Debug endpoint for Google Ads
+app.get('/api/google-ads/debug', async (req, res) => {
+  try {
+    const customer = getGoogleAdsCustomer();
+    if (!customer) return res.json({ error: 'Google Ads not configured', envKeys: {
+      clientId: !!process.env.GOOGLE_ADS_CLIENT_ID,
+      clientSecret: !!process.env.GOOGLE_ADS_CLIENT_SECRET,
+      devToken: !!process.env.GOOGLE_ADS_DEVELOPER_TOKEN,
+      refreshToken: !!process.env.GOOGLE_ADS_REFRESH_TOKEN,
+      customerId: process.env.GOOGLE_ADS_CUSTOMER_ID || 'MISSING',
+    }});
+
+    const results = await customer.query(`
+      SELECT
+        segments.date,
+        campaign.name,
+        metrics.cost_micros,
+        metrics.impressions,
+        metrics.clicks,
+        metrics.conversions
+      FROM campaign
+      WHERE segments.date BETWEEN '2026-04-14' AND '2026-04-20'
+      ORDER BY segments.date
+      LIMIT 10
+    `);
+
+    res.json({ rowCount: results.length, sample: results.slice(0, 5) });
+  } catch (err) {
+    res.json({ error: err.message, details: err.errors?.[0] || null });
+  }
+});
+
 // ============================================================
 // TIKTOK ADS API
 // ============================================================
