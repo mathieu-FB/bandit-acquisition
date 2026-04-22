@@ -9,12 +9,146 @@ const multer = require('multer');
 const { GoogleAdsApi, fromMicros } = require('google-ads-api');
 const { sendReport } = require('./daily-report');
 
+const crypto = require('crypto');
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 
 app.set('trust proxy', true);
-app.use(express.static(path.join(__dirname, 'public')));
 app.use(express.json());
+
+// ============================================================
+// AUTH — Admin login + share tokens
+// ============================================================
+
+const AUTH_SECRET = process.env.AUTH_SECRET || crypto.randomBytes(32).toString('hex');
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
+
+// SHARE_TOKENS format: "label:token:tabs,tabs;label2:token2:tabs"
+// e.g. "equipe:abc123:ecommerce,amazon;freelance:def456:ecommerce"
+function parseShareTokens() {
+  const raw = process.env.SHARE_TOKENS || '';
+  if (!raw) return {};
+  const tokens = {};
+  raw.split(';').forEach(entry => {
+    const [label, token, tabs] = entry.split(':');
+    if (token && tabs) {
+      tokens[token.trim()] = {
+        label: label.trim(),
+        tabs: tabs.split(',').map(t => t.trim()),
+      };
+    }
+  });
+  return tokens;
+}
+
+function makeAuthCookie(role, tabs) {
+  const payload = JSON.stringify({ role, tabs, ts: Date.now() });
+  const hmac = crypto.createHmac('sha256', AUTH_SECRET).update(payload).digest('hex');
+  return Buffer.from(payload).toString('base64') + '.' + hmac;
+}
+
+function verifyAuthCookie(cookie) {
+  if (!cookie) return null;
+  const [b64, hmac] = cookie.split('.');
+  if (!b64 || !hmac) return null;
+  const payload = Buffer.from(b64, 'base64').toString('utf-8');
+  const expected = crypto.createHmac('sha256', AUTH_SECRET).update(payload).digest('hex');
+  if (hmac !== expected) return null;
+  try { return JSON.parse(payload); } catch { return null; }
+}
+
+function parseCookies(req) {
+  const raw = req.headers.cookie || '';
+  const cookies = {};
+  raw.split(';').forEach(c => {
+    const [k, ...v] = c.split('=');
+    if (k) cookies[k.trim()] = decodeURIComponent(v.join('=').trim());
+  });
+  return cookies;
+}
+
+// Login endpoint
+app.post('/api/auth/login', (req, res) => {
+  const { password } = req.body;
+  if (!ADMIN_PASSWORD) return res.status(500).json({ error: 'ADMIN_PASSWORD not configured' });
+  if (password !== ADMIN_PASSWORD) return res.status(401).json({ error: 'Mot de passe incorrect' });
+
+  const cookie = makeAuthCookie('admin', ['all']);
+  res.setHeader('Set-Cookie', `bandit_auth=${cookie}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${60 * 60 * 24 * 30}`);
+  res.json({ ok: true, role: 'admin' });
+});
+
+app.post('/api/auth/logout', (req, res) => {
+  res.setHeader('Set-Cookie', 'bandit_auth=; Path=/; HttpOnly; Max-Age=0');
+  res.json({ ok: true });
+});
+
+// Auth check endpoint (used by frontend)
+app.get('/api/auth/me', (req, res) => {
+  const cookies = parseCookies(req);
+  const auth = verifyAuthCookie(cookies.bandit_auth);
+  if (auth && auth.role === 'admin') {
+    return res.json({ role: 'admin', tabs: ['all'] });
+  }
+
+  // Check share token in query
+  const token = req.query.token;
+  if (token) {
+    const shareTokens = parseShareTokens();
+    const share = shareTokens[token];
+    if (share) return res.json({ role: 'viewer', label: share.label, tabs: share.tabs });
+  }
+
+  return res.json({ role: null });
+});
+
+// Auth middleware — protects all pages and API
+app.use((req, res, next) => {
+  // Allow auth endpoints
+  if (req.path.startsWith('/api/auth/')) return next();
+  // Allow login page assets
+  if (req.path === '/login.html') return next();
+
+  const cookies = parseCookies(req);
+  const auth = verifyAuthCookie(cookies.bandit_auth);
+
+  // Admin — full access
+  if (auth && auth.role === 'admin') {
+    req.userRole = 'admin';
+    req.userTabs = ['all'];
+    return next();
+  }
+
+  // Share token — check URL param
+  const token = req.query.token || (req.headers.referer && new URL(req.headers.referer, `http://${req.headers.host}`).searchParams.get('token'));
+  if (token) {
+    const shareTokens = parseShareTokens();
+    const share = shareTokens[token];
+    if (share) {
+      req.userRole = 'viewer';
+      req.userTabs = share.tabs;
+      return next();
+    }
+  }
+
+  // No auth — if requesting index.html or /, redirect to login
+  if (req.path === '/' || req.path === '/index.html') {
+    return res.redirect('/login.html');
+  }
+
+  // API calls without auth
+  if (req.path.startsWith('/api/')) {
+    return res.status(401).json({ error: 'Non autorisé' });
+  }
+
+  // Static assets (CSS, JS) — allow for login page to work
+  if (req.path.match(/\.(css|js|png|svg|ico|woff2?)$/)) return next();
+
+  return res.redirect('/login.html');
+});
+
+app.use(express.static(path.join(__dirname, 'public')));
 
 // ============================================================
 // HELPERS

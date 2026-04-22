@@ -2116,7 +2116,73 @@ function updateToolbarVisibility() {
 // EVENT LISTENERS
 // ============================================================
 
-document.addEventListener('DOMContentLoaded', () => {
+// ============================================================
+// AUTH — Tab restrictions
+// ============================================================
+
+let currentUserRole = null;
+let allowedTabs = ['all'];
+
+async function checkAuth() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token');
+    const url = token ? `/api/auth/me?token=${token}` : '/api/auth/me';
+    const res = await fetch(url);
+    const data = await res.json();
+
+    if (!data.role) {
+      window.location.href = '/login.html';
+      return false;
+    }
+
+    currentUserRole = data.role;
+    allowedTabs = data.tabs || [];
+
+    applyTabRestrictions();
+    return true;
+  } catch (err) {
+    console.error('Auth check failed:', err);
+    return true; // fail open if auth endpoint is down
+  }
+}
+
+function applyTabRestrictions() {
+  if (allowedTabs.includes('all')) return;
+
+  // Hide unauthorized tabs
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    const tab = btn.dataset.tab;
+    if (!allowedTabs.includes(tab)) {
+      btn.style.display = 'none';
+      const content = document.getElementById(`tab-${tab}`);
+      if (content) content.style.display = 'none';
+    }
+  });
+
+  // Switch to first allowed tab if current is hidden
+  const activeTab = document.querySelector('.tab-btn.active');
+  if (activeTab && !allowedTabs.includes(activeTab.dataset.tab)) {
+    const firstAllowed = document.querySelector(`.tab-btn[data-tab="${allowedTabs[0]}"]`);
+    if (firstAllowed) switchTab(allowedTabs[0]);
+  }
+
+  // Hide logout for viewers, show for admin
+  const logoutBtn = document.getElementById('btnLogout');
+  if (logoutBtn) {
+    logoutBtn.style.display = currentUserRole === 'admin' ? 'inline-flex' : 'none';
+  }
+}
+
+async function logout() {
+  await fetch('/api/auth/logout', { method: 'POST' });
+  window.location.href = '/login.html';
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+  const authed = await checkAuth();
+  if (!authed) return;
+
   setDefaultDates();
   loadStatus();
   loadObjectives();

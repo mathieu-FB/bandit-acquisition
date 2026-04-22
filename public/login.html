@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bandit — Connexion</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <style>
+    body { background: var(--bg); display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
+    .login-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 40px;
+      width: 100%;
+      max-width: 380px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+    }
+    .login-card h1 { font-size: 20px; font-weight: 700; margin: 0 0 8px; color: var(--text); }
+    .login-card p { font-size: 13px; color: var(--text-muted); margin: 0 0 24px; }
+    .login-input {
+      width: 100%;
+      padding: 10px 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 14px;
+      font-family: 'Inter', sans-serif;
+      margin-bottom: 16px;
+      box-sizing: border-box;
+    }
+    .login-input:focus { outline: none; border-color: var(--text); }
+    .login-btn {
+      width: 100%;
+      padding: 10px;
+      background: var(--text);
+      color: var(--card);
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: 'Inter', sans-serif;
+    }
+    .login-btn:hover { opacity: 0.9; }
+    .login-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .login-error { color: var(--red); font-size: 13px; margin-top: 12px; display: none; }
+  </style>
+</head>
+<body>
+  <div class="login-card">
+    <h1>Bandit Dashboard</h1>
+    <p>Connectez-vous pour accéder au dashboard.</p>
+    <form id="loginForm">
+      <input type="password" class="login-input" id="loginPassword" placeholder="Mot de passe" autocomplete="current-password" autofocus>
+      <button type="submit" class="login-btn" id="loginBtn">Se connecter</button>
+    </form>
+    <div class="login-error" id="loginError"></div>
+  </div>
+  <script>
+    document.getElementById('loginForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById('loginBtn');
+      const errEl = document.getElementById('loginError');
+      const password = document.getElementById('loginPassword').value;
+      if (!password) return;
+
+      btn.disabled = true;
+      btn.textContent = 'Connexion...';
+      errEl.style.display = 'none';
+
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password }),
+        });
+        const data = await res.json();
+        if (data.ok) {
+          window.location.href = '/';
+        } else {
+          errEl.textContent = data.error || 'Mot de passe incorrect';
+          errEl.style.display = 'block';
+        }
+      } catch (err) {
+        errEl.textContent = 'Erreur de connexion';
+        errEl.style.display = 'block';
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Se connecter';
+      }
+    });
+  </script>
+</body>
+</html>
