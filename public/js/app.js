@@ -852,8 +852,10 @@ function renderMetaCpaTrendChart(dailyTrend) {
     data: {
       labels,
       datasets: [
-        { label: 'CPA', data: dailyTrend.map(d => d.cpa), borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.08)', fill: true, tension: 0.3, pointRadius: 3 },
+        { label: 'CPA (€)', data: dailyTrend.map(d => d.cpa), borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.08)', fill: true, tension: 0.3, pointRadius: 3, yAxisID: 'y' },
+        { label: 'CPM (€)', data: dailyTrend.map(d => d.cpm), borderColor: '#f59e0b', borderDash: [4, 3], fill: false, tension: 0.3, pointRadius: 2, yAxisID: 'y' },
         { label: 'ROAS', data: dailyTrend.map(d => d.roas), borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 3, yAxisID: 'y1' },
+        { label: 'CTR Link (%)', data: dailyTrend.map(d => d.ctrLink), borderColor: '#10b981', borderDash: [6, 3], fill: false, tension: 0.3, pointRadius: 2, yAxisID: 'y2' },
       ],
     },
     options: {
@@ -862,8 +864,9 @@ function renderMetaCpaTrendChart(dailyTrend) {
       plugins: { legend: { display: true, position: 'top', labels: { font: { size: 11 }, usePointStyle: true } }, tooltip: { ...TOOLTIP_CONFIG } },
       scales: {
         x: { grid: { display: false }, ticks: { font: { size: 10 }, maxTicksLimit: 10 } },
-        y: { position: 'left', grid: { color: '#f0f0f0' }, ticks: { font: { size: 10 }, callback: v => v.toFixed(0) + '€' } },
-        y1: { position: 'right', grid: { display: false }, ticks: { font: { size: 10 }, callback: v => v.toFixed(1) + 'x' } },
+        y: { position: 'left', grid: { color: '#f0f0f0' }, title: { display: true, text: 'CPA / CPM (€)', font: { size: 10 } }, ticks: { font: { size: 10 }, callback: v => v.toFixed(0) + '€' } },
+        y1: { position: 'right', grid: { display: false }, title: { display: true, text: 'ROAS', font: { size: 10 } }, ticks: { font: { size: 10 }, callback: v => v.toFixed(1) + 'x' } },
+        y2: { position: 'right', grid: { display: false }, title: { display: true, text: 'CTR Link', font: { size: 10 } }, ticks: { font: { size: 10 }, callback: v => v.toFixed(1) + '%' } },
       },
     },
   });
@@ -909,6 +912,48 @@ function renderMetaCampaignPieChart(campaigns) {
   }
 }
 
+let _metaAllTopAds = [];
+
+function renderMetaAdCards(ads) {
+  return ads.map(ad => `
+    <div class="meta-ad-card">
+      <div class="meta-ad-visual">
+        ${ad.thumbnailUrl || ad.imageUrl
+          ? `<img src="${ad.imageUrl || ad.thumbnailUrl}" alt="${ad.name}" />`
+          : `<div class="meta-ad-no-img">Pas de visuel</div>`}
+      </div>
+      <div class="meta-ad-info">
+        <h4 class="meta-ad-name">${ad.name}</h4>
+        <div class="meta-ad-campaign">${ad.campaignName}${ad.isVideo ? ' <span style="color:#3b82f6;font-size:10px;">VIDEO</span>' : ''}</div>
+        <a class="meta-ad-link" href="${ad.adsManagerUrl || '#'}" target="_blank" rel="noopener">Voir dans Ads Manager &#8599;</a>
+        <div class="meta-ad-metrics">
+          <div class="meta-metric"><span class="meta-metric-val">${ad.roas.toFixed(2)}x</span><span class="meta-metric-label">ROAS</span></div>
+          <div class="meta-metric"><span class="meta-metric-val">${ad.spend.toFixed(0)}€</span><span class="meta-metric-label">Spend</span></div>
+          <div class="meta-metric"><span class="meta-metric-val">${ad.revenue.toFixed(0)}€</span><span class="meta-metric-label">Revenue</span></div>
+          <div class="meta-metric"><span class="meta-metric-val">${ad.purchases}</span><span class="meta-metric-label">Achats</span></div>
+          <div class="meta-metric"><span class="meta-metric-val">${ad.cpa.toFixed(0)}€</span><span class="meta-metric-label">CPA</span></div>
+          <div class="meta-metric"><span class="meta-metric-val">${ad.hookRate !== null ? ad.hookRate.toFixed(1) + '%' : '—'}</span><span class="meta-metric-label">Hook Rate</span></div>
+          <div class="meta-metric"><span class="meta-metric-val">${ad.holdRate !== null ? ad.holdRate.toFixed(1) + '%' : '—'}</span><span class="meta-metric-label">Hold Rate</span></div>
+          <div class="meta-metric"><span class="meta-metric-val">${ad.ctrLink.toFixed(2)}%</span><span class="meta-metric-label">CTR Link</span></div>
+          <div class="meta-metric"><span class="meta-metric-val">${ad.cpcLink.toFixed(2)}€</span><span class="meta-metric-label">CPC Link</span></div>
+          <div class="meta-metric"><span class="meta-metric-val">${ad.cpm.toFixed(1)}€</span><span class="meta-metric-label">CPM</span></div>
+          <div class="meta-metric"><span class="meta-metric-val">${ad.frequency.toFixed(1)}</span><span class="meta-metric-label">Freq.</span></div>
+          <div class="meta-metric"><span class="meta-metric-val">${ad.ctr.toFixed(2)}%</span><span class="meta-metric-label">CTR All</span></div>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function filterMetaAds(type) {
+  let filtered = _metaAllTopAds;
+  if (type === 'video') filtered = _metaAllTopAds.filter(a => a.isVideo);
+  else if (type === 'static') filtered = _metaAllTopAds.filter(a => !a.isVideo);
+  else if (type === 'acquisition') filtered = _metaAllTopAds.filter(a => a.campaignType === 'acquisition');
+  else if (type === 'retargeting') filtered = _metaAllTopAds.filter(a => a.campaignType === 'retargeting');
+  document.getElementById('metaTopAds').innerHTML = renderMetaAdCards(filtered.slice(0, 12));
+}
+
 async function loadMetaAnalysis(forceDays) {
   const days = forceDays || metaAnalysisDays;
   if (metaAnalysisLoadedDays === days) return;
@@ -951,35 +996,9 @@ async function loadMetaAnalysis(forceDays) {
     renderMetaCpaTrendChart(data.dailyTrend);
     renderMetaCampaignPieChart(data.campaignBreakdown);
 
-    // 2. Top 12 Ads
-    const topAdsEl = document.getElementById('metaTopAds');
-    topAdsEl.innerHTML = data.topAds.map(ad => `
-      <div class="meta-ad-card">
-        <div class="meta-ad-visual">
-          ${ad.thumbnailUrl || ad.imageUrl
-            ? `<img src="${ad.thumbnailUrl || ad.imageUrl}" alt="${ad.name}" />`
-            : `<div class="meta-ad-no-img">Pas de visuel</div>`}
-        </div>
-        <div class="meta-ad-info">
-          <h4 class="meta-ad-name">${ad.name}</h4>
-          <div class="meta-ad-campaign">${ad.campaignName}</div>
-          <div class="meta-ad-metrics">
-            <div class="meta-metric"><span class="meta-metric-val">${ad.roas.toFixed(2)}x</span><span class="meta-metric-label">ROAS</span></div>
-            <div class="meta-metric"><span class="meta-metric-val">${ad.spend.toFixed(0)}€</span><span class="meta-metric-label">Spend</span></div>
-            <div class="meta-metric"><span class="meta-metric-val">${ad.revenue.toFixed(0)}€</span><span class="meta-metric-label">Revenue</span></div>
-            <div class="meta-metric"><span class="meta-metric-val">${ad.purchases}</span><span class="meta-metric-label">Achats</span></div>
-            <div class="meta-metric"><span class="meta-metric-val">${ad.cpa.toFixed(0)}€</span><span class="meta-metric-label">CPA</span></div>
-            <div class="meta-metric"><span class="meta-metric-val">${ad.hookRate !== null ? ad.hookRate.toFixed(1) + '%' : '—'}</span><span class="meta-metric-label">Hook Rate</span></div>
-            <div class="meta-metric"><span class="meta-metric-val">${ad.holdRate !== null ? ad.holdRate.toFixed(1) + '%' : '—'}</span><span class="meta-metric-label">Hold Rate</span></div>
-            <div class="meta-metric"><span class="meta-metric-val">${ad.ctrLink.toFixed(2)}%</span><span class="meta-metric-label">CTR Link</span></div>
-            <div class="meta-metric"><span class="meta-metric-val">${ad.cpcLink.toFixed(2)}€</span><span class="meta-metric-label">CPC Link</span></div>
-            <div class="meta-metric"><span class="meta-metric-val">${ad.cpm.toFixed(1)}€</span><span class="meta-metric-label">CPM</span></div>
-            <div class="meta-metric"><span class="meta-metric-val">${ad.frequency.toFixed(1)}</span><span class="meta-metric-label">Freq.</span></div>
-            <div class="meta-metric"><span class="meta-metric-val">${ad.ctr.toFixed(2)}%</span><span class="meta-metric-label">CTR All</span></div>
-          </div>
-        </div>
-      </div>
-    `).join('');
+    // 2. Top Ads (with filter support)
+    _metaAllTopAds = data.topAds;
+    filterMetaAds('all');
 
     // Analysis for top ads
     if (data.analysis.topAdsAnalysis) {
@@ -2378,6 +2397,15 @@ document.addEventListener('DOMContentLoaded', async () => {
       document.querySelectorAll('[data-meta-days]').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       loadMetaAnalysis(days);
+    });
+  });
+
+  // Meta ad filter buttons (Tout / Videos / Static)
+  document.querySelectorAll('[data-ad-filter]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('[data-ad-filter]').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      filterMetaAds(btn.dataset.adFilter);
     });
   });
 

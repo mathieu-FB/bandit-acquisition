@@ -436,7 +436,7 @@
           <section class="meta-section">
             <div class="meta-charts-row">
               <div class="meta-chart-card">
-                <h3 class="meta-chart-title">CPA / jour</h3>
+                <h3 class="meta-chart-title">CPA · ROAS · CPM · CTR Link / jour</h3>
                 <div class="meta-chart-area"><canvas id="chart-metaCpaTrend"></canvas></div>
               </div>
               <div class="meta-chart-card">
@@ -448,7 +448,27 @@
           </section>
 
           <section class="meta-section">
-            <h2 class="meta-section-title">Top 12 Ads — Performers</h2>
+            <div class="meta-top-header">
+              <h2 class="meta-section-title">Top 12 Ads — Performers</h2>
+              <div class="meta-ad-filters">
+                <button class="btn btn-ghost active" data-ad-filter="all">Tout</button>
+                <button class="btn btn-ghost" data-ad-filter="video">Videos</button>
+                <button class="btn btn-ghost" data-ad-filter="static">Static</button>
+                <span class="meta-filter-sep">|</span>
+                <button class="btn btn-ghost" data-ad-filter="acquisition">Acquisition</button>
+                <button class="btn btn-ghost" data-ad-filter="retargeting">Retargeting</button>
+              </div>
+            </div>
+            <div class="meta-lexicon">
+              <span><strong>ROAS</strong> &ge;3x</span>
+              <span><strong>CPA</strong> &le;25€</span>
+              <span><strong>Hook Rate</strong> &ge;30%</span>
+              <span><strong>Hold Rate</strong> &ge;15%</span>
+              <span><strong>CTR Link</strong> &ge;1%</span>
+              <span><strong>CPC Link</strong> &le;1€</span>
+              <span><strong>CPM</strong> &le;15€</span>
+              <span><strong>Freq.</strong> &le;3</span>
+            </div>
             <div class="meta-ads-grid meta-ads-grid-4" id="metaTopAds"></div>
           </section>
           <section class="meta-section">

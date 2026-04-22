@@ -2099,32 +2099,34 @@ async function fetchMetaAdsetInsights(start, end) {
 async function fetchAdCreative(adId) {
   const token = process.env.META_ACCESS_TOKEN;
   try {
-    // Get ad with creative fields including image_hash-based URL
-    const url = `https://graph.facebook.com/v19.0/${adId}?fields=creative{id,title,body,thumbnail_url,image_url,object_story_spec,asset_feed_spec}&access_token=${token}`;
+    // Get ad with creative fields + preview link
+    const url = `https://graph.facebook.com/v19.0/${adId}?fields=creative{id,title,body,thumbnail_url,image_url,object_story_spec,asset_feed_spec},preview_shareable_link&access_token=${token}`;
     const res = await fetch(url);
     if (!res.ok) { console.error(`[Meta] Ad creative ${adId}: ${res.status}`); return null; }
     const json = await res.json();
     const creative = json.creative || {};
     let imageUrl = creative.image_url || creative.thumbnail_url || null;
 
-    // Try extracting image from object_story_spec
-    if (!imageUrl && creative.object_story_spec) {
+    // Try extracting image from object_story_spec (usually higher quality)
+    if (creative.object_story_spec) {
       const spec = creative.object_story_spec;
-      if (spec.link_data?.image_hash || spec.link_data?.picture) {
-        imageUrl = spec.link_data.picture || null;
-      }
-      if (!imageUrl && spec.video_data?.image_url) {
+      // Video ads — get the cover image
+      if (spec.video_data?.image_url) {
         imageUrl = spec.video_data.image_url;
+      }
+      // Image/link ads
+      if (!imageUrl && (spec.link_data?.picture || spec.link_data?.image_hash)) {
+        imageUrl = spec.link_data.picture || imageUrl;
       }
     }
 
-    // Fallback: fetch the creative ID directly for thumbnail
+    // Fallback: fetch the creative ID directly for full-size image
     if (!imageUrl && creative.id) {
-      const crUrl = `https://graph.facebook.com/v19.0/${creative.id}?fields=thumbnail_url,image_url,effective_instagram_media_id&access_token=${token}`;
+      const crUrl = `https://graph.facebook.com/v19.0/${creative.id}?fields=thumbnail_url,image_url,effective_instagram_media_id,image_crops&access_token=${token}`;
       const crRes = await fetch(crUrl);
       if (crRes.ok) {
         const crJson = await crRes.json();
-        imageUrl = crJson.thumbnail_url || crJson.image_url || null;
+        imageUrl = crJson.image_url || crJson.thumbnail_url || null;
       }
     }
 
@@ -2133,6 +2135,7 @@ async function fetchAdCreative(adId) {
       image_url: imageUrl,
       title: creative.title || '',
       body: creative.body || '',
+      previewLink: json.preview_shareable_link || null,
     };
   } catch (e) { console.error(`[Meta] Creative error ${adId}:`, e.message); return null; }
 }
@@ -2141,9 +2144,9 @@ function parseMetaInsightRow(row) {
   const spend = parseFloat(row.spend || 0);
   const impressions = parseInt(row.impressions || 0);
   const clicks = parseInt(row.clicks || 0);
-  const cpm = parseFloat(row.cpm || 0);
-  const cpc = parseFloat(row.cpc || 0);
-  const ctr = parseFloat(row.ctr || 0);
+  const cpm = row.cpm ? parseFloat(row.cpm) : (impressions > 0 ? (spend / impressions) * 1000 : 0);
+  const cpc = row.cpc ? parseFloat(row.cpc) : (clicks > 0 ? spend / clicks : 0);
+  const ctr = row.ctr ? parseFloat(row.ctr) : (impressions > 0 ? (clicks / impressions) * 100 : 0);
   const reach = parseInt(row.reach || 0);
   const frequency = parseFloat(row.frequency || 0);
   let purchases = 0, revenue = 0, linkClicks = 0, videoViews3s = 0, thruPlays = 0;
@@ -2247,26 +2250,42 @@ app.get('/api/meta/analysis', async (req, res) => {
       fetchMetaAdInsights(compStartStr, compEndStr),
     ]);
 
-    // Parse ads, sort by ROAS, pick top 12
-    const allAds = topAdsRaw.map(row => ({
-      id: row.ad_id,
-      name: row.ad_name,
-      adsetName: row.adset_name,
-      campaignName: row.campaign_name,
-      ...parseMetaInsightRow(row),
-    })).filter(a => a.spend >= 5);
+    // Classify campaign as retargeting or acquisition based on name
+    function classifyCampaign(campaignName) {
+      const n = (campaignName || '').toLowerCase();
+      if (/retarget|remarketing|rtg|rlsa|remarket|retarg|recibl/i.test(n)) return 'retargeting';
+      return 'acquisition';
+    }
 
-    // Top 12 by ROAS (with minimum spend threshold)
-    const topAds = [...allAds].sort((a, b) => b.roas - a.roas).slice(0, 12);
+    // Parse all ads, mark as video/static, sort by ROAS
+    const allAds = topAdsRaw.map(row => {
+      const parsed = parseMetaInsightRow(row);
+      return {
+        id: row.ad_id,
+        name: row.ad_name,
+        adsetName: row.adset_name,
+        campaignName: row.campaign_name,
+        campaignType: classifyCampaign(row.campaign_name),
+        isVideo: parsed.hookRate !== null,
+        ...parsed,
+      };
+    }).filter(a => a.spend >= 5);
 
-    // Fetch creatives for top 12 (with thumbnail)
+    // Sort by ROAS — take top 36 to allow frontend filtering (12 per type)
+    const sortedAds = [...allAds].sort((a, b) => b.roas - a.roas);
+    const topAds = sortedAds.slice(0, 36);
+
+    // Fetch creatives for top ads (with higher quality images)
     const creatives = await Promise.all(topAds.map(ad => fetchAdCreative(ad.id)));
+    const accountId = (process.env.META_AD_ACCOUNT_ID || '').replace('act_', '');
     topAds.forEach((ad, i) => {
       const c = creatives[i];
       ad.thumbnailUrl = c?.thumbnail_url || null;
       ad.imageUrl = c?.image_url || null;
       ad.creativeTitle = c?.title || '';
       ad.creativeBody = c?.body || '';
+      ad.previewLink = c?.previewLink || null;
+      ad.adsManagerUrl = `https://adsmanager.facebook.com/adsmanager/manage/ads?act=${accountId}&selected_ad_ids=${ad.id}`;
     });
 
     // Parse adsets
@@ -2307,10 +2326,10 @@ app.get('/api/meta/analysis', async (req, res) => {
     compTotals.cpa = compTotals.purchases > 0 ? compTotals.spend / compTotals.purchases : 0;
     compTotals.cpm = compTotals.impressions > 0 ? (compTotals.spend / compTotals.impressions) * 1000 : 0;
 
-    // Daily CPA trend
+    // Daily CPA trend (with CPM + CTR Link)
     const dailyTrend = dailyRaw.map(row => {
       const d = parseMetaInsightRow(row);
-      return { date: row.date_start, spend: d.spend, revenue: d.revenue, purchases: d.purchases, cpa: d.cpa, roas: d.roas, cpm: d.cpm };
+      return { date: row.date_start, spend: d.spend, revenue: d.revenue, purchases: d.purchases, cpa: d.cpa, roas: d.roas, cpm: d.cpm, ctrLink: d.ctrLink };
     });
 
     // Campaign spend breakdown

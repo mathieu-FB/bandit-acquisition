@@ -996,6 +996,61 @@ body {
   color: var(--text-muted);
 }
 
+/* Top ads header + filters */
+.meta-top-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0;
+}
+
+.meta-top-header .meta-section-title {
+  margin-bottom: 0;
+}
+
+.meta-ad-filters {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.meta-filter-sep {
+  color: var(--border);
+  margin: 0 4px;
+  font-size: 14px;
+}
+
+.meta-lexicon {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  padding: 10px 14px;
+  background: #f8f9fa;
+  border-radius: 8px;
+  margin-bottom: 16px;
+  margin-top: 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.meta-lexicon span strong {
+  color: var(--text);
+}
+
+/* Meta ad link */
+.meta-ad-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+  text-decoration: none;
+  margin-top: 4px;
+}
+
+.meta-ad-link:hover {
+  color: #3b82f6;
+}
+
 /* Ad Cards — 4 column grid */
 .meta-ads-grid {
   display: flex;
