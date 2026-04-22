@@ -2098,17 +2098,51 @@ async function fetchMetaAdsetInsights(start, end) {
 
 async function fetchAdCreative(adId) {
   const token = process.env.META_ACCESS_TOKEN;
+  const accountId = process.env.META_AD_ACCOUNT_ID;
   try {
-    // Get ad with creative fields + preview link + effective_object_story_id for full_picture
-    const url = `https://graph.facebook.com/v19.0/${adId}?fields=creative{id,title,body,thumbnail_url,image_url,object_story_spec,asset_feed_spec,effective_object_story_id},preview_shareable_link&access_token=${token}`;
+    const url = `https://graph.facebook.com/v19.0/${adId}?fields=creative{id,title,body,thumbnail_url,image_url,object_story_spec,effective_object_story_id},preview_shareable_link&access_token=${token}`;
     const res = await fetch(url);
     if (!res.ok) { console.error(`[Meta] Ad creative ${adId}: ${res.status}`); return null; }
     const json = await res.json();
     const creative = json.creative || {};
     let imageUrl = null;
 
-    // 1. Best quality: full_picture from the published post
-    if (creative.effective_object_story_id) {
+    const spec = creative.object_story_spec || {};
+
+    // 1. Video ads: fetch HD thumbnail from video_id
+    if (spec.video_data?.video_id) {
+      try {
+        const vidUrl = `https://graph.facebook.com/v19.0/${spec.video_data.video_id}?fields=picture,thumbnails{uri,width,height}&access_token=${token}`;
+        const vidRes = await fetch(vidUrl);
+        if (vidRes.ok) {
+          const vidJson = await vidRes.json();
+          // Pick the largest thumbnail available
+          if (vidJson.thumbnails?.data?.length) {
+            const best = vidJson.thumbnails.data.reduce((a, b) => (b.width || 0) > (a.width || 0) ? b : a);
+            if (best.uri) imageUrl = best.uri;
+          }
+          if (!imageUrl && vidJson.picture) imageUrl = vidJson.picture;
+        }
+      } catch (e) { /* fallback below */ }
+      // Fallback: video_data.image_url (cover image, usually decent)
+      if (!imageUrl && spec.video_data.image_url) imageUrl = spec.video_data.image_url;
+    }
+
+    // 2. Image ads: fetch full-size image from image_hash via adimages endpoint
+    if (!imageUrl && spec.link_data?.image_hash && accountId) {
+      try {
+        const imgUrl = `https://graph.facebook.com/v19.0/${accountId}/adimages?hashes=["${spec.link_data.image_hash}"]&fields=url,url_128&access_token=${token}`;
+        const imgRes = await fetch(imgUrl);
+        if (imgRes.ok) {
+          const imgJson = await imgRes.json();
+          const images = imgJson.data || Object.values(imgJson.images || {});
+          if (images[0]?.url) imageUrl = images[0].url;
+        }
+      } catch (e) { /* fallback below */ }
+    }
+
+    // 3. full_picture from the published post
+    if (!imageUrl && creative.effective_object_story_id) {
       try {
         const storyUrl = `https://graph.facebook.com/v19.0/${creative.effective_object_story_id}?fields=full_picture&access_token=${token}`;
         const storyRes = await fetch(storyUrl);
@@ -2119,25 +2153,20 @@ async function fetchAdCreative(adId) {
       } catch (e) { /* fallback below */ }
     }
 
-    // 2. object_story_spec images (good quality)
-    if (!imageUrl && creative.object_story_spec) {
-      const spec = creative.object_story_spec;
-      if (spec.video_data?.image_url) imageUrl = spec.video_data.image_url;
-      if (!imageUrl && spec.link_data?.picture) imageUrl = spec.link_data.picture;
-      if (!imageUrl && spec.link_data?.image_hash) imageUrl = spec.link_data.picture || null;
-    }
-
-    // 3. Creative-level image
+    // 4. link_data.picture / creative-level image
+    if (!imageUrl && spec.link_data?.picture) imageUrl = spec.link_data.picture;
     if (!imageUrl) imageUrl = creative.image_url || creative.thumbnail_url || null;
 
-    // 4. Fallback: fetch creative ID directly
+    // 5. Last resort: fetch creative directly
     if (!imageUrl && creative.id) {
-      const crUrl = `https://graph.facebook.com/v19.0/${creative.id}?fields=thumbnail_url,image_url&access_token=${token}`;
-      const crRes = await fetch(crUrl);
-      if (crRes.ok) {
-        const crJson = await crRes.json();
-        imageUrl = crJson.image_url || crJson.thumbnail_url || null;
-      }
+      try {
+        const crUrl = `https://graph.facebook.com/v19.0/${creative.id}?fields=image_url,thumbnail_url&access_token=${token}`;
+        const crRes = await fetch(crUrl);
+        if (crRes.ok) {
+          const crJson = await crRes.json();
+          imageUrl = crJson.image_url || crJson.thumbnail_url || null;
+        }
+      } catch (e) { /* ignore */ }
     }
 
     return {
