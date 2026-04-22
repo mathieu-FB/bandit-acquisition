@@ -2258,6 +2258,91 @@ async function fetchMetaCampaignInsights(start, end) {
   return json.data || [];
 }
 
+// Debug endpoint: test image sources for a given ad
+app.get('/api/meta/debug-creative', async (req, res) => {
+  const token = process.env.META_ACCESS_TOKEN;
+  const accountId = process.env.META_AD_ACCOUNT_ID;
+  if (!token) return res.json({ error: 'no token' });
+
+  try {
+    // Get one ad to test
+    const days = 15;
+    const end = new Date(); end.setDate(end.getDate() - 1);
+    const start = new Date(end); start.setDate(start.getDate() - days + 1);
+    const adsUrl = `https://graph.facebook.com/v19.0/${accountId}/insights?` +
+      new URLSearchParams({
+        access_token: token,
+        fields: 'ad_id,ad_name,campaign_name,spend',
+        time_range: JSON.stringify({ since: formatDate(start), until: formatDate(end) }),
+        level: 'ad', limit: '3',
+        filtering: JSON.stringify([{ field: 'spend', operator: 'GREATER_THAN', value: '10' }]),
+      }).toString();
+    const adsRes = await fetch(adsUrl);
+    const adsJson = await adsRes.json();
+    const ads = adsJson.data || [];
+    if (!ads.length) return res.json({ error: 'no ads found' });
+
+    const results = [];
+    for (const ad of ads.slice(0, 2)) {
+      const adId = ad.ad_id;
+      const debug = { adId, adName: ad.ad_name, sources: {} };
+
+      // Fetch creative full data
+      const crUrl = `https://graph.facebook.com/v19.0/${adId}?fields=creative{id,title,body,thumbnail_url,image_url,object_story_spec,effective_object_story_id}&access_token=${token}`;
+      const crRes = await fetch(crUrl);
+      const crJson = await crRes.json();
+      const creative = crJson.creative || {};
+      debug.sources.creative_thumbnail_url = creative.thumbnail_url || null;
+      debug.sources.creative_image_url = creative.image_url || null;
+      debug.sources.has_object_story_spec = !!creative.object_story_spec;
+      debug.sources.effective_object_story_id = creative.effective_object_story_id || null;
+
+      const spec = creative.object_story_spec || {};
+
+      // Video path
+      if (spec.video_data) {
+        debug.sources.video_id = spec.video_data.video_id || null;
+        debug.sources.video_data_image_url = spec.video_data.image_url || null;
+        if (spec.video_data.video_id) {
+          const vidUrl = `https://graph.facebook.com/v19.0/${spec.video_data.video_id}?fields=picture,thumbnails{uri,width,height}&access_token=${token}`;
+          const vidRes = await fetch(vidUrl);
+          const vidJson = await vidRes.json();
+          debug.sources.video_picture = vidJson.picture || null;
+          debug.sources.video_thumbnails = vidJson.thumbnails?.data || null;
+          if (vidJson.error) debug.sources.video_error = vidJson.error.message;
+        }
+      }
+
+      // Image hash path
+      if (spec.link_data) {
+        debug.sources.link_data_picture = spec.link_data.picture || null;
+        debug.sources.link_data_image_hash = spec.link_data.image_hash || null;
+        if (spec.link_data.image_hash && accountId) {
+          const imgUrl = `https://graph.facebook.com/v19.0/${accountId}/adimages?hashes=["${spec.link_data.image_hash}"]&fields=url,url_128&access_token=${token}`;
+          const imgRes = await fetch(imgUrl);
+          const imgJson = await imgRes.json();
+          debug.sources.adimages_response = imgJson;
+        }
+      }
+
+      // full_picture
+      if (creative.effective_object_story_id) {
+        const storyUrl = `https://graph.facebook.com/v19.0/${creative.effective_object_story_id}?fields=full_picture&access_token=${token}`;
+        const storyRes = await fetch(storyUrl);
+        const storyJson = await storyRes.json();
+        debug.sources.full_picture = storyJson.full_picture || null;
+        if (storyJson.error) debug.sources.full_picture_error = storyJson.error.message;
+      }
+
+      results.push(debug);
+    }
+
+    res.json(results);
+  } catch (e) {
+    res.json({ error: e.message });
+  }
+});
+
 app.get('/api/meta/analysis', async (req, res) => {
   try {
     const token = process.env.META_ACCESS_TOKEN;
