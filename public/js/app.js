@@ -54,7 +54,10 @@ function setQuickRange(range) {
   const end = new Date(now); // today
 
   let start;
-  if (range === 'mtd') {
+  if (range === 'yesterday') {
+    end.setDate(end.getDate() - 1);
+    start = new Date(end);
+  } else if (range === 'mtd') {
     start = new Date(now.getFullYear(), now.getMonth(), 1);
   } else if (range === 'qtd') {
     const qMonth = Math.floor(now.getMonth() / 3) * 3;
