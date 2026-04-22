@@ -2379,7 +2379,7 @@ IMPORTANT: Réponds UNIQUEMENT avec le JSON, pas de texte avant/après. Le conte
 
       try {
         const response = await anthropic.messages.create({
-          model: 'claude-sonnet-4-20250514',
+          model: 'claude-sonnet-4-6',
           max_tokens: 4000,
           messages: [{ role: 'user', content: prompt }],
         });
@@ -2684,7 +2684,7 @@ IMPORTANT: Réponds UNIQUEMENT avec le JSON, pas de texte avant/après. Le conte
 
       try {
         const response = await anthropic.messages.create({
-          model: 'claude-sonnet-4-20250514',
+          model: 'claude-sonnet-4-6',
           max_tokens: 4000,
           messages: [{ role: 'user', content: prompt }],
         });
@@ -4100,7 +4100,7 @@ app.get('/api/linkedin/ideas', async (req, res) => {
 
   try {
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-6',
       max_tokens: 1000,
       messages: [{ role: 'user', content: `Tu es un expert LinkedIn et ghostwriter. Tu analyses les posts LinkedIn suivants écrits par Mathieu, CEO de French Bandit (marque premium d'accessoires pour chiens et chats).
 
@@ -4191,7 +4191,7 @@ ${filesContext ? `\nContenu des fichiers fournis :${filesContext}` : ''}
 
   try {
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-6',
       max_tokens: 2000,
       messages: [{ role: 'user', content: prompt }],
     });
@@ -4219,7 +4219,7 @@ app.post('/api/linkedin/refine', async (req, res) => {
 
   try {
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-20250514',
+      model: 'claude-sonnet-4-6',
       max_tokens: 2000,
       messages: [
         { role: 'user', content: `Tu es un ghostwriter LinkedIn expert pour Mathieu, CEO de French Bandit (marque premium d'accessoires pour chiens et chats).
