@@ -2098,17 +2098,11 @@ async function fetchMetaAdsetInsights(start, end) {
   return json.data || [];
 }
 
-// Upscale Meta CDN thumbnail URL from 64x64 to 600x600
-function upscaleMetaThumbnail(url) {
-  if (!url) return url;
-  // Replace p64x64 (or any pNxN) with p600x600 in the stp parameter
-  return url.replace(/p\d+x\d+/g, 'p600x600');
-}
-
 async function fetchAdCreative(adId) {
   const token = process.env.META_ACCESS_TOKEN;
   try {
-    const url = `https://graph.facebook.com/v19.0/${adId}?fields=creative{id,title,body,thumbnail_url,image_url,object_story_spec},preview_shareable_link&access_token=${token}`;
+    // First call: get creative ID + object_story_spec for direct image sources
+    const url = `https://graph.facebook.com/v19.0/${adId}?fields=creative{id,title,body,image_url,object_story_spec},preview_shareable_link&access_token=${token}`;
     const res = await fetch(url);
     if (!res.ok) { console.error(`[Meta] Ad creative ${adId}: ${res.status}`); return null; }
     const json = await res.json();
@@ -2116,18 +2110,24 @@ async function fetchAdCreative(adId) {
     const spec = creative.object_story_spec || {};
     let imageUrl = null;
 
-    // 1. object_story_spec images (good quality sources)
+    // 1. object_story_spec images (good quality)
     if (spec.video_data?.image_url) imageUrl = spec.video_data.image_url;
     if (!imageUrl && spec.link_data?.picture) imageUrl = spec.link_data.picture;
 
-    // 2. Creative-level image
+    // 2. Creative-level image_url
     if (!imageUrl) imageUrl = creative.image_url || null;
 
-    // 3. thumbnail_url — upscale from 64x64 to 600x600 via CDN param
-    if (!imageUrl && creative.thumbnail_url) imageUrl = upscaleMetaThumbnail(creative.thumbnail_url);
-
-    // If we got a thumbnail_url but nothing better, always try upscaling
-    if (imageUrl === creative.thumbnail_url) imageUrl = upscaleMetaThumbnail(imageUrl);
+    // 3. Request thumbnail at 600px from the creative endpoint
+    if (!imageUrl && creative.id) {
+      try {
+        const thumbUrl = `https://graph.facebook.com/v19.0/${creative.id}?fields=thumbnail_url&thumbnail_width=600&thumbnail_height=600&access_token=${token}`;
+        const thumbRes = await fetch(thumbUrl);
+        if (thumbRes.ok) {
+          const thumbJson = await thumbRes.json();
+          if (thumbJson.thumbnail_url) imageUrl = thumbJson.thumbnail_url;
+        }
+      } catch (e) { /* ignore */ }
+    }
 
     return {
       thumbnail_url: imageUrl,
