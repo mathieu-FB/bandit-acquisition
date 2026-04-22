@@ -954,9 +954,9 @@ function filterMetaAds(type) {
   document.getElementById('metaTopAds').innerHTML = renderMetaAdCards(filtered.slice(0, 12));
 }
 
-async function loadMetaAnalysis(forceDays) {
+async function loadMetaAnalysis(forceDays, forceRefresh) {
   const days = forceDays || metaAnalysisDays;
-  if (metaAnalysisLoadedDays === days) return;
+  if (!forceRefresh && metaAnalysisLoadedDays === days) return;
 
   const loading = document.getElementById('metaLoading');
   const results = document.getElementById('metaResults');
@@ -965,7 +965,7 @@ async function loadMetaAnalysis(forceDays) {
   results.style.display = 'none';
 
   try {
-    const res = await fetch(`/api/meta/analysis?days=${days}`);
+    const res = await fetch(`/api/meta/analysis?days=${days}${forceRefresh ? '&refresh=1' : ''}`);
     const data = await res.json();
 
     if (data.error) {
@@ -2340,7 +2340,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     } else if (activeTab === 'ecommerce') {
       if (activeSubTab === 'acquisition') {
         metaAnalysisLoadedDays = null;
-        loadMetaAnalysis();
+        loadMetaAnalysis(null, true);
       } else if (activeSubTab === 'data-produits') {
         loadProductBreakdown();
       } else {
