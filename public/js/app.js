@@ -607,6 +607,13 @@ async function loadDashboard() {
     renderKPI('netSales', kpis.netSales.current, kpis.netSales.previous, fmtCurrency, false);
     renderKPI('marketingCosts', kpis.marketingCosts.current, kpis.marketingCosts.previous, fmtCurrency, true);
     renderKPI('percentMarketing', kpis.percentMarketing.current, kpis.percentMarketing.previous, fmtPercent, true);
+    // Append blended ROAS inside the % Marketing card
+    if (kpis.blendedRoas) {
+      const roasEl = document.getElementById('val-percentMarketing');
+      if (roasEl) {
+        roasEl.innerHTML += `<span class="kpi-roas-inline">ROAS ${kpis.blendedRoas.current.toFixed(2)}x</span>`;
+      }
+    }
     renderKPI('orders', kpis.orders.current, kpis.orders.previous, fmtNumber, false);
     renderKPI('aov', kpis.aov.current, kpis.aov.previous, fmtCurrency, false);
     renderKPI('discountCodes', kpis.discountCodes.current, kpis.discountCodes.previous, fmtCurrency, false);
