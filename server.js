@@ -107,6 +107,8 @@ app.get('/api/auth/me', (req, res) => {
 app.use((req, res, next) => {
   // Allow auth endpoints
   if (req.path.startsWith('/api/auth/')) return next();
+  // Allow debug endpoint temporarily
+  if (req.path === '/api/meta/debug-creative') return next();
   // Allow login page assets
   if (req.path === '/login.html') return next();
 
