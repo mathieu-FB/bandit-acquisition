@@ -828,6 +828,87 @@ async function loadProductBreakdown(period) {
 let metaAnalysisDays = 15;
 let metaAnalysisLoadedDays = null;
 
+function renderMetaKpiChange(current, previous, invert) {
+  if (!previous || previous === 0) return '';
+  const pct = ((current - previous) / Math.abs(previous)) * 100;
+  const isGood = invert ? pct < 0 : pct > 0;
+  const color = isGood ? 'var(--green)' : 'var(--red)';
+  const arrow = pct > 0 ? '&#9650;' : '&#9660;';
+  return `<div class="meta-kpi-comp" style="color:${color}">${arrow} ${Math.abs(pct).toFixed(1)}%</div>`;
+}
+
+function renderMetaCpaTrendChart(dailyTrend) {
+  const ctx = document.getElementById('chart-metaCpaTrend');
+  if (!ctx || !dailyTrend?.length) return;
+  if (chartInstances['chart-metaCpaTrend']) chartInstances['chart-metaCpaTrend'].destroy();
+
+  const labels = dailyTrend.map(d => {
+    const date = new Date(d.date);
+    return date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  });
+
+  chartInstances['chart-metaCpaTrend'] = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: 'CPA', data: dailyTrend.map(d => d.cpa), borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.08)', fill: true, tension: 0.3, pointRadius: 3 },
+        { label: 'ROAS', data: dailyTrend.map(d => d.roas), borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 3, yAxisID: 'y1' },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { display: true, position: 'top', labels: { font: { size: 11 }, usePointStyle: true } }, tooltip: { ...TOOLTIP_CONFIG } },
+      scales: {
+        x: { grid: { display: false }, ticks: { font: { size: 10 }, maxTicksLimit: 10 } },
+        y: { position: 'left', grid: { color: '#f0f0f0' }, ticks: { font: { size: 10 }, callback: v => v.toFixed(0) + '€' } },
+        y1: { position: 'right', grid: { display: false }, ticks: { font: { size: 10 }, callback: v => v.toFixed(1) + 'x' } },
+      },
+    },
+  });
+}
+
+function renderMetaCampaignPieChart(campaigns) {
+  const ctx = document.getElementById('chart-metaCampaignSpend');
+  if (!ctx || !campaigns?.length) return;
+  if (chartInstances['chart-metaCampaignSpend']) chartInstances['chart-metaCampaignSpend'].destroy();
+
+  const colors = ['#1a1a1a', '#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#6366f1', '#14b8a6', '#f97316'];
+  const total = campaigns.reduce((s, c) => s + c.spend, 0);
+  // Group small campaigns into "Autres"
+  const labels = [], values = [];
+  let autresSpend = 0;
+  campaigns.forEach(c => {
+    if (c.spend / total < 0.03 && campaigns.length > 6) { autresSpend += c.spend; }
+    else { labels.push(c.name.length > 25 ? c.name.substring(0, 25) + '...' : c.name); values.push(c.spend); }
+  });
+  if (autresSpend > 0) { labels.push('Autres'); values.push(autresSpend); }
+
+  chartInstances['chart-metaCampaignSpend'] = new Chart(ctx, {
+    type: 'doughnut',
+    data: { labels, datasets: [{ data: values, backgroundColor: colors.slice(0, labels.length), borderWidth: 2, borderColor: '#fff' }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { ...TOOLTIP_CONFIG, callbacks: { label: ctx => `${ctx.label}: ${ctx.parsed.toFixed(0)}€ (${(ctx.parsed / total * 100).toFixed(1)}%)` } },
+      },
+    },
+  });
+
+  const legendEl = document.getElementById('legend-metaCampaigns');
+  if (legendEl) {
+    legendEl.innerHTML = labels.map((l, i) => {
+      const pct = (values[i] / total * 100).toFixed(1);
+      return `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:10px;margin-bottom:4px;font-size:11px;">
+        <span style="width:8px;height:8px;border-radius:50%;background:${colors[i]};display:inline-block;"></span>
+        ${l} ${pct}%
+      </span>`;
+    }).join('');
+  }
+}
+
 async function loadMetaAnalysis(forceDays) {
   const days = forceDays || metaAnalysisDays;
   if (metaAnalysisLoadedDays === days) return;
@@ -847,7 +928,30 @@ async function loadMetaAnalysis(forceDays) {
       return;
     }
 
-    // 1. Top 5 Ads
+    const t = data.accountTotals;
+    const c = data.compTotals || {};
+
+    // 0. KPI Summary Cards
+    document.getElementById('metaKpiGrid').innerHTML = [
+      { label: 'Spend', val: `${t.spend.toFixed(0)}€`, comp: renderMetaKpiChange(t.spend, c.spend, true) },
+      { label: 'Revenue', val: `${t.revenue.toFixed(0)}€`, comp: renderMetaKpiChange(t.revenue, c.revenue, false) },
+      { label: 'ROAS', val: `${t.roas.toFixed(2)}x`, comp: renderMetaKpiChange(t.roas, c.roas, false) },
+      { label: 'CPA', val: `${t.cpa.toFixed(0)}€`, comp: renderMetaKpiChange(t.cpa, c.cpa, true) },
+      { label: 'Achats', val: `${t.purchases}`, comp: renderMetaKpiChange(t.purchases, c.purchases, false) },
+      { label: 'CPM', val: `${t.cpm.toFixed(1)}€`, comp: renderMetaKpiChange(t.cpm, c.cpm, true) },
+    ].map(kpi => `
+      <div class="meta-kpi-card">
+        <div class="meta-kpi-label">${kpi.label}</div>
+        <div class="meta-kpi-val">${kpi.val}</div>
+        ${kpi.comp}
+      </div>
+    `).join('');
+
+    // 1. Charts
+    renderMetaCpaTrendChart(data.dailyTrend);
+    renderMetaCampaignPieChart(data.campaignBreakdown);
+
+    // 2. Top 12 Ads
     const topAdsEl = document.getElementById('metaTopAds');
     topAdsEl.innerHTML = data.topAds.map(ad => `
       <div class="meta-ad-card">
@@ -865,9 +969,13 @@ async function loadMetaAnalysis(forceDays) {
             <div class="meta-metric"><span class="meta-metric-val">${ad.revenue.toFixed(0)}€</span><span class="meta-metric-label">Revenue</span></div>
             <div class="meta-metric"><span class="meta-metric-val">${ad.purchases}</span><span class="meta-metric-label">Achats</span></div>
             <div class="meta-metric"><span class="meta-metric-val">${ad.cpa.toFixed(0)}€</span><span class="meta-metric-label">CPA</span></div>
-            <div class="meta-metric"><span class="meta-metric-val">${ad.ctr.toFixed(2)}%</span><span class="meta-metric-label">CTR</span></div>
+            <div class="meta-metric"><span class="meta-metric-val">${ad.hookRate !== null ? ad.hookRate.toFixed(1) + '%' : '—'}</span><span class="meta-metric-label">Hook Rate</span></div>
+            <div class="meta-metric"><span class="meta-metric-val">${ad.holdRate !== null ? ad.holdRate.toFixed(1) + '%' : '—'}</span><span class="meta-metric-label">Hold Rate</span></div>
+            <div class="meta-metric"><span class="meta-metric-val">${ad.ctrLink.toFixed(2)}%</span><span class="meta-metric-label">CTR Link</span></div>
+            <div class="meta-metric"><span class="meta-metric-val">${ad.cpcLink.toFixed(2)}€</span><span class="meta-metric-label">CPC Link</span></div>
             <div class="meta-metric"><span class="meta-metric-val">${ad.cpm.toFixed(1)}€</span><span class="meta-metric-label">CPM</span></div>
             <div class="meta-metric"><span class="meta-metric-val">${ad.frequency.toFixed(1)}</span><span class="meta-metric-label">Freq.</span></div>
+            <div class="meta-metric"><span class="meta-metric-val">${ad.ctr.toFixed(2)}%</span><span class="meta-metric-label">CTR All</span></div>
           </div>
         </div>
       </div>
@@ -881,17 +989,17 @@ async function loadMetaAnalysis(forceDays) {
       topAdsEl.after(analysisDiv);
     }
 
-    // 2. New Ads Proposals
+    // 3. New Ads Proposals
     document.getElementById('metaNewAdsProposals').innerHTML = renderMarkdown(data.analysis.newAdsProposals || 'Analyse non disponible.');
 
-    // 3. Top Adsets
+    // 4. Top Adsets
     document.getElementById('metaTopAdsets').innerHTML = renderAdsetCards(data.topAdsets);
     document.getElementById('metaScalingAnalysis').innerHTML = renderMarkdown(data.analysis.scalingAnalysis || 'Analyse non disponible.');
 
-    // 4. Worst Adsets
+    // 5. Worst Adsets
     document.getElementById('metaWorstAdsets').innerHTML = renderAdsetCards(data.worstAdsets);
 
-    // 5. Global Analysis
+    // 6. Global Analysis
     document.getElementById('metaGlobalAnalysis').innerHTML = renderMarkdown(data.analysis.globalAnalysis || 'Analyse non disponible.');
 
     // Show period

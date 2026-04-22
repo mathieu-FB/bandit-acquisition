@@ -2063,7 +2063,7 @@ async function fetchMetaAdInsights(start, end) {
   const url = `https://graph.facebook.com/v19.0/${accountId}/insights?` +
     new URLSearchParams({
       access_token: token,
-      fields: 'ad_id,ad_name,adset_name,campaign_name,spend,impressions,clicks,actions,action_values,reach,frequency',
+      fields: 'ad_id,ad_name,adset_name,campaign_name,spend,impressions,clicks,actions,action_values,reach,frequency,video_thruplay_watched_actions,video_p25_watched_actions',
       time_range: JSON.stringify({ since: start, until: end }),
       level: 'ad',
       limit: '100',
@@ -2146,18 +2146,74 @@ function parseMetaInsightRow(row) {
   const ctr = parseFloat(row.ctr || 0);
   const reach = parseInt(row.reach || 0);
   const frequency = parseFloat(row.frequency || 0);
-  let purchases = 0, revenue = 0;
+  let purchases = 0, revenue = 0, linkClicks = 0, videoViews3s = 0, thruPlays = 0;
   if (row.actions) {
     const pa = row.actions.find(a => a.action_type === 'purchase' || a.action_type === 'omni_purchase');
     if (pa) purchases = parseInt(pa.value || 0);
+    const lc = row.actions.find(a => a.action_type === 'link_click');
+    if (lc) linkClicks = parseInt(lc.value || 0);
+    const vv = row.actions.find(a => a.action_type === 'video_view');
+    if (vv) videoViews3s = parseInt(vv.value || 0);
   }
   if (row.action_values) {
     const ra = row.action_values.find(a => a.action_type === 'purchase' || a.action_type === 'omni_purchase');
     if (ra) revenue = parseFloat(ra.value || 0);
   }
+  // ThruPlays from dedicated field
+  if (row.video_thruplay_watched_actions) {
+    const tp = row.video_thruplay_watched_actions.find(a => a.action_type === 'video_view');
+    if (tp) thruPlays = parseInt(tp.value || 0);
+  }
   const roas = spend > 0 ? revenue / spend : 0;
   const cpa = purchases > 0 ? spend / purchases : 0;
-  return { spend, impressions, clicks, cpm, cpc, ctr, reach, frequency, purchases, revenue, roas, cpa };
+  const ctrLink = impressions > 0 ? (linkClicks / impressions) * 100 : 0;
+  const cpcLink = linkClicks > 0 ? spend / linkClicks : 0;
+  const hookRate = impressions > 0 && videoViews3s > 0 ? (videoViews3s / impressions) * 100 : null;
+  const holdRate = videoViews3s > 0 && thruPlays > 0 ? (thruPlays / videoViews3s) * 100 : null;
+  return { spend, impressions, clicks, cpm, cpc, ctr, reach, frequency, purchases, revenue, roas, cpa, linkClicks, ctrLink, cpcLink, hookRate, holdRate, videoViews3s, thruPlays };
+}
+
+// Fetch daily account-level insights from Meta for CPA trend chart
+async function fetchMetaDailyInsights(start, end) {
+  const token = process.env.META_ACCESS_TOKEN;
+  const accountId = process.env.META_AD_ACCOUNT_ID;
+  if (!token || !accountId) return [];
+
+  const url = `https://graph.facebook.com/v19.0/${accountId}/insights?` +
+    new URLSearchParams({
+      access_token: token,
+      fields: 'spend,impressions,clicks,actions,action_values',
+      time_range: JSON.stringify({ since: start, until: end }),
+      time_increment: '1',
+      level: 'account',
+      limit: '100',
+    }).toString();
+
+  const res = await fetch(url);
+  if (!res.ok) { console.error('Meta daily insights error:', await res.text()); return []; }
+  const json = await res.json();
+  return json.data || [];
+}
+
+// Fetch campaign-level spend breakdown
+async function fetchMetaCampaignInsights(start, end) {
+  const token = process.env.META_ACCESS_TOKEN;
+  const accountId = process.env.META_AD_ACCOUNT_ID;
+  if (!token || !accountId) return [];
+
+  const url = `https://graph.facebook.com/v19.0/${accountId}/insights?` +
+    new URLSearchParams({
+      access_token: token,
+      fields: 'campaign_name,spend,actions,action_values',
+      time_range: JSON.stringify({ since: start, until: end }),
+      level: 'campaign',
+      limit: '50',
+    }).toString();
+
+  const res = await fetch(url);
+  if (!res.ok) { console.error('Meta campaign insights error:', await res.text()); return []; }
+  const json = await res.json();
+  return json.data || [];
 }
 
 app.get('/api/meta/analysis', async (req, res) => {
@@ -2174,13 +2230,24 @@ app.get('/api/meta/analysis', async (req, res) => {
     const startStr = formatDate(start);
     const endStr = formatDate(end);
 
-    // Fetch ads (top by spend) and adsets in parallel
-    const [topAdsRaw, adsetRaw] = await Promise.all([
+    // Comparison period (same duration ending before start)
+    const compEnd = new Date(start);
+    compEnd.setDate(compEnd.getDate() - 1);
+    const compStart = new Date(compEnd);
+    compStart.setDate(compStart.getDate() - days + 1);
+    const compStartStr = formatDate(compStart);
+    const compEndStr = formatDate(compEnd);
+
+    // Fetch all data in parallel
+    const [topAdsRaw, adsetRaw, dailyRaw, campaignRaw, compAdsRaw] = await Promise.all([
       fetchMetaAdInsights(startStr, endStr),
       fetchMetaAdsetInsights(startStr, endStr),
+      fetchMetaDailyInsights(startStr, endStr),
+      fetchMetaCampaignInsights(startStr, endStr),
+      fetchMetaAdInsights(compStartStr, compEndStr),
     ]);
 
-    // Parse ads, sort by ROAS, pick top 5
+    // Parse ads, sort by ROAS, pick top 12
     const allAds = topAdsRaw.map(row => ({
       id: row.ad_id,
       name: row.ad_name,
@@ -2189,10 +2256,10 @@ app.get('/api/meta/analysis', async (req, res) => {
       ...parseMetaInsightRow(row),
     })).filter(a => a.spend >= 5);
 
-    // Top 5 by ROAS (with minimum spend threshold)
-    const topAds = [...allAds].sort((a, b) => b.roas - a.roas).slice(0, 5);
+    // Top 12 by ROAS (with minimum spend threshold)
+    const topAds = [...allAds].sort((a, b) => b.roas - a.roas).slice(0, 12);
 
-    // Fetch creatives for top 5 (with thumbnail)
+    // Fetch creatives for top 12 (with thumbnail)
     const creatives = await Promise.all(topAds.map(ad => fetchAdCreative(ad.id)));
     topAds.forEach((ad, i) => {
       const c = creatives[i];
@@ -2226,6 +2293,31 @@ app.get('/api/meta/analysis', async (req, res) => {
     accountTotals.cpa = accountTotals.purchases > 0 ? accountTotals.spend / accountTotals.purchases : 0;
     accountTotals.cpm = accountTotals.impressions > 0 ? (accountTotals.spend / accountTotals.impressions) * 1000 : 0;
     accountTotals.ctr = accountTotals.impressions > 0 ? (accountTotals.clicks / accountTotals.impressions) * 100 : 0;
+
+    // Comparison period totals
+    const compAds = compAdsRaw.map(row => parseMetaInsightRow(row)).filter(a => a.spend >= 5);
+    const compTotals = {
+      spend: compAds.reduce((s, a) => s + a.spend, 0),
+      revenue: compAds.reduce((s, a) => s + a.revenue, 0),
+      purchases: compAds.reduce((s, a) => s + a.purchases, 0),
+      impressions: compAds.reduce((s, a) => s + a.impressions, 0),
+      clicks: compAds.reduce((s, a) => s + a.clicks, 0),
+    };
+    compTotals.roas = compTotals.spend > 0 ? compTotals.revenue / compTotals.spend : 0;
+    compTotals.cpa = compTotals.purchases > 0 ? compTotals.spend / compTotals.purchases : 0;
+    compTotals.cpm = compTotals.impressions > 0 ? (compTotals.spend / compTotals.impressions) * 1000 : 0;
+
+    // Daily CPA trend
+    const dailyTrend = dailyRaw.map(row => {
+      const d = parseMetaInsightRow(row);
+      return { date: row.date_start, spend: d.spend, revenue: d.revenue, purchases: d.purchases, cpa: d.cpa, roas: d.roas, cpm: d.cpm };
+    });
+
+    // Campaign spend breakdown
+    const campaignBreakdown = campaignRaw.map(row => {
+      const d = parseMetaInsightRow(row);
+      return { name: row.campaign_name, spend: d.spend, revenue: d.revenue, purchases: d.purchases, roas: d.roas };
+    }).sort((a, b) => b.spend - a.spend);
 
     // Claude analysis
     let analysis = { topAdsAnalysis: '', newAdsProposals: '', scalingAnalysis: '', globalAnalysis: '' };
@@ -2283,11 +2375,14 @@ IMPORTANT: Réponds UNIQUEMENT avec le JSON, pas de texte avant/après. Le conte
     }
 
     res.json({
-      period: { start: startStr, end: endStr },
+      period: { start: startStr, end: endStr, compStart: compStartStr, compEnd: compEndStr },
       topAds,
       topAdsets,
       worstAdsets,
       accountTotals,
+      compTotals,
+      dailyTrend,
+      campaignBreakdown,
       analysis,
     });
   } catch (err) {

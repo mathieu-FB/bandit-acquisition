@@ -927,11 +927,109 @@ body {
   display: inline-block;
 }
 
-/* Ad Cards */
+/* Meta KPI summary cards */
+.meta-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.meta-kpi-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  text-align: center;
+}
+
+.meta-kpi-card .meta-kpi-val {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.meta-kpi-card .meta-kpi-label {
+  font-size: 11px;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  color: var(--text-muted);
+  margin-bottom: 4px;
+}
+
+.meta-kpi-card .meta-kpi-comp {
+  font-size: 11px;
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+/* Meta charts row */
+.meta-charts-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 16px;
+}
+
+.meta-chart-card {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 20px;
+}
+
+.meta-chart-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 12px;
+}
+
+.meta-chart-area {
+  height: 200px;
+  position: relative;
+}
+
+.meta-chart-legend {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* Ad Cards — 4 column grid */
 .meta-ads-grid {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.meta-ads-grid-4 {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+
+.meta-ads-grid-4 .meta-ad-card {
+  flex-direction: column;
+}
+
+.meta-ads-grid-4 .meta-ad-visual {
+  width: 100%;
+  height: 140px;
+}
+
+.meta-ads-grid-4 .meta-ad-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px 8px;
+}
+
+.meta-ads-grid-4 .meta-metric-val {
+  font-size: 13px;
+}
+
+.meta-ads-grid-4 .meta-metric-label {
+  font-size: 9px;
 }
 
 .meta-ad-card {
@@ -943,6 +1041,17 @@ body {
   padding: 16px 20px;
   box-shadow: var(--shadow);
   transition: box-shadow 0.2s;
+}
+
+@media (max-width: 1200px) {
+  .meta-ads-grid-4 { grid-template-columns: repeat(2, 1fr); }
+  .meta-kpi-grid { grid-template-columns: repeat(3, 1fr); }
+  .meta-charts-row { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 600px) {
+  .meta-ads-grid-4 { grid-template-columns: 1fr; }
+  .meta-kpi-grid { grid-template-columns: repeat(2, 1fr); }
 }
 
 .meta-ad-card:hover {

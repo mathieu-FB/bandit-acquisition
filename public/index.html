@@ -427,9 +427,29 @@
         </div>
 
         <div class="meta-results" id="metaResults" style="display:none;">
+          <!-- KPI Summary Cards -->
           <section class="meta-section">
-            <h2 class="meta-section-title">Top 5 Ads — Performers</h2>
-            <div class="meta-ads-grid" id="metaTopAds"></div>
+            <div class="meta-kpi-grid" id="metaKpiGrid"></div>
+          </section>
+
+          <!-- Charts: CPA Trend + Campaign Spend -->
+          <section class="meta-section">
+            <div class="meta-charts-row">
+              <div class="meta-chart-card">
+                <h3 class="meta-chart-title">CPA / jour</h3>
+                <div class="meta-chart-area"><canvas id="chart-metaCpaTrend"></canvas></div>
+              </div>
+              <div class="meta-chart-card">
+                <h3 class="meta-chart-title">Spend par campagne</h3>
+                <div class="meta-chart-area"><canvas id="chart-metaCampaignSpend"></canvas></div>
+                <div class="meta-chart-legend" id="legend-metaCampaigns"></div>
+              </div>
+            </div>
+          </section>
+
+          <section class="meta-section">
+            <h2 class="meta-section-title">Top 12 Ads — Performers</h2>
+            <div class="meta-ads-grid meta-ads-grid-4" id="metaTopAds"></div>
           </section>
           <section class="meta-section">
             <h2 class="meta-section-title">Propositions de nouvelles publicités</h2>
