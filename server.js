@@ -2099,30 +2099,40 @@ async function fetchMetaAdsetInsights(start, end) {
 async function fetchAdCreative(adId) {
   const token = process.env.META_ACCESS_TOKEN;
   try {
-    // Get ad with creative fields + preview link
-    const url = `https://graph.facebook.com/v19.0/${adId}?fields=creative{id,title,body,thumbnail_url,image_url,object_story_spec,asset_feed_spec},preview_shareable_link&access_token=${token}`;
+    // Get ad with creative fields + preview link + effective_object_story_id for full_picture
+    const url = `https://graph.facebook.com/v19.0/${adId}?fields=creative{id,title,body,thumbnail_url,image_url,object_story_spec,asset_feed_spec,effective_object_story_id},preview_shareable_link&access_token=${token}`;
     const res = await fetch(url);
     if (!res.ok) { console.error(`[Meta] Ad creative ${adId}: ${res.status}`); return null; }
     const json = await res.json();
     const creative = json.creative || {};
-    let imageUrl = creative.image_url || creative.thumbnail_url || null;
+    let imageUrl = null;
 
-    // Try extracting image from object_story_spec (usually higher quality)
-    if (creative.object_story_spec) {
-      const spec = creative.object_story_spec;
-      // Video ads — get the cover image
-      if (spec.video_data?.image_url) {
-        imageUrl = spec.video_data.image_url;
-      }
-      // Image/link ads
-      if (!imageUrl && (spec.link_data?.picture || spec.link_data?.image_hash)) {
-        imageUrl = spec.link_data.picture || imageUrl;
-      }
+    // 1. Best quality: full_picture from the published post
+    if (creative.effective_object_story_id) {
+      try {
+        const storyUrl = `https://graph.facebook.com/v19.0/${creative.effective_object_story_id}?fields=full_picture&access_token=${token}`;
+        const storyRes = await fetch(storyUrl);
+        if (storyRes.ok) {
+          const storyJson = await storyRes.json();
+          if (storyJson.full_picture) imageUrl = storyJson.full_picture;
+        }
+      } catch (e) { /* fallback below */ }
     }
 
-    // Fallback: fetch the creative ID directly for full-size image
+    // 2. object_story_spec images (good quality)
+    if (!imageUrl && creative.object_story_spec) {
+      const spec = creative.object_story_spec;
+      if (spec.video_data?.image_url) imageUrl = spec.video_data.image_url;
+      if (!imageUrl && spec.link_data?.picture) imageUrl = spec.link_data.picture;
+      if (!imageUrl && spec.link_data?.image_hash) imageUrl = spec.link_data.picture || null;
+    }
+
+    // 3. Creative-level image
+    if (!imageUrl) imageUrl = creative.image_url || creative.thumbnail_url || null;
+
+    // 4. Fallback: fetch creative ID directly
     if (!imageUrl && creative.id) {
-      const crUrl = `https://graph.facebook.com/v19.0/${creative.id}?fields=thumbnail_url,image_url,effective_instagram_media_id,image_crops&access_token=${token}`;
+      const crUrl = `https://graph.facebook.com/v19.0/${creative.id}?fields=thumbnail_url,image_url&access_token=${token}`;
       const crRes = await fetch(crUrl);
       if (crRes.ok) {
         const crJson = await crRes.json();
