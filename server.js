@@ -1241,6 +1241,42 @@ async function fetchRechargeSubscriptions() {
     cancelPage++;
   } while (cancelCursor && cancelPage < 10);
 
+  // 5. Get ALL active subscriptions for product breakdown
+  const productCounts = {}; // { productTitle: count }
+  let activeCursor = null;
+  let activePage = 0;
+  do {
+    let url = `${baseUrl}/subscriptions?status=active&limit=250`;
+    if (activeCursor) url += `&cursor=${activeCursor}`;
+
+    const activeRes = await fetch(url, { headers });
+    if (!activeRes.ok) break;
+    const activeJson = await activeRes.json();
+    const subs = activeJson.subscriptions || [];
+
+    for (const sub of subs) {
+      const title = sub.product_title || 'Inconnu';
+      productCounts[title] = (productCounts[title] || 0) + 1;
+    }
+
+    activeCursor = activeJson.next_cursor || null;
+    activePage++;
+  } while (activeCursor && activePage < 20);
+
+  // Build product breakdown sorted by count
+  const byProduct = Object.entries(productCounts)
+    .map(([product, count]) => ({ product, count }))
+    .sort((a, b) => b.count - a.count);
+
+  // Group by category: Litière vs Box Jouet vs Autre
+  const byCategory = { 'Litière': 0, 'Box Jouet': 0, 'Autre': 0 };
+  for (const { product, count } of byProduct) {
+    const lower = product.toLowerCase();
+    if (lower.includes('litière') || lower.includes('litiere')) byCategory['Litière'] += count;
+    else if (lower.includes('box jouet') || lower.includes('box jouets')) byCategory['Box Jouet'] += count;
+    else byCategory['Autre'] += count;
+  }
+
   // Build sorted daily trend
   const dailyTrend = Object.entries(dailyCounts)
     .map(([date, counts]) => ({ date, ...counts }))
@@ -1252,6 +1288,8 @@ async function fetchRechargeSubscriptions() {
     totalSubscriptions: activeCount + cancelledCount,
     newLast30d: dailyTrend.reduce((s, d) => s + d.created, 0),
     dailyTrend,
+    byProduct,
+    byCategory,
   };
 }
 

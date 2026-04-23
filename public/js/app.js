@@ -688,8 +688,10 @@ async function loadRechargeData() {
     document.getElementById('val-rechargeNew').textContent = `+${data.newLast30d}`;
     document.getElementById('val-rechargeCancelled').textContent = data.cancelledSubscriptions.toLocaleString('fr-FR');
 
-    // Trend chart
+    // Charts
     renderRechargeTrendChart(data.dailyTrend);
+    if (data.byProduct) renderRechargeByProductChart(data.byProduct);
+    if (data.byCategory) renderRechargeByCategoryChart(data.byCategory);
   } catch (e) {
     console.error('[Recharge] Load error:', e);
   }
@@ -739,6 +741,83 @@ function renderRechargeTrendChart(dailyTrend) {
       scales: {
         x: { stacked: true, grid: { display: false }, ticks: { font: { size: 10 }, maxTicksLimit: 15 } },
         y: { stacked: true, grid: { color: '#f0f0f0' }, ticks: { font: { size: 10 } } },
+      },
+    },
+  });
+}
+
+function renderRechargeByProductChart(byProduct) {
+  const ctx = document.getElementById('chart-rechargeByProduct');
+  if (!ctx || !byProduct?.length) return;
+  if (chartInstances['chart-rechargeByProduct']) chartInstances['chart-rechargeByProduct'].destroy();
+
+  const colors = ['#5c6ac4', '#3b82f6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#6b7280', '#14b8a6'];
+
+  chartInstances['chart-rechargeByProduct'] = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: byProduct.map(p => p.product),
+      datasets: [{
+        data: byProduct.map(p => p.count),
+        backgroundColor: byProduct.map((_, i) => colors[i % colors.length]),
+        borderWidth: 2,
+        borderColor: '#fff',
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: true, position: 'bottom', labels: { font: { size: 10 }, padding: 8, boxWidth: 12 } },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+              const pct = total > 0 ? ((ctx.raw / total) * 100).toFixed(1) : 0;
+              return `${ctx.label}: ${ctx.raw} (${pct}%)`;
+            },
+          },
+        },
+      },
+    },
+  });
+}
+
+function renderRechargeByCategoryChart(byCategory) {
+  const ctx = document.getElementById('chart-rechargeByCategory');
+  if (!ctx) return;
+  if (chartInstances['chart-rechargeByCategory']) chartInstances['chart-rechargeByCategory'].destroy();
+
+  const entries = Object.entries(byCategory).filter(([, v]) => v > 0);
+  if (!entries.length) return;
+
+  const catColors = { 'Litière': '#5c6ac4', 'Box Jouet': '#f59e0b', 'Autre': '#6b7280' };
+
+  chartInstances['chart-rechargeByCategory'] = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels: entries.map(([k]) => k),
+      datasets: [{
+        data: entries.map(([, v]) => v),
+        backgroundColor: entries.map(([k]) => catColors[k] || '#6b7280'),
+        borderWidth: 2,
+        borderColor: '#fff',
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: true, position: 'bottom', labels: { font: { size: 11 }, padding: 10, boxWidth: 14 } },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+              const pct = total > 0 ? ((ctx.raw / total) * 100).toFixed(1) : 0;
+              return `${ctx.label}: ${ctx.raw} (${pct}%)`;
+            },
+          },
+        },
       },
     },
   });

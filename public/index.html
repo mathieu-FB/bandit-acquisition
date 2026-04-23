@@ -373,14 +373,28 @@
       </div>
     </section>
 
-    <!-- Recharge trend chart -->
-    <section class="grid grid-1" id="section-recharge-chart" style="display:none;">
+    <!-- Recharge charts -->
+    <section class="grid grid-3" id="section-recharge-chart" style="display:none;">
       <div class="card card-chart">
         <div class="card-header">
-          <h3>Évolution abonnements (30j)</h3>
+          <h3>Évolution (30j)</h3>
           <div class="card-info" title="Nouveaux abonnements et résiliations par jour">i</div>
         </div>
         <div class="card-chart-area"><canvas id="chart-rechargetrend"></canvas></div>
+      </div>
+      <div class="card card-chart">
+        <div class="card-header">
+          <h3>Abonnés par produit</h3>
+          <div class="card-info" title="Répartition des abonnements actifs par produit">i</div>
+        </div>
+        <div class="card-chart-area" style="max-width:350px;margin:0 auto;"><canvas id="chart-rechargeByProduct"></canvas></div>
+      </div>
+      <div class="card card-chart">
+        <div class="card-header">
+          <h3>Par catégorie</h3>
+          <div class="card-info" title="Abonnements actifs groupés : Litière vs Box Jouet">i</div>
+        </div>
+        <div class="card-chart-area" style="max-width:350px;margin:0 auto;"><canvas id="chart-rechargeByCategory"></canvas></div>
       </div>
     </section>
 
