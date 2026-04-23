@@ -658,11 +658,90 @@ async function loadDashboard() {
       createCountryPieChart('chart-ordersByCountry', 'legend-countries', data.ordersByCountry);
     }
 
+    // Load Recharge data (non-blocking)
+    loadRechargeData();
+
   } catch (err) {
     console.error('Failed to load dashboard:', err);
   } finally {
     overlay.classList.add('hidden');
   }
+}
+
+// ============================================================
+// RECHARGE — Subscription tracking
+// ============================================================
+
+async function loadRechargeData() {
+  try {
+    const res = await fetch('/api/recharge/subscriptions');
+    if (!res.ok) return; // Recharge not configured — hide section silently
+    const data = await res.json();
+    if (data.error) return;
+
+    // Show sections
+    document.getElementById('section-recharge').style.display = '';
+    document.getElementById('section-recharge-chart').style.display = '';
+
+    // KPI values
+    document.getElementById('val-rechargeActive').textContent = data.activeSubscriptions.toLocaleString('fr-FR');
+    document.getElementById('val-rechargeNew').textContent = `+${data.newLast30d}`;
+    document.getElementById('val-rechargeCancelled').textContent = data.cancelledSubscriptions.toLocaleString('fr-FR');
+
+    // Trend chart
+    renderRechargeTrendChart(data.dailyTrend);
+  } catch (e) {
+    console.error('[Recharge] Load error:', e);
+  }
+}
+
+function renderRechargeTrendChart(dailyTrend) {
+  const ctx = document.getElementById('chart-rechargetrend');
+  if (!ctx || !dailyTrend?.length) return;
+  if (chartInstances['chart-rechargetrend']) chartInstances['chart-rechargetrend'].destroy();
+
+  const labels = dailyTrend.map(d => {
+    const date = new Date(d.date);
+    return date.toLocaleDateString('fr-FR', { day: 'numeric', month: 'short' });
+  });
+
+  chartInstances['chart-rechargetrend'] = new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        {
+          label: 'Nouveaux',
+          data: dailyTrend.map(d => d.created),
+          backgroundColor: '#5c6ac4',
+          borderRadius: 4,
+        },
+        {
+          label: 'Résiliés',
+          data: dailyTrend.map(d => -d.cancelled),
+          backgroundColor: '#ef4444',
+          borderRadius: 4,
+        },
+      ],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { display: true, position: 'top', labels: { font: { size: 11 }, usePointStyle: true } },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => `${ctx.dataset.label}: ${Math.abs(ctx.raw)}`,
+          },
+        },
+      },
+      scales: {
+        x: { stacked: true, grid: { display: false }, ticks: { font: { size: 10 }, maxTicksLimit: 15 } },
+        y: { stacked: true, grid: { color: '#f0f0f0' }, ticks: { font: { size: 10 } } },
+      },
+    },
+  });
 }
 
 // ============================================================

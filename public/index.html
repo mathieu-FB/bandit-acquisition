@@ -343,7 +343,48 @@
       </div>
     </section>
 
-    <!-- ROW 5: Country breakdown -->
+    <!-- ROW 5: Recharge Subscriptions -->
+    <section class="grid grid-3" id="section-recharge" style="display:none;">
+      <div class="card" id="card-rechargeActive">
+        <div class="card-header">
+          <h3>Abonnés actifs</h3>
+          <div class="card-info" title="Nombre d'abonnements actifs sur Recharge">i</div>
+        </div>
+        <div class="card-value" id="val-rechargeActive">—</div>
+        <div class="card-source"><span class="source-badge" style="background:#5c6ac4;color:#fff;">R</span> Recharge</div>
+      </div>
+
+      <div class="card" id="card-rechargeNew">
+        <div class="card-header">
+          <h3>Nouveaux (30j)</h3>
+          <div class="card-info" title="Nouveaux abonnements créés sur les 30 derniers jours">i</div>
+        </div>
+        <div class="card-value" id="val-rechargeNew">—</div>
+        <div class="card-source"><span class="source-badge" style="background:#5c6ac4;color:#fff;">R</span> Recharge</div>
+      </div>
+
+      <div class="card" id="card-rechargeCancelled">
+        <div class="card-header">
+          <h3>Résiliés total</h3>
+          <div class="card-info" title="Nombre total d'abonnements résiliés">i</div>
+        </div>
+        <div class="card-value" id="val-rechargeCancelled">—</div>
+        <div class="card-source"><span class="source-badge" style="background:#5c6ac4;color:#fff;">R</span> Recharge</div>
+      </div>
+    </section>
+
+    <!-- Recharge trend chart -->
+    <section class="grid grid-1" id="section-recharge-chart" style="display:none;">
+      <div class="card card-chart">
+        <div class="card-header">
+          <h3>Évolution abonnements (30j)</h3>
+          <div class="card-info" title="Nouveaux abonnements et résiliations par jour">i</div>
+        </div>
+        <div class="card-chart-area"><canvas id="chart-rechargetrend"></canvas></div>
+      </div>
+    </section>
+
+    <!-- ROW 6: Country breakdown -->
     <section class="grid grid-1">
       <div class="card card-chart">
         <div class="card-header">

@@ -1158,6 +1158,125 @@ function getObjective(year, month) {
   return null;
 }
 
+// ============================================================
+// RECHARGE — Subscription tracking
+// ============================================================
+
+const rechargeCache = { data: null, timestamp: 0 };
+const RECHARGE_CACHE_TTL = 60 * 60 * 1000; // 1 hour
+
+async function fetchRechargeSubscriptions() {
+  const token = process.env.RECHARGE_API_TOKEN;
+  if (!token) return null;
+
+  const headers = { 'X-Recharge-Access-Token': token };
+  const baseUrl = 'https://api.rechargeapps.com';
+
+  // 1. Count active subscriptions
+  const countRes = await fetch(`${baseUrl}/subscriptions/count?status=active`, { headers });
+  if (!countRes.ok) {
+    console.error('[Recharge] Count error:', countRes.status, await countRes.text());
+    return null;
+  }
+  const countJson = await countRes.json();
+  const activeCount = countJson.count || 0;
+
+  // 2. Count cancelled subscriptions
+  const cancelledRes = await fetch(`${baseUrl}/subscriptions/count?status=cancelled`, { headers });
+  const cancelledCount = cancelledRes.ok ? (await cancelledRes.json()).count || 0 : 0;
+
+  // 3. Get recent subscriptions (last 30 days) for trend
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  const createdMin = formatDate(thirtyDaysAgo);
+
+  const dailyCounts = {};
+  let cursor = null;
+  let page = 0;
+
+  do {
+    let url = `${baseUrl}/subscriptions?created_at_min=${createdMin}T00:00:00&limit=250&sort_by=created_at-asc`;
+    if (cursor) url += `&cursor=${cursor}`;
+
+    const listRes = await fetch(url, { headers });
+    if (!listRes.ok) break;
+    const listJson = await listRes.json();
+    const subs = listJson.subscriptions || [];
+
+    for (const sub of subs) {
+      const day = sub.created_at ? sub.created_at.substring(0, 10) : null;
+      if (day) {
+        if (!dailyCounts[day]) dailyCounts[day] = { created: 0, active: 0, cancelled: 0 };
+        dailyCounts[day].created++;
+        if (sub.status === 'active') dailyCounts[day].active++;
+        if (sub.status === 'cancelled') dailyCounts[day].cancelled++;
+      }
+    }
+
+    cursor = listJson.next_cursor || null;
+    page++;
+  } while (cursor && page < 10);
+
+  // 4. Get recent cancellations (last 30 days)
+  let cancelCursor = null;
+  let cancelPage = 0;
+  do {
+    let url = `${baseUrl}/subscriptions?status=cancelled&updated_at_min=${createdMin}T00:00:00&limit=250&sort_by=updated_at-asc`;
+    if (cancelCursor) url += `&cursor=${cancelCursor}`;
+
+    const cancelRes2 = await fetch(url, { headers });
+    if (!cancelRes2.ok) break;
+    const cancelJson = await cancelRes2.json();
+    const subs = cancelJson.subscriptions || [];
+
+    for (const sub of subs) {
+      const day = sub.cancelled_at ? sub.cancelled_at.substring(0, 10) : (sub.updated_at ? sub.updated_at.substring(0, 10) : null);
+      if (day) {
+        if (!dailyCounts[day]) dailyCounts[day] = { created: 0, active: 0, cancelled: 0 };
+        dailyCounts[day].cancelled++;
+      }
+    }
+
+    cancelCursor = cancelJson.next_cursor || null;
+    cancelPage++;
+  } while (cancelCursor && cancelPage < 10);
+
+  // Build sorted daily trend
+  const dailyTrend = Object.entries(dailyCounts)
+    .map(([date, counts]) => ({ date, ...counts }))
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  return {
+    activeSubscriptions: activeCount,
+    cancelledSubscriptions: cancelledCount,
+    totalSubscriptions: activeCount + cancelledCount,
+    newLast30d: dailyTrend.reduce((s, d) => s + d.created, 0),
+    dailyTrend,
+  };
+}
+
+app.get('/api/recharge/subscriptions', async (req, res) => {
+  try {
+    const token = process.env.RECHARGE_API_TOKEN;
+    if (!token) return res.status(400).json({ error: 'Recharge non configuré. Ajoutez RECHARGE_API_TOKEN dans les variables d\'environnement.' });
+
+    const forceRefresh = req.query.refresh === '1';
+    if (!forceRefresh && rechargeCache.data && (Date.now() - rechargeCache.timestamp < RECHARGE_CACHE_TTL)) {
+      return res.json(rechargeCache.data);
+    }
+
+    const data = await fetchRechargeSubscriptions();
+    if (!data) return res.status(500).json({ error: 'Erreur API Recharge' });
+
+    rechargeCache.data = data;
+    rechargeCache.timestamp = Date.now();
+    res.json(data);
+  } catch (err) {
+    console.error('[Recharge] Error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Debug: verify Shopify net sales calculation vs Shopify Analytics
 app.get('/api/shopify/verify', async (req, res) => {
   try {
