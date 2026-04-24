@@ -1908,56 +1908,64 @@ function saveAdSpendCache() {
 
 // Request one report, poll, download, return spend total
 async function fetchOneAdReport(token, profileId, adProduct, reportTypeId, start, end) {
-  // Step 1: Request report
-  const reportRes = await fetch('https://advertising-api-eu.amazon.com/reporting/reports', {
-    method: 'POST',
-    headers: {
-      'Amazon-Advertising-API-ClientId': process.env.AMAZON_ADS_CLIENT_ID,
-      'Amazon-Advertising-API-Scope': profileId,
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/vnd.createasyncreportrequest.v3+json',
-    },
-    body: JSON.stringify({
-      startDate: start,
-      endDate: end,
-      configuration: {
-        adProduct,
-        groupBy: ['campaign'],
-        columns: [adProduct === 'SPONSORED_PRODUCTS' ? 'spend' : 'cost'],
-        reportTypeId,
-        timeUnit: 'SUMMARY',
-        format: 'GZIP_JSON',
-      },
-    }),
-  });
+  const headers = {
+    'Amazon-Advertising-API-ClientId': process.env.AMAZON_ADS_CLIENT_ID,
+    'Amazon-Advertising-API-Scope': profileId,
+    Authorization: `Bearer ${token}`,
+  };
 
+  // Step 1: Request report (with retry on 429)
   let reportId;
-  if (!reportRes.ok) {
+  for (let retry = 0; retry < 5; retry++) {
+    const reportRes = await fetch('https://advertising-api-eu.amazon.com/reporting/reports', {
+      method: 'POST',
+      headers: { ...headers, 'Content-Type': 'application/vnd.createasyncreportrequest.v3+json' },
+      body: JSON.stringify({
+        startDate: start,
+        endDate: end,
+        configuration: {
+          adProduct,
+          groupBy: ['campaign'],
+          columns: [adProduct === 'SPONSORED_PRODUCTS' ? 'spend' : 'cost'],
+          reportTypeId,
+          timeUnit: 'SUMMARY',
+          format: 'GZIP_JSON',
+        },
+      }),
+    });
+
+    if (reportRes.ok) {
+      reportId = (await reportRes.json()).reportId;
+      break;
+    }
+
     const errBody = await reportRes.text();
     if (reportRes.status === 425) {
       const match = errBody.match(/duplicate of\s*:\s*([a-f0-9-]+)/i);
-      if (match) { reportId = match[1]; }
+      if (match) { reportId = match[1]; break; }
       else { console.error(`[Amazon Ads] ${adProduct} 425 no ID:`, errBody); return 0; }
+    } else if (reportRes.status === 429) {
+      const wait = Math.min(10 + retry * 15, 60); // 10s, 25s, 40s, 55s, 60s
+      console.log(`[Amazon Ads] ${adProduct} throttled (429), retrying in ${wait}s...`);
+      await new Promise(r => setTimeout(r, wait * 1000));
     } else {
       console.error(`[Amazon Ads] ${adProduct} request error:`, reportRes.status, errBody);
       return 0;
     }
-  } else {
-    reportId = (await reportRes.json()).reportId;
   }
+  if (!reportId) { console.error(`[Amazon Ads] ${adProduct} failed after retries`); return 0; }
   console.log(`[Amazon Ads] ${adProduct} report:`, reportId);
 
-  // Step 2: Poll (max 10 min — Amazon can be slow)
+  // Step 2: Poll (max 5 min, with backoff on 429)
   let downloadUrl = null;
-  for (let attempt = 0; attempt < 120; attempt++) {
-    await new Promise(r => setTimeout(r, 5000));
-    const statusRes = await fetch(`https://advertising-api-eu.amazon.com/reporting/reports/${reportId}`, {
-      headers: {
-        'Amazon-Advertising-API-ClientId': process.env.AMAZON_ADS_CLIENT_ID,
-        'Amazon-Advertising-API-Scope': profileId,
-        Authorization: `Bearer ${token}`,
-      },
-    });
+  for (let attempt = 0; attempt < 30; attempt++) {
+    await new Promise(r => setTimeout(r, 10000)); // 10s between polls
+    const statusRes = await fetch(`https://advertising-api-eu.amazon.com/reporting/reports/${reportId}`, { headers });
+    if (statusRes.status === 429) {
+      console.log(`[Amazon Ads] ${adProduct} poll throttled, waiting 20s...`);
+      await new Promise(r => setTimeout(r, 20000));
+      continue;
+    }
     if (!statusRes.ok) continue;
     const statusData = await statusRes.json();
     if (statusData.status === 'COMPLETED') { downloadUrl = statusData.url; break; }
@@ -1972,26 +1980,19 @@ async function fetchOneAdReport(token, profileId, adProduct, reportTypeId, start
   const buffer = await dlRes.buffer();
 
   let reportJson;
-  let rawText;
   try {
-    rawText = zlib.gunzipSync(buffer).toString();
-    reportJson = JSON.parse(rawText);
+    reportJson = JSON.parse(zlib.gunzipSync(buffer).toString());
   } catch {
-    try { rawText = buffer.toString(); reportJson = JSON.parse(rawText); } catch (e) {
-      console.error(`[Amazon Ads] ${adProduct} parse error:`, e.message, 'raw preview:', buffer.toString().substring(0, 200));
+    try { reportJson = JSON.parse(buffer.toString()); } catch (e) {
+      console.error(`[Amazon Ads] ${adProduct} parse error:`, e.message);
       return 0;
     }
   }
 
   const rows = Array.isArray(reportJson) ? reportJson : [];
-  console.log(`[Amazon Ads] ${adProduct} rows: ${rows.length}, keys: ${rows.length > 0 ? Object.keys(rows[0]).join(',') : 'none'}`);
-  if (rows.length > 0) console.log(`[Amazon Ads] ${adProduct} sample row:`, JSON.stringify(rows[0]));
-
   let spend = 0;
-  rows.forEach(row => {
-    spend += parseFloat(row.spend || row.cost || 0);
-  });
-  console.log(`[Amazon Ads] ${adProduct} spend: ${spend}€`);
+  rows.forEach(row => { spend += parseFloat(row.spend || row.cost || 0); });
+  console.log(`[Amazon Ads] ${adProduct} spend: ${spend}€ (${rows.length} rows)`);
   return spend;
 }
 
@@ -2010,13 +2011,12 @@ async function refreshAmazonAdSpend() {
       const start = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
       const yesterday = formatDate(new Date(Date.now() - 86400000));
 
-      console.log('[Amazon Ads] Fetching SP + SB + SD reports...');
+      console.log('[Amazon Ads] Fetching SP + SB + SD reports (sequential to avoid throttling)...');
 
-      const [spSpend, sbSpend, sdSpend] = await Promise.all([
-        fetchOneAdReport(token, profileId, 'SPONSORED_PRODUCTS', 'spCampaigns', start, yesterday),
-        fetchOneAdReport(token, profileId, 'SPONSORED_BRANDS', 'sbCampaigns', start, yesterday),
-        fetchOneAdReport(token, profileId, 'SPONSORED_DISPLAY', 'sdCampaigns', start, yesterday),
-      ]);
+      // Sequential to avoid 429 throttling from Amazon
+      const spSpend = await fetchOneAdReport(token, profileId, 'SPONSORED_PRODUCTS', 'spCampaigns', start, yesterday);
+      const sbSpend = await fetchOneAdReport(token, profileId, 'SPONSORED_BRANDS', 'sbCampaigns', start, yesterday);
+      const sdSpend = await fetchOneAdReport(token, profileId, 'SPONSORED_DISPLAY', 'sdCampaigns', start, yesterday);
 
       const totalSpend = spSpend + sbSpend + sdSpend;
       amazonAdSpendCache.spend = totalSpend;
@@ -3275,11 +3275,10 @@ app.get('/api/amazon/force-refresh-ads', async (req, res) => {
     const start = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
     const yesterday = formatDate(new Date(Date.now() - 86400000));
 
-    const [spSpend, sbSpend, sdSpend] = await Promise.all([
-      fetchOneAdReport(token, profileId, 'SPONSORED_PRODUCTS', 'spCampaigns', start, yesterday),
-      fetchOneAdReport(token, profileId, 'SPONSORED_BRANDS', 'sbCampaigns', start, yesterday),
-      fetchOneAdReport(token, profileId, 'SPONSORED_DISPLAY', 'sdCampaigns', start, yesterday),
-    ]);
+    // Sequential to avoid 429 throttling
+    const spSpend = await fetchOneAdReport(token, profileId, 'SPONSORED_PRODUCTS', 'spCampaigns', start, yesterday);
+    const sbSpend = await fetchOneAdReport(token, profileId, 'SPONSORED_BRANDS', 'sbCampaigns', start, yesterday);
+    const sdSpend = await fetchOneAdReport(token, profileId, 'SPONSORED_DISPLAY', 'sdCampaigns', start, yesterday);
 
     const totalSpend = spSpend + sbSpend + sdSpend;
     amazonAdSpendCache.spend = totalSpend;
