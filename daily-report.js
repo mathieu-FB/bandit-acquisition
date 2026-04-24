@@ -20,6 +20,60 @@ function formatDate(d) {
 }
 
 // ============================================================
+// OBJECTIVES (mirrored from server.js)
+// ============================================================
+
+const OBJECTIVES = {
+  2026: {
+    Q2: {
+      ca: 424000,
+      ratio: 30,
+      months: {
+        4: { ca: 128000, ratio: 30 },
+        5: { ca: 144000, ratio: 30 },
+        6: { ca: 152000, ratio: 30 },
+      },
+    },
+  },
+};
+
+const AMAZON_OBJECTIVES = {
+  2026: {
+    Q2: {
+      ca: 120000,
+      tacos: 20,
+      months: {
+        4: { ca: 40000, tacos: 20 },
+        5: { ca: 40000, tacos: 20 },
+        6: { ca: 40000, tacos: 20 },
+      },
+    },
+  },
+};
+
+function getObjective(year, month) {
+  const yearObj = OBJECTIVES[year];
+  if (!yearObj) return null;
+  for (const [qKey, q] of Object.entries(yearObj)) {
+    if (q.months && q.months[month]) {
+      return { quarter: qKey, quarterObj: q, monthObj: q.months[month] };
+    }
+  }
+  return null;
+}
+
+function getAmazonObjective(year, month) {
+  const yearObj = AMAZON_OBJECTIVES[year];
+  if (!yearObj) return null;
+  for (const [qKey, q] of Object.entries(yearObj)) {
+    if (q.months && q.months[month]) {
+      return { quarter: qKey, quarterObj: q, monthObj: q.months[month] };
+    }
+  }
+  return null;
+}
+
+// ============================================================
 // SHOPIFY — fetch + compute HT net sales
 // ============================================================
 
@@ -35,7 +89,7 @@ async function fetchShopifyOrders(start, end) {
       created_at_max: `${end}T23:59:59+00:00`,
       status: 'any',
       limit: '250',
-      fields: 'id,created_at,total_price,subtotal_price,total_discounts,total_tax,source_name,customer,financial_status,refunds',
+      fields: 'id,created_at,total_price,subtotal_price,total_discounts,total_tax,source_name,customer,financial_status,refunds,total_shipping_price_set',
     }).toString();
 
   while (url) {
@@ -73,15 +127,22 @@ function orderNetSalesHT(order) {
   return grossHT - refundedHT;
 }
 
+function orderShippingHT(order) {
+  const shippingTTC = parseFloat(order.total_shipping_price_set?.shop_money?.amount || 0);
+  return shippingTTC / 1.20; // 20% TVA
+}
+
 function computeShopifyStats(orders) {
   const valid = orders.filter(o => o.financial_status !== 'voided');
   const countable = valid.filter(o => o.financial_status !== 'refunded');
 
   const totalOrders = countable.length;
   const netSales = valid.reduce((sum, o) => sum + orderNetSalesHT(o), 0);
+  const shippingHT = valid.reduce((sum, o) => sum + orderShippingHT(o), 0);
+  const totalCA = netSales + shippingHT;
   const aov = totalOrders > 0 ? netSales / totalOrders : 0;
 
-  return { totalOrders, netSales, aov };
+  return { totalOrders, netSales, shippingHT, totalCA, aov };
 }
 
 // ============================================================
@@ -115,7 +176,6 @@ async function fetchMetaBestAd(start, end) {
   if (!token || !accountId) return null;
 
   try {
-    // Step 1: get ads with spend + purchases (light query — no action_values to avoid 500)
     const url1 = `https://graph.facebook.com/v19.0/${accountId}/insights?` +
       new URLSearchParams({
         access_token: token,
@@ -128,7 +188,7 @@ async function fetchMetaBestAd(start, end) {
     const res1 = await fetch(url1);
     if (!res1.ok) return null;
     const json1 = await res1.json();
-    if (json1.error) { console.error('Meta best ad error:', json1.error.message); return null; }
+    if (json1.error) return null;
 
     const ads = (json1.data || []).map(ad => {
       const spend = parseFloat(ad.spend || 0);
@@ -142,9 +202,7 @@ async function fetchMetaBestAd(start, end) {
 
     if (ads.length === 0) return null;
 
-    // Step 2: get action_values for top 5 ads by spend (individual calls)
     const topAds = ads.sort((a, b) => b.spendNum - a.spendNum).slice(0, 5);
-
     let bestAd = null;
     let bestRoas = 0;
 
@@ -162,24 +220,16 @@ async function fetchMetaBestAd(start, end) {
       try {
         const res2 = await fetch(url2);
         const json2 = await res2.json();
-        if (json2.data && json2.data[0] && json2.data[0].action_values) {
+        if (json2.data?.[0]?.action_values) {
           const r = json2.data[0].action_values.find(a => a.action_type === 'purchase' || a.action_type === 'omni_purchase');
           if (r) revenue = parseFloat(r.value || 0);
         }
-      } catch (e) { /* skip revenue for this ad */ }
+      } catch (e) { /* skip */ }
 
       const roas = ad.spendNum > 0 ? revenue / ad.spendNum : 0;
       if (roas > bestRoas) {
         bestRoas = roas;
-        bestAd = {
-          name: ad.ad_name,
-          adset: ad.adset_name,
-          campaign: ad.campaign_name,
-          spend: ad.spendNum,
-          revenue,
-          purchases: ad.purchases,
-          roas,
-        };
+        bestAd = { name: ad.ad_name, adset: ad.adset_name, campaign: ad.campaign_name, spend: ad.spendNum, revenue, purchases: ad.purchases, roas };
       }
     }
 
@@ -192,7 +242,7 @@ async function fetchMetaBestAd(start, end) {
 
 function aggregateMeta(dailyData) {
   if (!dailyData || !dailyData.length) {
-    return { spend: 0, impressions: 0, clicks: 0, purchases: 0, revenue: 0 };
+    return { spend: 0, impressions: 0, clicks: 0, purchases: 0, revenue: 0, roas: 0, cpm: 0 };
   }
 
   let spend = 0, impressions = 0, clicks = 0, purchases = 0, revenue = 0;
@@ -218,7 +268,7 @@ function aggregateMeta(dailyData) {
 }
 
 // ============================================================
-// GOOGLE ADS (via gRPC library)
+// GOOGLE ADS
 // ============================================================
 
 async function fetchGoogleStats(start, end) {
@@ -228,19 +278,17 @@ async function fetchGoogleStats(start, end) {
     const clientSecret = process.env.GOOGLE_ADS_CLIENT_SECRET;
     const devToken = process.env.GOOGLE_ADS_DEVELOPER_TOKEN;
     const refreshToken = process.env.GOOGLE_ADS_REFRESH_TOKEN;
-    const customerId = (process.env.GOOGLE_ADS_CUSTOMER_ID || '').replace(/-/g, '');
+    const loginCustomerId = (process.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID || process.env.GOOGLE_ADS_CUSTOMER_ID || '').replace(/-/g, '');
+    const customerId = (process.env.GOOGLE_ADS_CLIENT_ACCOUNT_ID || process.env.GOOGLE_ADS_CUSTOMER_ID || '').replace(/-/g, '');
     if (!clientId || !clientSecret || !devToken || !refreshToken || !customerId) return null;
 
     const client = new GoogleAdsApi({ client_id: clientId, client_secret: clientSecret, developer_token: devToken });
-    const customer = client.Customer({ customer_id: customerId, refresh_token: refreshToken });
+    const opts = { customer_id: customerId, refresh_token: refreshToken };
+    if (loginCustomerId && loginCustomerId !== customerId) opts.login_customer_id = loginCustomerId;
+    const customer = client.Customer(opts);
 
     const results = await customer.query(`
-      SELECT
-        metrics.cost_micros,
-        metrics.impressions,
-        metrics.clicks,
-        metrics.conversions,
-        metrics.conversions_value
+      SELECT metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions, metrics.conversions_value
       FROM campaign
       WHERE segments.date BETWEEN '${start}' AND '${end}'
     `);
@@ -254,11 +302,7 @@ async function fetchGoogleStats(start, end) {
       revenue += parseFloat(row.metrics?.conversions_value || 0);
     });
 
-    return {
-      spend, impressions, clicks, conversions, revenue,
-      roas: spend > 0 ? revenue / spend : 0,
-      cpm: impressions > 0 ? (spend / impressions) * 1000 : 0,
-    };
+    return { spend, impressions, clicks, conversions, revenue, roas: spend > 0 ? revenue / spend : 0, cpm: impressions > 0 ? (spend / impressions) * 1000 : 0 };
   } catch (err) {
     console.error('Google Ads report error:', err.errors?.[0]?.message || err.message);
     return null;
@@ -303,11 +347,7 @@ async function fetchTikTokStats(start, end) {
       revenue += p * parseFloat(m.value_per_complete_payment || 0);
     });
 
-    return {
-      spend, impressions, clicks, purchases, revenue,
-      roas: spend > 0 ? revenue / spend : 0,
-      cpm: impressions > 0 ? (spend / impressions) * 1000 : 0,
-    };
+    return { spend, impressions, clicks, purchases, revenue, roas: spend > 0 ? revenue / spend : 0, cpm: impressions > 0 ? (spend / impressions) * 1000 : 0 };
   } catch (err) {
     console.error('TikTok report error:', err.message);
     return null;
@@ -327,12 +367,7 @@ async function getAmazonAccessToken() {
   const res = await fetch('https://api.amazon.com/auth/o2/token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      grant_type: 'refresh_token',
-      refresh_token: refreshToken,
-      client_id: clientId,
-      client_secret: clientSecret,
-    }).toString(),
+    body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken, client_id: clientId, client_secret: clientSecret }).toString(),
   });
   if (!res.ok) return null;
   const json = await res.json();
@@ -352,9 +387,7 @@ async function fetchAmazonStats(start, end) {
         granularity: 'Day',
       }).toString();
 
-    const res = await fetch(url, {
-      headers: { 'x-amz-access-token': token, 'Content-Type': 'application/json' },
-    });
+    const res = await fetch(url, { headers: { 'x-amz-access-token': token, 'Content-Type': 'application/json' } });
     if (!res.ok) return null;
     const json = await res.json();
 
@@ -418,12 +451,22 @@ async function fetchTikTokBestAd(start, end) {
 }
 
 // ============================================================
+// FREELANCE COST (mirrored from server.js)
+// ============================================================
+
+const FREELANCE_MONTHLY_COST = 1280;
+
+function getFreelanceDailyCost(dateStr) {
+  const d = new Date(dateStr);
+  const daysInMonth = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  return FREELANCE_MONTHLY_COST / daysInMonth;
+}
+
+// ============================================================
 // COLLECT ALL DATA FOR REPORT
 // ============================================================
 
 async function collectReportData() {
-  // Use Paris timezone to compute "yesterday" — the server runs in UTC,
-  // but the cron fires at 00:01 Europe/Paris (= 22:01 UTC the day before).
   const nowParis = new Date(new Date().toLocaleString('en-US', { timeZone: 'Europe/Paris' }));
   const yesterday = new Date(nowParis);
   yesterday.setDate(yesterday.getDate() - 1);
@@ -436,84 +479,163 @@ async function collectReportData() {
   const dbStr = formatDate(dayBefore);
   const lwStr = formatDate(lastWeekSameDay);
 
-  console.log(`[Report] Collecting data for ${yStr} (vs ${dbStr} and ${lwStr})`);
+  // MTD: 1st of month → yesterday
+  const mtdStart = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-01`;
+
+  // QTD: 1st of quarter → yesterday
+  const qMonth = Math.floor(yesterday.getMonth() / 3) * 3;
+  const qtdStart = `${yesterday.getFullYear()}-${String(qMonth + 1).padStart(2, '0')}-01`;
+
+  console.log(`[Report] Collecting data for ${yStr} (vs ${dbStr} and ${lwStr}), MTD from ${mtdStart}, QTD from ${qtdStart}`);
 
   // Fetch everything in parallel
   const [
-    shopifyYesterday, shopifyDayBefore, shopifyLastWeek,
-    metaYesterday, metaDayBefore, metaLastWeek,
+    shopifyYesterday, shopifyDayBefore, shopifyLastWeek, shopifyMTD,
+    metaYesterday, metaDayBefore, metaLastWeek, metaMTD,
     bestAd, bestTiktokAd,
-    googleYesterday, googleDayBefore, googleLastWeek,
-    tiktokYesterday, tiktokDayBefore, tiktokLastWeek,
-    amazonYesterday, amazonDayBefore, amazonLastWeek,
+    googleYesterday, googleDayBefore, googleLastWeek, googleMTD,
+    tiktokYesterday, tiktokDayBefore, tiktokLastWeek, tiktokMTD,
+    amazonYesterday, amazonDayBefore, amazonLastWeek, amazonMTD,
   ] = await Promise.all([
     fetchShopifyOrders(yStr, yStr),
     fetchShopifyOrders(dbStr, dbStr),
     fetchShopifyOrders(lwStr, lwStr),
+    fetchShopifyOrders(mtdStart, yStr),
     fetchMetaInsights(yStr, yStr),
     fetchMetaInsights(dbStr, dbStr),
     fetchMetaInsights(lwStr, lwStr),
+    fetchMetaInsights(mtdStart, yStr),
     fetchMetaBestAd(yStr, yStr),
     fetchTikTokBestAd(yStr, yStr),
     fetchGoogleStats(yStr, yStr),
     fetchGoogleStats(dbStr, dbStr),
     fetchGoogleStats(lwStr, lwStr),
+    fetchGoogleStats(mtdStart, yStr),
     fetchTikTokStats(yStr, yStr),
     fetchTikTokStats(dbStr, dbStr),
     fetchTikTokStats(lwStr, lwStr),
+    fetchTikTokStats(mtdStart, yStr),
     fetchAmazonStats(yStr, yStr),
     fetchAmazonStats(dbStr, dbStr),
     fetchAmazonStats(lwStr, lwStr),
+    fetchAmazonStats(mtdStart, yStr),
   ]);
 
   const shopify = {
     yesterday: computeShopifyStats(shopifyYesterday),
     dayBefore: computeShopifyStats(shopifyDayBefore),
     lastWeek: computeShopifyStats(shopifyLastWeek),
+    mtd: computeShopifyStats(shopifyMTD),
   };
 
   const meta = {
     yesterday: aggregateMeta(metaYesterday),
     dayBefore: aggregateMeta(metaDayBefore),
     lastWeek: aggregateMeta(metaLastWeek),
+    mtd: aggregateMeta(metaMTD),
   };
 
+  const defGoogle = { spend: 0, impressions: 0, clicks: 0, conversions: 0, revenue: 0, roas: 0, cpm: 0 };
   const google = {
-    yesterday: googleYesterday || { spend: 0, impressions: 0, clicks: 0, conversions: 0, revenue: 0, roas: 0, cpm: 0 },
-    dayBefore: googleDayBefore || { spend: 0, impressions: 0, clicks: 0, conversions: 0, revenue: 0, roas: 0, cpm: 0 },
-    lastWeek: googleLastWeek || { spend: 0, impressions: 0, clicks: 0, conversions: 0, revenue: 0, roas: 0, cpm: 0 },
+    yesterday: googleYesterday || defGoogle,
+    dayBefore: googleDayBefore || defGoogle,
+    lastWeek: googleLastWeek || defGoogle,
+    mtd: googleMTD || defGoogle,
   };
 
+  const defTiktok = { spend: 0, impressions: 0, clicks: 0, purchases: 0, revenue: 0, roas: 0, cpm: 0 };
   const tiktok = {
-    yesterday: tiktokYesterday || { spend: 0, impressions: 0, clicks: 0, purchases: 0, revenue: 0, roas: 0, cpm: 0 },
-    dayBefore: tiktokDayBefore || { spend: 0, impressions: 0, clicks: 0, purchases: 0, revenue: 0, roas: 0, cpm: 0 },
-    lastWeek: tiktokLastWeek || { spend: 0, impressions: 0, clicks: 0, purchases: 0, revenue: 0, roas: 0, cpm: 0 },
+    yesterday: tiktokYesterday || defTiktok,
+    dayBefore: tiktokDayBefore || defTiktok,
+    lastWeek: tiktokLastWeek || defTiktok,
+    mtd: tiktokMTD || defTiktok,
   };
 
-  const defaultAmz = { ca: 0, orders: 0 };
+  const defAmz = { ca: 0, orders: 0 };
   const amazon = {
-    yesterday: amazonYesterday || defaultAmz,
-    dayBefore: amazonDayBefore || defaultAmz,
-    lastWeek: amazonLastWeek || defaultAmz,
+    yesterday: amazonYesterday || defAmz,
+    dayBefore: amazonDayBefore || defAmz,
+    lastWeek: amazonLastWeek || defAmz,
+    mtd: amazonMTD || defAmz,
   };
 
-  // Totals (Shopify spend only — Amazon ads not included in daily spend as it's MTD cached)
-  const totalSpendY = meta.yesterday.spend + google.yesterday.spend + tiktok.yesterday.spend;
-  const totalSpendDB = meta.dayBefore.spend + google.dayBefore.spend + tiktok.dayBefore.spend;
-  const totalSpendLW = meta.lastWeek.spend + google.lastWeek.spend + tiktok.lastWeek.spend;
+  // E-commerce totals (Shopify spend = Meta + Google + TikTok + freelance)
+  const freelanceY = getFreelanceDailyCost(yStr);
+  const totalSpendY = meta.yesterday.spend + google.yesterday.spend + tiktok.yesterday.spend + freelanceY;
+  const totalSpendDB = meta.dayBefore.spend + google.dayBefore.spend + tiktok.dayBefore.spend + getFreelanceDailyCost(dbStr);
+  const totalSpendLW = meta.lastWeek.spend + google.lastWeek.spend + tiktok.lastWeek.spend + getFreelanceDailyCost(lwStr);
 
-  const percentMarketingY = shopify.yesterday.netSales > 0 ? (totalSpendY / shopify.yesterday.netSales) * 100 : 0;
-  const percentMarketingDB = shopify.dayBefore.netSales > 0 ? (totalSpendDB / shopify.dayBefore.netSales) * 100 : 0;
-  const percentMarketingLW = shopify.lastWeek.netSales > 0 ? (totalSpendLW / shopify.lastWeek.netSales) * 100 : 0;
+  // MTD spend (count days for freelance)
+  const mtdDays = Math.ceil((new Date(yStr) - new Date(mtdStart)) / (1000 * 60 * 60 * 24)) + 1;
+  const totalSpendMTD = meta.mtd.spend + google.mtd.spend + tiktok.mtd.spend + (freelanceY * mtdDays);
 
-  // Blended KPIs
+  const ecomRoasY = totalSpendY > 0 ? shopify.yesterday.totalCA / totalSpendY : 0;
+  const ecomRoasDB = totalSpendDB > 0 ? shopify.dayBefore.totalCA / totalSpendDB : 0;
+  const ecomRoasLW = totalSpendLW > 0 ? shopify.lastWeek.totalCA / totalSpendLW : 0;
+  const ecomRoasMTD = totalSpendMTD > 0 ? shopify.mtd.totalCA / totalSpendMTD : 0;
+
+  const percentMarketingY = shopify.yesterday.totalCA > 0 ? (totalSpendY / shopify.yesterday.totalCA) * 100 : 0;
   const blendedCacY = shopify.yesterday.totalOrders > 0 ? totalSpendY / shopify.yesterday.totalOrders : 0;
-  const blendedCacDB = shopify.dayBefore.totalOrders > 0 ? totalSpendDB / shopify.dayBefore.totalOrders : 0;
-  const blendedCacLW = shopify.lastWeek.totalOrders > 0 ? totalSpendLW / shopify.lastWeek.totalOrders : 0;
 
-  const blendedRoasY = totalSpendY > 0 ? shopify.yesterday.netSales / totalSpendY : 0;
-  const blendedRoasDB = totalSpendDB > 0 ? shopify.dayBefore.netSales / totalSpendDB : 0;
-  const blendedRoasLW = totalSpendLW > 0 ? shopify.lastWeek.netSales / totalSpendLW : 0;
+  // Amazon TACOS (placeholder — needs Amazon Ads spend data, using 0 if not available)
+  // Note: Amazon Ads spend is MTD-cached in server.js; here we don't have direct access
+  // so we'll report what we have
+  const amazonTacosY = 0; // Would need Amazon Ads API integration in daily report
+
+  // Objectives
+  const year = yesterday.getFullYear();
+  const month = yesterday.getMonth() + 1;
+  const obj = getObjective(year, month);
+  const amzObj = getAmazonObjective(year, month);
+
+  let objectives = null;
+  if (obj) {
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const dayOfMonth = yesterday.getDate();
+    const expectedPace = (dayOfMonth / daysInMonth) * 100;
+
+    // QTD shopify CA
+    // We only have MTD data easily; QTD would need additional fetch if qtdStart != mtdStart
+    const mtdProgress = obj.monthObj.ca > 0 ? (shopify.mtd.totalCA / obj.monthObj.ca) * 100 : 0;
+    const qtdProgress = obj.quarterObj.ca > 0 ? (shopify.mtd.totalCA / obj.quarterObj.ca) * 100 : 0; // Approximation with MTD only
+
+    objectives = {
+      monthly: {
+        target: obj.monthObj.ca,
+        current: shopify.mtd.totalCA,
+        progress: mtdProgress,
+        expectedPace,
+        onTrack: mtdProgress >= expectedPace * 0.9,
+      },
+      quarterly: {
+        target: obj.quarterObj.ca,
+        quarter: obj.quarter,
+      },
+    };
+  }
+
+  let amazonObjectives = null;
+  if (amzObj) {
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const dayOfMonth = yesterday.getDate();
+    const expectedPace = (dayOfMonth / daysInMonth) * 100;
+
+    const amzMtdProgress = amzObj.monthObj.ca > 0 ? (amazon.mtd.ca / amzObj.monthObj.ca) * 100 : 0;
+
+    amazonObjectives = {
+      monthly: {
+        target: amzObj.monthObj.ca,
+        current: amazon.mtd.ca,
+        progress: amzMtdProgress,
+        expectedPace,
+        onTrack: amzMtdProgress >= expectedPace * 0.9,
+      },
+      quarterly: {
+        target: amzObj.quarterObj.ca,
+        quarter: amzObj.quarter,
+      },
+    };
+  }
 
   return {
     date: yStr,
@@ -521,20 +643,14 @@ async function collectReportData() {
     dateLastWeek: lwStr,
     dayName: yesterday.toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
     shopify, meta, google, tiktok, amazon,
-    totals: {
-      spendYesterday: totalSpendY,
-      spendDayBefore: totalSpendDB,
-      spendLastWeek: totalSpendLW,
-      percentMarketingYesterday: percentMarketingY,
-      percentMarketingDayBefore: percentMarketingDB,
-      percentMarketingLastWeek: percentMarketingLW,
-      blendedCacYesterday: blendedCacY,
-      blendedCacDayBefore: blendedCacDB,
-      blendedCacLastWeek: blendedCacLW,
-      blendedRoasYesterday: blendedRoasY,
-      blendedRoasDayBefore: blendedRoasDB,
-      blendedRoasLastWeek: blendedRoasLW,
+    ecommerce: {
+      roas: { yesterday: ecomRoasY, dayBefore: ecomRoasDB, lastWeek: ecomRoasLW, mtd: ecomRoasMTD },
+      spend: { yesterday: totalSpendY, dayBefore: totalSpendDB, lastWeek: totalSpendLW, mtd: totalSpendMTD },
+      percentMarketing: percentMarketingY,
+      blendedCac: blendedCacY,
     },
+    objectives,
+    amazonObjectives,
     bestAd,
     bestTiktokAd,
   };
@@ -549,68 +665,60 @@ async function generateAnalysis(data) {
   if (!apiKey) return 'Analyse non disponible (clé API manquante).';
 
   const anthropic = new Anthropic({ apiKey });
+  const d = data;
 
-  const prompt = `Tu es un expert senior en acquisition e-commerce / performance marketing. Tu rédiges un brief quotidien pour le CEO d'une marque DTC (French Bandit, accessoires pour chiens et chats).
+  const objSection = d.objectives ? `
+## Objectif mensuel E-commerce
+- Target mois : ${d.objectives.monthly.target.toFixed(0)}€ | Réalisé MTD : ${d.objectives.monthly.current.toFixed(0)}€ | Progression : ${d.objectives.monthly.progress.toFixed(1)}% (rythme attendu : ${d.objectives.monthly.expectedPace.toFixed(1)}%)
+${d.objectives.monthly.onTrack ? '→ ON TRACK' : '→ EN RETARD'}` : '';
 
-Voici les données de la veille (${data.dayName}) comparées à J-1 et J-7 :
+  const amzObjSection = d.amazonObjectives ? `
+## Objectif mensuel Amazon
+- Target mois : ${d.amazonObjectives.monthly.target.toFixed(0)}€ | Réalisé MTD : ${d.amazonObjectives.monthly.current.toFixed(0)}€ | Progression : ${d.amazonObjectives.monthly.progress.toFixed(1)}% (rythme attendu : ${d.amazonObjectives.monthly.expectedPace.toFixed(1)}%)
+${d.amazonObjectives.monthly.onTrack ? '→ ON TRACK' : '→ EN RETARD'}` : '';
 
-## Shopify (canaux DTC uniquement, HT, retours déduits)
-- CA HT hier : ${data.shopify.yesterday.netSales.toFixed(2)}€ | J-1 : ${data.shopify.dayBefore.netSales.toFixed(2)}€ | J-7 : ${data.shopify.lastWeek.netSales.toFixed(2)}€
-- Commandes hier : ${data.shopify.yesterday.totalOrders} | J-1 : ${data.shopify.dayBefore.totalOrders} | J-7 : ${data.shopify.lastWeek.totalOrders}
-- AOV hier : ${data.shopify.yesterday.aov.toFixed(2)}€ | J-1 : ${data.shopify.dayBefore.aov.toFixed(2)}€ | J-7 : ${data.shopify.lastWeek.aov.toFixed(2)}€
+  const prompt = `Tu es un expert senior en acquisition e-commerce / performance marketing. Tu rédiges un brief quotidien pour le CEO d'une marque DTC (French Bandit, accessoires pour chiens et chats). La marque vend sur son site Shopify (e-commerce) et sur Amazon (marketplace).
 
-## Amazon
-- CA hier : ${data.amazon.yesterday.ca.toFixed(2)}€ | J-1 : ${data.amazon.dayBefore.ca.toFixed(2)}€ | J-7 : ${data.amazon.lastWeek.ca.toFixed(2)}€
-- Commandes hier : ${data.amazon.yesterday.orders} | J-1 : ${data.amazon.dayBefore.orders} | J-7 : ${data.amazon.lastWeek.orders}
+Voici les données de la veille (${d.dayName}) comparées à J-1 et J-7 :
 
-## Dépenses publicitaires totales (Meta + Google + TikTok)
-- Spend hier : ${data.totals.spendYesterday.toFixed(2)}€ | J-1 : ${data.totals.spendDayBefore.toFixed(2)}€ | J-7 : ${data.totals.spendLastWeek.toFixed(2)}€
-- % Marketing hier : ${data.totals.percentMarketingYesterday.toFixed(1)}% | J-1 : ${data.totals.percentMarketingDayBefore.toFixed(1)}% | J-7 : ${data.totals.percentMarketingLastWeek.toFixed(1)}%
-- Blended CAC : ${data.totals.blendedCacYesterday.toFixed(2)}€ | J-1 : ${data.totals.blendedCacDayBefore.toFixed(2)}€ | J-7 : ${data.totals.blendedCacLastWeek.toFixed(2)}€
-- Blended ROAS : ${data.totals.blendedRoasYesterday.toFixed(2)} | J-1 : ${data.totals.blendedRoasDayBefore.toFixed(2)} | J-7 : ${data.totals.blendedRoasLastWeek.toFixed(2)}
+## E-COMMERCE (Shopify — canaux DTC, HT, retours déduits)
+- CA HT hier : ${d.shopify.yesterday.totalCA.toFixed(0)}€ | J-1 : ${d.shopify.dayBefore.totalCA.toFixed(0)}€ | J-7 : ${d.shopify.lastWeek.totalCA.toFixed(0)}€
+- Commandes hier : ${d.shopify.yesterday.totalOrders} | J-1 : ${d.shopify.dayBefore.totalOrders} | J-7 : ${d.shopify.lastWeek.totalOrders}
+- AOV hier : ${d.shopify.yesterday.aov.toFixed(0)}€ | J-1 : ${d.shopify.dayBefore.aov.toFixed(0)}€ | J-7 : ${d.shopify.lastWeek.aov.toFixed(0)}€
+- ROAS E-COMMERCE : ${d.ecommerce.roas.yesterday.toFixed(2)}x | J-1 : ${d.ecommerce.roas.dayBefore.toFixed(2)}x | J-7 : ${d.ecommerce.roas.lastWeek.toFixed(2)}x | MTD : ${d.ecommerce.roas.mtd.toFixed(2)}x
+- Spend total hier : ${d.ecommerce.spend.yesterday.toFixed(0)}€ | % Marketing : ${d.ecommerce.percentMarketing.toFixed(1)}%
+- Blended CAC : ${d.ecommerce.blendedCac.toFixed(0)}€
+- CA MTD : ${d.shopify.mtd.totalCA.toFixed(0)}€ | Spend MTD : ${d.ecommerce.spend.mtd.toFixed(0)}€
+${objSection}
 
-## Meta Ads
-- Spend : ${data.meta.yesterday.spend.toFixed(2)}€ | J-1 : ${data.meta.dayBefore.spend.toFixed(2)}€ | J-7 : ${data.meta.lastWeek.spend.toFixed(2)}€
-- ROAS : ${data.meta.yesterday.roas.toFixed(2)} | J-1 : ${data.meta.dayBefore.roas.toFixed(2)} | J-7 : ${data.meta.lastWeek.roas.toFixed(2)}
-- CPM : ${data.meta.yesterday.cpm.toFixed(2)}€ | J-1 : ${data.meta.dayBefore.cpm.toFixed(2)}€ | J-7 : ${data.meta.lastWeek.cpm.toFixed(2)}€
-- Purchases : ${data.meta.yesterday.purchases} | Revenue : ${data.meta.yesterday.revenue.toFixed(2)}€
+## AMAZON (marketplace)
+- CA hier : ${d.amazon.yesterday.ca.toFixed(0)}€ | J-1 : ${d.amazon.dayBefore.ca.toFixed(0)}€ | J-7 : ${d.amazon.lastWeek.ca.toFixed(0)}€
+- Commandes hier : ${d.amazon.yesterday.orders} | J-1 : ${d.amazon.dayBefore.orders} | J-7 : ${d.amazon.lastWeek.orders}
+- CA MTD : ${d.amazon.mtd.ca.toFixed(0)}€
+${amzObjSection}
 
-## Google Ads
-- Spend : ${data.google.yesterday.spend.toFixed(2)}€ | J-1 : ${data.google.dayBefore.spend.toFixed(2)}€ | J-7 : ${data.google.lastWeek.spend.toFixed(2)}€
-- ROAS : ${data.google.yesterday.roas.toFixed(2)} | J-1 : ${data.google.dayBefore.roas.toFixed(2)} | J-7 : ${data.google.lastWeek.roas.toFixed(2)}
+## DÉTAIL PAR CANAL (pub e-commerce)
+- Meta : Spend ${d.meta.yesterday.spend.toFixed(0)}€ | ROAS ${d.meta.yesterday.roas.toFixed(2)}x | CPM ${d.meta.yesterday.cpm.toFixed(0)}€ | Achats ${d.meta.yesterday.purchases}
+- Google : Spend ${d.google.yesterday.spend.toFixed(0)}€ | ROAS ${d.google.yesterday.roas.toFixed(2)}x
+- TikTok : Spend ${d.tiktok.yesterday.spend.toFixed(0)}€ | ROAS ${d.tiktok.yesterday.roas.toFixed(2)}x | Achats ${d.tiktok.yesterday.purchases}
 
-## TikTok Ads
-- Spend : ${data.tiktok.yesterday.spend.toFixed(2)}€ | J-1 : ${data.tiktok.dayBefore.spend.toFixed(2)}€ | J-7 : ${data.tiktok.lastWeek.spend.toFixed(2)}€
-- ROAS : ${data.tiktok.yesterday.roas.toFixed(2)} | J-1 : ${data.tiktok.dayBefore.roas.toFixed(2)} | J-7 : ${data.tiktok.lastWeek.roas.toFixed(2)}
-- Purchases : ${data.tiktok.yesterday.purchases} | Revenue : ${data.tiktok.yesterday.revenue.toFixed(2)}€
-
-${data.bestAd ? `## Best performing ad — Meta
-- Nom : ${data.bestAd.name}
-- Campaign : ${data.bestAd.campaign} › ${data.bestAd.adset}
-- Spend : ${data.bestAd.spend.toFixed(2)}€ | Revenue : ${data.bestAd.revenue.toFixed(2)}€ | ROAS : ${data.bestAd.roas.toFixed(2)}
-- Purchases : ${data.bestAd.purchases}` : ''}
-
-${data.bestTiktokAd ? `## Best performing ad — TikTok
-- Nom : ${data.bestTiktokAd.name}
-- Campaign : ${data.bestTiktokAd.campaign} › ${data.bestTiktokAd.adgroup}
-- Spend : ${data.bestTiktokAd.spend.toFixed(2)}€ | Revenue : ${data.bestTiktokAd.revenue.toFixed(2)}€ | ROAS : ${data.bestTiktokAd.roas.toFixed(2)}
-- Purchases : ${data.bestTiktokAd.purchases}` : ''}
+${d.bestAd ? `## Best ad Meta : "${d.bestAd.name}" — ROAS ${d.bestAd.roas.toFixed(2)}x, ${d.bestAd.purchases} achats, ${d.bestAd.spend.toFixed(0)}€ spend` : ''}
+${d.bestTiktokAd ? `## Best ad TikTok : "${d.bestTiktokAd.name}" — ROAS ${d.bestTiktokAd.roas.toFixed(2)}x, ${d.bestTiktokAd.purchases} achats` : ''}
 
 ---
 
-Rédige un brief de 6 à 10 lignes maximum, en français, très professionnel et synthétique. Structure :
-1. UNE phrase sur la performance globale (CA Shopify + Amazon combiné, tendance vs J-1 et J-7)
-2. Les signaux positifs s'il y en a (1-2 lignes max)
-3. Les alertes / points d'attention (spend anormal, ROAS en baisse, CPM en hausse, CAC qui monte...) (1-2 lignes max)
-4. Amazon : mentionne la perf Amazon en 1 phrase si les données sont disponibles
-5. Best ads : mentionne la ou les best ad(s) (Meta et/ou TikTok) avec ROAS
-6. Une recommandation actionnable si pertinent
+Rédige un brief de 8 à 12 lignes max, en français, très professionnel et synthétique. Structure :
+1. Performance E-COMMERCE hier : CA, ROAS, tendance vs J-1 et J-7 (2-3 lignes)
+2. Performance AMAZON hier : CA, tendance (1-2 lignes)
+3. Objectifs : où on en est sur l'objectif mensuel e-commerce ET Amazon, on track ou pas (2 lignes)
+4. Signaux positifs / alertes (ROAS, CPM, CAC) (1-2 lignes)
+5. Best ads + recommandation actionnable si pertinent (1-2 lignes)
 
-Ton style : direct, factuel, pas de blabla. Utilise des chiffres. Pas de bullet points, que du texte fluide. Pas de titre ni de signature. Écris comme un head of growth qui brief son CEO sur Slack le matin.`;
+Ton style : direct, factuel, chiffres. Pas de bullet points, texte fluide. Pas de titre ni de signature.`;
 
   const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 500,
+    model: 'claude-sonnet-4-6',
+    max_tokens: 600,
     messages: [{ role: 'user', content: prompt }],
   });
 
@@ -648,12 +756,12 @@ function buildEmailHTML(data, analysis) {
 
   const kpiRow = (label, current, previous, previousLW, formatter, invert) => `
     <tr>
-      <td style="padding:12px 16px;font-weight:600;color:#1a1d26;border-bottom:1px solid #f0f0f0;">${label}</td>
-      <td style="padding:12px 16px;font-size:20px;font-weight:700;color:#1a1d26;border-bottom:1px solid #f0f0f0;">${formatter(current)}</td>
-      <td style="padding:12px 16px;color:${changeColor(current, previous, invert)};font-weight:600;border-bottom:1px solid #f0f0f0;">
+      <td style="padding:10px 16px;font-weight:600;color:#1a1d26;border-bottom:1px solid #f0f0f0;">${label}</td>
+      <td style="padding:10px 16px;font-size:18px;font-weight:700;color:#1a1d26;border-bottom:1px solid #f0f0f0;">${formatter(current)}</td>
+      <td style="padding:10px 16px;color:${changeColor(current, previous, invert)};font-weight:600;border-bottom:1px solid #f0f0f0;">
         ${changeText(current, previous)} <span style="color:#9ca3af;font-weight:400;">vs J-1</span>
       </td>
-      <td style="padding:12px 16px;color:${changeColor(current, previousLW, invert)};font-weight:600;border-bottom:1px solid #f0f0f0;">
+      <td style="padding:10px 16px;color:${changeColor(current, previousLW, invert)};font-weight:600;border-bottom:1px solid #f0f0f0;">
         ${changeText(current, previousLW)} <span style="color:#9ca3af;font-weight:400;">vs J-7</span>
       </td>
     </tr>`;
@@ -672,16 +780,38 @@ function buildEmailHTML(data, analysis) {
     </tr>`;
   };
 
+  // Objective progress bar
+  const progressBar = (label, current, target, onTrack) => {
+    if (!target) return '';
+    const pct = Math.min((current / target) * 100, 100);
+    const color = onTrack ? '#00c48c' : '#ff5a5f';
+    return `
+    <div style="margin-bottom:12px;">
+      <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;">
+        <span style="font-weight:600;color:#1a1d26;">${label}</span>
+        <span style="color:#6b7280;">${fmtEur(current)} / ${fmtEur(target)} (${pct.toFixed(1)}%)</span>
+      </div>
+      <div style="background:#f0f0f0;border-radius:4px;height:8px;overflow:hidden;">
+        <div style="background:${color};height:100%;width:${pct}%;border-radius:4px;"></div>
+      </div>
+    </div>`;
+  };
+
   const bestAdSection = d.bestAd ? `
-    <div style="margin-top:24px;padding:16px 20px;background:#f0f0ed;border-radius:10px;border-left:4px solid #1a1a1a;">
-      <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#1a1a1a;font-weight:700;margin-bottom:6px;">Best performing ad — Meta</div>
-      <div style="font-weight:700;color:#1a1d26;font-size:15px;margin-bottom:4px;">${d.bestAd.name}</div>
-      <div style="font-size:13px;color:#6b7280;margin-bottom:8px;">${d.bestAd.campaign} › ${d.bestAd.adset}</div>
-      <div style="display:flex;gap:16px;">
-        <span style="font-size:13px;"><strong>ROAS</strong> ${d.bestAd.roas.toFixed(2)}x</span>
-        <span style="font-size:13px;margin-left:12px;"><strong>Spend</strong> ${fmtEur(d.bestAd.spend)}</span>
-        <span style="font-size:13px;margin-left:12px;"><strong>Revenue</strong> ${fmtEur(d.bestAd.revenue)}</span>
-        <span style="font-size:13px;margin-left:12px;"><strong>Purchases</strong> ${d.bestAd.purchases}</span>
+    <div style="margin-top:16px;padding:14px 18px;background:#f0f0ed;border-radius:10px;border-left:4px solid #1877f2;">
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#1877f2;font-weight:700;margin-bottom:4px;">Best ad — Meta</div>
+      <div style="font-weight:700;color:#1a1d26;font-size:14px;margin-bottom:6px;">${d.bestAd.name}</div>
+      <div style="font-size:13px;">
+        <strong>ROAS</strong> ${d.bestAd.roas.toFixed(2)}x · <strong>Spend</strong> ${fmtEur(d.bestAd.spend)} · <strong>Revenue</strong> ${fmtEur(d.bestAd.revenue)} · <strong>Achats</strong> ${d.bestAd.purchases}
+      </div>
+    </div>` : '';
+
+  const bestTiktokSection = d.bestTiktokAd ? `
+    <div style="margin-top:8px;padding:14px 18px;background:#f0f0f0;border-radius:10px;border-left:4px solid #000000;">
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#000;font-weight:700;margin-bottom:4px;">Best ad — TikTok</div>
+      <div style="font-weight:700;color:#1a1d26;font-size:14px;margin-bottom:6px;">${d.bestTiktokAd.name}</div>
+      <div style="font-size:13px;">
+        <strong>ROAS</strong> ${d.bestTiktokAd.roas.toFixed(2)}x · <strong>Spend</strong> ${fmtEur(d.bestTiktokAd.spend)} · <strong>Revenue</strong> ${fmtEur(d.bestTiktokAd.revenue)} · <strong>Achats</strong> ${d.bestTiktokAd.purchases}
       </div>
     </div>` : '';
 
@@ -693,35 +823,49 @@ function buildEmailHTML(data, analysis) {
 
     <!-- HEADER -->
     <div style="text-align:center;padding:20px 0 16px;">
-      <div style="font-size:18px;font-weight:700;color:#1a1a1a;">Bandit <span style="font-weight:400;letter-spacing:1px;text-transform:uppercase;font-size:13px;color:#555;">Acquisition</span></div>
+      <div style="font-size:18px;font-weight:700;color:#1a1a1a;">Bandit <span style="font-weight:400;letter-spacing:1px;text-transform:uppercase;font-size:13px;color:#555;">Daily Report</span></div>
       <div style="font-size:13px;color:#9ca3af;margin-top:4px;">Rapport du ${d.dayName}</div>
     </div>
 
     <!-- ANALYSIS -->
     <div style="background:#ffffff;border-radius:12px;padding:20px 24px;margin-bottom:20px;border:1px solid #e5e5e0;box-shadow:0 1px 3px rgba(0,0,0,0.04);">
-      <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#1a1a1a;font-weight:700;margin-bottom:10px;">Analyse</div>
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#1a1a1a;font-weight:700;margin-bottom:10px;">Analyse du jour</div>
       <div style="font-size:14px;line-height:1.6;color:#1a1d26;">${analysis.replace(/\n/g, '<br>')}</div>
     </div>
 
-    <!-- KPIs -->
+    <!-- OBJECTIVES -->
+    ${d.objectives || d.amazonObjectives ? `
+    <div style="background:#ffffff;border-radius:12px;padding:16px 20px;margin-bottom:20px;border:1px solid #e5e5e0;box-shadow:0 1px 3px rgba(0,0,0,0.04);">
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#1a1a1a;font-weight:700;margin-bottom:12px;">Objectifs du mois</div>
+      ${d.objectives ? progressBar('E-commerce (Shopify)', d.objectives.monthly.current, d.objectives.monthly.target, d.objectives.monthly.onTrack) : ''}
+      ${d.amazonObjectives ? progressBar('Amazon', d.amazonObjectives.monthly.current, d.amazonObjectives.monthly.target, d.amazonObjectives.monthly.onTrack) : ''}
+    </div>` : ''}
+
+    <!-- E-COMMERCE KPIs -->
     <div style="background:#ffffff;border-radius:12px;overflow:hidden;margin-bottom:20px;border:1px solid #e5e5e0;box-shadow:0 1px 3px rgba(0,0,0,0.04);">
-      <div style="padding:16px 16px 8px;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#1a1a1a;font-weight:700;">Indicateurs clés</div>
+      <div style="padding:16px 16px 8px;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#1a1a1a;font-weight:700;">E-commerce (Shopify)</div>
       <table style="width:100%;border-collapse:collapse;font-size:13px;">
-        ${kpiRow('CA Shopify HT', d.shopify.yesterday.netSales, d.shopify.dayBefore.netSales, d.shopify.lastWeek.netSales, fmtEur, false)}
-        ${kpiRow('Commandes Shopify', d.shopify.yesterday.totalOrders, d.shopify.dayBefore.totalOrders, d.shopify.lastWeek.totalOrders, v => v.toString(), false)}
+        ${kpiRow('CA HT', d.shopify.yesterday.totalCA, d.shopify.dayBefore.totalCA, d.shopify.lastWeek.totalCA, fmtEur, false)}
+        ${kpiRow('Commandes', d.shopify.yesterday.totalOrders, d.shopify.dayBefore.totalOrders, d.shopify.lastWeek.totalOrders, v => v.toString(), false)}
         ${kpiRow('AOV', d.shopify.yesterday.aov, d.shopify.dayBefore.aov, d.shopify.lastWeek.aov, fmtEur, false)}
-        ${kpiRow('CA Amazon', d.amazon.yesterday.ca, d.amazon.dayBefore.ca, d.amazon.lastWeek.ca, fmtEur, false)}
-        ${kpiRow('Commandes Amazon', d.amazon.yesterday.orders, d.amazon.dayBefore.orders, d.amazon.lastWeek.orders, v => v.toString(), false)}
-        ${kpiRow('Spend total', d.totals.spendYesterday, d.totals.spendDayBefore, d.totals.spendLastWeek, fmtEur, true)}
-        ${kpiRow('% Marketing', d.totals.percentMarketingYesterday, d.totals.percentMarketingDayBefore, d.totals.percentMarketingLastWeek, fmtPct, true)}
-        ${kpiRow('Blended CAC', d.totals.blendedCacYesterday, d.totals.blendedCacDayBefore, d.totals.blendedCacLastWeek, fmtEur, true)}
-        ${kpiRow('Blended ROAS', d.totals.blendedRoasYesterday, d.totals.blendedRoasDayBefore, d.totals.blendedRoasLastWeek, v => v.toFixed(2) + 'x', false)}
+        ${kpiRow('ROAS E-com', d.ecommerce.roas.yesterday, d.ecommerce.roas.dayBefore, d.ecommerce.roas.lastWeek, v => v.toFixed(2) + 'x', false)}
+        ${kpiRow('Spend', d.ecommerce.spend.yesterday, d.ecommerce.spend.dayBefore, d.ecommerce.spend.lastWeek, fmtEur, true)}
+        ${kpiRow('% Marketing', d.ecommerce.percentMarketing, 0, 0, fmtPct, true)}
+      </table>
+    </div>
+
+    <!-- AMAZON KPIs -->
+    <div style="background:#ffffff;border-radius:12px;overflow:hidden;margin-bottom:20px;border:1px solid #e5e5e0;box-shadow:0 1px 3px rgba(0,0,0,0.04);">
+      <div style="padding:16px 16px 8px;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#f0982d;font-weight:700;">Amazon</div>
+      <table style="width:100%;border-collapse:collapse;font-size:13px;">
+        ${kpiRow('CA', d.amazon.yesterday.ca, d.amazon.dayBefore.ca, d.amazon.lastWeek.ca, fmtEur, false)}
+        ${kpiRow('Commandes', d.amazon.yesterday.orders, d.amazon.dayBefore.orders, d.amazon.lastWeek.orders, v => v.toString(), false)}
       </table>
     </div>
 
     <!-- CHANNELS -->
     <div style="background:#ffffff;border-radius:12px;overflow:hidden;margin-bottom:20px;border:1px solid #e5e5e0;box-shadow:0 1px 3px rgba(0,0,0,0.04);">
-      <div style="padding:16px 16px 8px;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#1a1a1a;font-weight:700;">Par canal</div>
+      <div style="padding:16px 16px 8px;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#1a1a1a;font-weight:700;">Détail par canal</div>
       <table style="width:100%;border-collapse:collapse;font-size:13px;">
         <tr style="color:#9ca3af;font-size:11px;">
           <td style="padding:4px 16px;">Canal</td>
@@ -737,22 +881,11 @@ function buildEmailHTML(data, analysis) {
 
     <!-- BEST ADS -->
     ${bestAdSection}
-    ${d.bestTiktokAd ? `
-    <div style="margin-top:12px;padding:16px 20px;background:#f0f0f0;border-radius:10px;border-left:4px solid #000000;">
-      <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#000;font-weight:700;margin-bottom:6px;">Best performing ad — TikTok</div>
-      <div style="font-weight:700;color:#1a1d26;font-size:15px;margin-bottom:4px;">${d.bestTiktokAd.name}</div>
-      <div style="font-size:13px;color:#6b7280;margin-bottom:8px;">${d.bestTiktokAd.campaign} › ${d.bestTiktokAd.adgroup}</div>
-      <div>
-        <span style="font-size:13px;"><strong>ROAS</strong> ${d.bestTiktokAd.roas.toFixed(2)}x</span>
-        <span style="font-size:13px;margin-left:12px;"><strong>Spend</strong> ${fmtEur(d.bestTiktokAd.spend)}</span>
-        <span style="font-size:13px;margin-left:12px;"><strong>Revenue</strong> ${fmtEur(d.bestTiktokAd.revenue)}</span>
-        <span style="font-size:13px;margin-left:12px;"><strong>Purchases</strong> ${d.bestTiktokAd.purchases}</span>
-      </div>
-    </div>` : ''}
+    ${bestTiktokSection}
 
     <!-- FOOTER -->
     <div style="text-align:center;padding:20px 0;font-size:11px;color:#9ca3af;">
-      Bandit Acquisition Dashboard
+      Bandit Dashboard · Rapport automatique
     </div>
   </div>
 </body>
@@ -767,7 +900,7 @@ async function sendReport() {
   console.log('[Report] Starting daily report generation...');
 
   const data = await collectReportData();
-  console.log(`[Report] Data collected. CA HT: ${data.shopify.yesterday.netSales.toFixed(2)}€, Spend: ${data.totals.spendYesterday.toFixed(2)}€`);
+  console.log(`[Report] Data collected. E-com CA: ${data.shopify.yesterday.totalCA.toFixed(0)}€, ROAS: ${data.ecommerce.roas.yesterday.toFixed(2)}x, Amazon CA: ${data.amazon.yesterday.ca.toFixed(0)}€`);
 
   const analysis = await generateAnalysis(data);
   console.log('[Report] Analysis generated.');
@@ -788,7 +921,7 @@ async function sendReport() {
   const msg = {
     to: emailTo,
     from: emailFrom,
-    subject: `Bandit Acquisition — ${data.dayName} — Shopify ${fmtEur(data.shopify.yesterday.netSales)} HT | Amazon ${fmtEur(data.amazon.yesterday.ca)}`,
+    subject: `Bandit — ${data.dayName} — E-com ${fmtEur(data.shopify.yesterday.totalCA)} (ROAS ${data.ecommerce.roas.yesterday.toFixed(2)}x) | Amazon ${fmtEur(data.amazon.yesterday.ca)}`,
     html,
   };
 
