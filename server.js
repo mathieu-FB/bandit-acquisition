@@ -1880,6 +1880,7 @@ async function getAmazonAdsAccessToken() {
 
 // Amazon Ads spend — background fetch + persistent cache
 let amazonAdSpendCache = { spend: null, lastUpdate: 0, reportId: null, fetching: false };
+let amazonAdSpendPromise = null; // shared promise so callers can await an in-progress refresh
 
 // Load cached ad spend from file
 function loadAdSpendCache() {
@@ -1996,37 +1997,41 @@ async function fetchOneAdReport(token, profileId, adProduct, reportTypeId, start
 
 // Background: fetch all 3 ad types and sum spend
 async function refreshAmazonAdSpend() {
-  if (amazonAdSpendCache.fetching) return;
+  if (amazonAdSpendCache.fetching) return amazonAdSpendPromise;
   amazonAdSpendCache.fetching = true;
 
-  try {
-    const token = await getAmazonAdsAccessToken();
-    const profileId = process.env.AMAZON_ADS_PROFILE_ID;
-    if (!token || !profileId) { amazonAdSpendCache.fetching = false; return; }
+  amazonAdSpendPromise = (async () => {
+    try {
+      const token = await getAmazonAdsAccessToken();
+      const profileId = process.env.AMAZON_ADS_PROFILE_ID;
+      if (!token || !profileId) { console.error('[Amazon Ads] Missing token or profileId'); return; }
 
-    const now = new Date();
-    const start = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
-    const yesterday = formatDate(new Date(Date.now() - 86400000));
+      const now = new Date();
+      const start = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+      const yesterday = formatDate(new Date(Date.now() - 86400000));
 
-    console.log('[Amazon Ads] Fetching SP + SB + SD reports...');
+      console.log('[Amazon Ads] Fetching SP + SB + SD reports...');
 
-    // Fetch all 3 ad types in parallel
-    const [spSpend, sbSpend, sdSpend] = await Promise.all([
-      fetchOneAdReport(token, profileId, 'SPONSORED_PRODUCTS', 'spCampaigns', start, yesterday),
-      fetchOneAdReport(token, profileId, 'SPONSORED_BRANDS', 'sbCampaigns', start, yesterday),
-      fetchOneAdReport(token, profileId, 'SPONSORED_DISPLAY', 'sdCampaigns', start, yesterday),
-    ]);
+      const [spSpend, sbSpend, sdSpend] = await Promise.all([
+        fetchOneAdReport(token, profileId, 'SPONSORED_PRODUCTS', 'spCampaigns', start, yesterday),
+        fetchOneAdReport(token, profileId, 'SPONSORED_BRANDS', 'sbCampaigns', start, yesterday),
+        fetchOneAdReport(token, profileId, 'SPONSORED_DISPLAY', 'sdCampaigns', start, yesterday),
+      ]);
 
-    const totalSpend = spSpend + sbSpend + sdSpend;
-    amazonAdSpendCache.spend = totalSpend;
-    amazonAdSpendCache.lastUpdate = Date.now();
-    saveAdSpendCache();
-    console.log(`[Amazon Ads] Total spend: ${totalSpend}€ (SP: ${spSpend}, SB: ${sbSpend}, SD: ${sdSpend})`);
-  } catch (err) {
-    console.error('[Amazon Ads] Refresh error:', err.message);
-  } finally {
-    amazonAdSpendCache.fetching = false;
-  }
+      const totalSpend = spSpend + sbSpend + sdSpend;
+      amazonAdSpendCache.spend = totalSpend;
+      amazonAdSpendCache.lastUpdate = Date.now();
+      saveAdSpendCache();
+      console.log(`[Amazon Ads] Total spend: ${totalSpend}€ (SP: ${spSpend}, SB: ${sbSpend}, SD: ${sdSpend})`);
+    } catch (err) {
+      console.error('[Amazon Ads] Refresh error:', err.message);
+    } finally {
+      amazonAdSpendCache.fetching = false;
+      amazonAdSpendPromise = null;
+    }
+  })();
+
+  return amazonAdSpendPromise;
 }
 
 // Returns cached spend immediately, triggers background refresh if stale (>30 min)
@@ -2101,20 +2106,17 @@ app.get('/api/amazon/dashboard', async (req, res) => {
       : quarterStart;
     const salesQTD = await fetchAmazonSalesMetrics(fetchStart, todayStr);
 
-    // Get ad spend — if cache is empty/stale, wait for refresh instead of fire-and-forget
+    // Get ad spend — wait for in-progress or trigger new refresh if needed
     let adSpend = 0;
     if (isAmazonAdsConfigured()) {
       const cachedSpend = amazonAdSpendCache.spend;
       const stale = Date.now() - amazonAdSpendCache.lastUpdate > 30 * 60 * 1000;
       if (cachedSpend !== null && !stale) {
         adSpend = cachedSpend;
-      } else if (!amazonAdSpendCache.fetching) {
-        // Cache empty or stale and no fetch in progress — await refresh
+      } else {
+        // Either trigger a new refresh, or await the one already in progress
         await refreshAmazonAdSpend();
         adSpend = amazonAdSpendCache.spend || 0;
-      } else {
-        // A fetch is already in progress — use whatever we have
-        adSpend = cachedSpend || 0;
       }
     }
 
