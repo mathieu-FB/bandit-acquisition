@@ -2100,7 +2100,23 @@ app.get('/api/amazon/dashboard', async (req, res) => {
       ? formatDate(new Date(Math.min(new Date(quarterStart).getTime(), Date.now() - kpiDays * 86400000)))
       : quarterStart;
     const salesQTD = await fetchAmazonSalesMetrics(fetchStart, todayStr);
-    const adSpend = isAmazonAdsConfigured() ? fetchAmazonAdSpend() : 0;
+
+    // Get ad spend — if cache is empty/stale, wait for refresh instead of fire-and-forget
+    let adSpend = 0;
+    if (isAmazonAdsConfigured()) {
+      const cachedSpend = amazonAdSpendCache.spend;
+      const stale = Date.now() - amazonAdSpendCache.lastUpdate > 30 * 60 * 1000;
+      if (cachedSpend !== null && !stale) {
+        adSpend = cachedSpend;
+      } else if (!amazonAdSpendCache.fetching) {
+        // Cache empty or stale and no fetch in progress — await refresh
+        await refreshAmazonAdSpend();
+        adSpend = amazonAdSpendCache.spend || 0;
+      } else {
+        // A fetch is already in progress — use whatever we have
+        adSpend = cachedSpend || 0;
+      }
+    }
 
     // Aggregate sales by day
     let totalCA = 0, totalOrders = 0;
