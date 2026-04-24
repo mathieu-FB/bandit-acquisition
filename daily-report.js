@@ -5,6 +5,7 @@
 const fetch = require('node-fetch');
 const sgMail = require('@sendgrid/mail');
 const Anthropic = require('@anthropic-ai/sdk').default;
+const zlib = require('zlib');
 
 // ============================================================
 // CONFIG
@@ -451,6 +452,105 @@ async function fetchTikTokBestAd(start, end) {
 }
 
 // ============================================================
+// AMAZON ADS — spend for TACOS calculation
+// ============================================================
+
+async function getAmazonAdsAccessToken() {
+  const clientId = process.env.AMAZON_ADS_CLIENT_ID;
+  const clientSecret = process.env.AMAZON_ADS_CLIENT_SECRET;
+  const refreshToken = process.env.AMAZON_ADS_REFRESH_TOKEN;
+  if (!clientId || !clientSecret || !refreshToken) return null;
+
+  const res = await fetch('https://api.amazon.com/auth/o2/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: refreshToken, client_id: clientId, client_secret: clientSecret }).toString(),
+  });
+  if (!res.ok) return null;
+  const json = await res.json();
+  return json.access_token;
+}
+
+async function fetchAmazonAdsSpendForRange(start, end) {
+  const token = await getAmazonAdsAccessToken();
+  const profileId = process.env.AMAZON_ADS_PROFILE_ID;
+  if (!token || !profileId) return null;
+
+  try {
+    const [spSpend, sbSpend, sdSpend] = await Promise.all([
+      fetchOneAmazonAdReport(token, profileId, 'SPONSORED_PRODUCTS', 'spCampaigns', start, end),
+      fetchOneAmazonAdReport(token, profileId, 'SPONSORED_BRANDS', 'sbCampaigns', start, end),
+      fetchOneAmazonAdReport(token, profileId, 'SPONSORED_DISPLAY', 'sdCampaigns', start, end),
+    ]);
+    const total = spSpend + sbSpend + sdSpend;
+    console.log(`[Report] Amazon Ads spend ${start}→${end}: ${total}€ (SP:${spSpend}, SB:${sbSpend}, SD:${sdSpend})`);
+    return total;
+  } catch (err) {
+    console.error('[Report] Amazon Ads spend error:', err.message);
+    return null;
+  }
+}
+
+async function fetchOneAmazonAdReport(token, profileId, adProduct, reportTypeId, start, end) {
+  const headers = {
+    'Amazon-Advertising-API-ClientId': process.env.AMAZON_ADS_CLIENT_ID,
+    'Amazon-Advertising-API-Scope': profileId,
+    Authorization: `Bearer ${token}`,
+  };
+
+  // Step 1: Request report
+  const reportRes = await fetch('https://advertising-api-eu.amazon.com/reporting/reports', {
+    method: 'POST',
+    headers: { ...headers, 'Content-Type': 'application/vnd.createasyncreportrequest.v3+json' },
+    body: JSON.stringify({
+      startDate: start,
+      endDate: end,
+      configuration: { adProduct, groupBy: ['campaign'], columns: [adProduct === 'SPONSORED_PRODUCTS' ? 'spend' : 'cost'], reportTypeId, timeUnit: 'SUMMARY', format: 'GZIP_JSON' },
+    }),
+  });
+
+  let reportId;
+  if (!reportRes.ok) {
+    const errBody = await reportRes.text();
+    if (reportRes.status === 425) {
+      const match = errBody.match(/duplicate of\s*:\s*([a-f0-9-]+)/i);
+      if (match) reportId = match[1];
+      else return 0;
+    } else return 0;
+  } else {
+    reportId = (await reportRes.json()).reportId;
+  }
+
+  // Step 2: Poll (max 3 min for daily report)
+  let downloadUrl = null;
+  for (let attempt = 0; attempt < 36; attempt++) {
+    await new Promise(r => setTimeout(r, 5000));
+    const statusRes = await fetch(`https://advertising-api-eu.amazon.com/reporting/reports/${reportId}`, { headers });
+    if (!statusRes.ok) continue;
+    const statusData = await statusRes.json();
+    if (statusData.status === 'COMPLETED') { downloadUrl = statusData.url; break; }
+    if (statusData.status === 'FAILURE') return 0;
+  }
+  if (!downloadUrl) return 0;
+
+  // Step 3: Download + decompress
+  const dlRes = await fetch(downloadUrl);
+  if (!dlRes.ok) return 0;
+  const buffer = await dlRes.buffer();
+
+  let rows;
+  try {
+    rows = JSON.parse(zlib.gunzipSync(buffer).toString());
+  } catch {
+    try { rows = JSON.parse(buffer.toString()); } catch { return 0; }
+  }
+
+  let spend = 0;
+  (Array.isArray(rows) ? rows : []).forEach(row => { spend += parseFloat(row.spend || row.cost || 0); });
+  return spend;
+}
+
+// ============================================================
 // FREELANCE COST (mirrored from server.js)
 // ============================================================
 
@@ -496,6 +596,7 @@ async function collectReportData() {
     googleYesterday, googleDayBefore, googleLastWeek, googleMTD,
     tiktokYesterday, tiktokDayBefore, tiktokLastWeek, tiktokMTD,
     amazonYesterday, amazonDayBefore, amazonLastWeek, amazonMTD,
+    amazonAdsSpendMTD,
   ] = await Promise.all([
     fetchShopifyOrders(yStr, yStr),
     fetchShopifyOrders(dbStr, dbStr),
@@ -519,6 +620,7 @@ async function collectReportData() {
     fetchAmazonStats(dbStr, dbStr),
     fetchAmazonStats(lwStr, lwStr),
     fetchAmazonStats(mtdStart, yStr),
+    fetchAmazonAdsSpendForRange(mtdStart, yStr),
   ]);
 
   const shopify = {
@@ -577,10 +679,9 @@ async function collectReportData() {
   const percentMarketingY = shopify.yesterday.totalCA > 0 ? (totalSpendY / shopify.yesterday.totalCA) * 100 : 0;
   const blendedCacY = shopify.yesterday.totalOrders > 0 ? totalSpendY / shopify.yesterday.totalOrders : 0;
 
-  // Amazon TACOS (placeholder — needs Amazon Ads spend data, using 0 if not available)
-  // Note: Amazon Ads spend is MTD-cached in server.js; here we don't have direct access
-  // so we'll report what we have
-  const amazonTacosY = 0; // Would need Amazon Ads API integration in daily report
+  // Amazon TACOS = Amazon Ads spend MTD / Amazon CA MTD * 100
+  const amzAdSpendMTD = amazonAdsSpendMTD || 0;
+  const amazonTacosMTD = amazon.mtd.ca > 0 ? (amzAdSpendMTD / amazon.mtd.ca) * 100 : 0;
 
   // Objectives
   const year = yesterday.getFullYear();
@@ -651,6 +752,8 @@ async function collectReportData() {
     },
     objectives,
     amazonObjectives,
+    amazonTacosMTD,
+    amzAdSpendMTD,
     bestAd,
     bestTiktokAd,
   };
@@ -695,6 +798,7 @@ ${objSection}
 - CA hier : ${d.amazon.yesterday.ca.toFixed(0)}€ | J-1 : ${d.amazon.dayBefore.ca.toFixed(0)}€ | J-7 : ${d.amazon.lastWeek.ca.toFixed(0)}€
 - Commandes hier : ${d.amazon.yesterday.orders} | J-1 : ${d.amazon.dayBefore.orders} | J-7 : ${d.amazon.lastWeek.orders}
 - CA MTD : ${d.amazon.mtd.ca.toFixed(0)}€
+- TACOS MTD : ${d.amazonTacosMTD.toFixed(1)}% (Spend Ads MTD : ${d.amzAdSpendMTD.toFixed(0)}€)
 ${amzObjSection}
 
 ## DÉTAIL PAR CANAL (pub e-commerce)
@@ -860,6 +964,14 @@ function buildEmailHTML(data, analysis) {
       <table style="width:100%;border-collapse:collapse;font-size:13px;">
         ${kpiRow('CA', d.amazon.yesterday.ca, d.amazon.dayBefore.ca, d.amazon.lastWeek.ca, fmtEur, false)}
         ${kpiRow('Commandes', d.amazon.yesterday.orders, d.amazon.dayBefore.orders, d.amazon.lastWeek.orders, v => v.toString(), false)}
+        <tr>
+          <td style="padding:10px 16px;font-weight:600;color:#1a1d26;border-bottom:1px solid #f0f0f0;">Spend Ads MTD</td>
+          <td style="padding:10px 16px;font-size:18px;font-weight:700;color:#1a1d26;border-bottom:1px solid #f0f0f0;" colspan="3">${fmtEur(d.amzAdSpendMTD)}</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 16px;font-weight:600;color:#1a1d26;border-bottom:1px solid #f0f0f0;">TACOS MTD</td>
+          <td style="padding:10px 16px;font-size:18px;font-weight:700;color:#${d.amazonTacosMTD > 15 ? 'ff5a5f' : '00c48c'};border-bottom:1px solid #f0f0f0;" colspan="3">${d.amazonTacosMTD.toFixed(1)}%</td>
+        </tr>
       </table>
     </div>
 
