@@ -992,6 +992,8 @@ async function loadProductBreakdown(period) {
 
 let metaAnalysisDays = 15;
 let metaAnalysisLoadedDays = null;
+let metaAnalysisDateRange = null; // { start: 'YYYY-MM-DD', end: 'YYYY-MM-DD' } for custom range
+let metaAnalysisLoadedRange = null;
 
 function renderMetaKpiChange(current, previous, invert) {
   if (!previous || previous === 0) return '';
@@ -1120,8 +1122,15 @@ function filterMetaAds(type) {
 }
 
 async function loadMetaAnalysis(forceDays, forceRefresh) {
+  const range = metaAnalysisDateRange;
   const days = forceDays || metaAnalysisDays;
-  if (!forceRefresh && metaAnalysisLoadedDays === days) return;
+
+  // Cache check: skip if already loaded with same params
+  if (!forceRefresh) {
+    if (range && metaAnalysisLoadedRange &&
+        metaAnalysisLoadedRange.start === range.start && metaAnalysisLoadedRange.end === range.end) return;
+    if (!range && metaAnalysisLoadedDays === days) return;
+  }
 
   const loading = document.getElementById('metaLoading');
   const results = document.getElementById('metaResults');
@@ -1130,7 +1139,9 @@ async function loadMetaAnalysis(forceDays, forceRefresh) {
   results.style.display = 'none';
 
   try {
-    const res = await fetch(`/api/meta/analysis?days=${days}${forceRefresh ? '&refresh=1' : ''}`);
+    let qs = range ? `start=${range.start}&end=${range.end}` : `days=${days}`;
+    if (forceRefresh) qs += '&refresh=1';
+    const res = await fetch(`/api/meta/analysis?${qs}`);
     const data = await res.json();
 
     if (data.error) {
@@ -1189,9 +1200,14 @@ async function loadMetaAnalysis(forceDays, forceRefresh) {
     // Show period
     document.getElementById('metaPeriodLabel').textContent = `${data.period.start} → ${data.period.end}`;
 
+    // Update date picker to reflect loaded period
+    document.getElementById('metaDateStart').value = data.period.start;
+    document.getElementById('metaDateEnd').value = data.period.end;
+
     loading.style.display = 'none';
     results.style.display = 'block';
-    metaAnalysisLoadedDays = days;
+    metaAnalysisLoadedDays = range ? null : days;
+    metaAnalysisLoadedRange = range ? { ...range } : null;
 
   } catch (err) {
     console.error('Meta analysis error:', err);
@@ -2553,16 +2569,59 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 
-  // Meta period buttons (15j / 30j)
+  // Helper: clear all meta period button active states
+  function clearMetaPeriodBtns() {
+    document.querySelectorAll('[data-meta-days], [data-meta-quick]').forEach(b => b.classList.remove('active'));
+  }
+
+  // Meta period buttons (15J / 30J)
   document.querySelectorAll('[data-meta-days]').forEach(btn => {
     btn.addEventListener('click', () => {
       const days = parseInt(btn.dataset.metaDays);
       metaAnalysisDays = days;
+      metaAnalysisDateRange = null;
       metaAnalysisLoadedDays = null;
-      document.querySelectorAll('[data-meta-days]').forEach(b => b.classList.remove('active'));
+      clearMetaPeriodBtns();
       btn.classList.add('active');
       loadMetaAnalysis(days);
     });
+  });
+
+  // Meta quick buttons (Aujourd'hui / Hier / 7J)
+  document.querySelectorAll('[data-meta-quick]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const quick = btn.dataset.metaQuick;
+      const today = new Date();
+      const fmt = d => d.toISOString().split('T')[0];
+      let start, end;
+      if (quick === 'today') {
+        start = end = fmt(today);
+      } else if (quick === 'yesterday') {
+        const y = new Date(today); y.setDate(y.getDate() - 1);
+        start = end = fmt(y);
+      } else {
+        const days = parseInt(quick);
+        end = fmt(new Date(today.getTime() - 86400000));
+        const s = new Date(today); s.setDate(s.getDate() - days);
+        start = fmt(s);
+      }
+      metaAnalysisDateRange = { start, end };
+      metaAnalysisLoadedRange = null;
+      clearMetaPeriodBtns();
+      btn.classList.add('active');
+      loadMetaAnalysis();
+    });
+  });
+
+  // Meta custom date picker
+  document.getElementById('metaDateApply').addEventListener('click', () => {
+    const start = document.getElementById('metaDateStart').value;
+    const end = document.getElementById('metaDateEnd').value;
+    if (!start || !end) return;
+    metaAnalysisDateRange = { start, end };
+    metaAnalysisLoadedRange = null;
+    clearMetaPeriodBtns();
+    loadMetaAnalysis();
   });
 
   // Meta ad filter buttons (Tout / Videos / Static)

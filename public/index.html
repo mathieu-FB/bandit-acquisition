@@ -469,8 +469,17 @@
         <!-- META TOOLBAR -->
         <div class="meta-toolbar">
           <div class="meta-period-btns">
-            <button class="btn btn-ghost active" data-meta-days="15">15 jours</button>
-            <button class="btn btn-ghost" data-meta-days="30">30 jours</button>
+            <button class="btn btn-ghost" data-meta-quick="today">Aujourd'hui</button>
+            <button class="btn btn-ghost" data-meta-quick="yesterday">Hier</button>
+            <button class="btn btn-ghost" data-meta-quick="7">7J</button>
+            <button class="btn btn-ghost active" data-meta-days="15">15J</button>
+            <button class="btn btn-ghost" data-meta-days="30">30J</button>
+          </div>
+          <div class="meta-date-picker">
+            <input type="date" id="metaDateStart" class="meta-date-input">
+            <span class="meta-date-sep">→</span>
+            <input type="date" id="metaDateEnd" class="meta-date-input">
+            <button class="btn btn-ghost btn-sm" id="metaDateApply">OK</button>
           </div>
           <span class="meta-period-label" id="metaPeriodLabel"></span>
         </div>

@@ -893,8 +893,9 @@ body {
 .meta-toolbar {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 12px;
   margin-bottom: 20px;
+  flex-wrap: wrap;
 }
 
 .meta-period-btns {
@@ -905,6 +906,32 @@ body {
 .meta-period-label {
   font-size: 13px;
   color: var(--text-muted);
+}
+
+.meta-date-picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.meta-date-input {
+  font-size: 12px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: inherit;
+}
+
+.meta-date-sep {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.btn-sm {
+  padding: 4px 10px;
+  font-size: 12px;
 }
 
 .meta-loading {

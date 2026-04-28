@@ -2401,21 +2401,34 @@ app.get('/api/meta/analysis', async (req, res) => {
     const apiKey = process.env.ANTHROPIC_API_KEY;
     if (!token) return res.status(400).json({ error: 'Meta non configuré' });
 
-    const days = parseInt(req.query.days) || 15;
     const forceRefresh = req.query.refresh === '1';
-    const cacheKey = `meta_${days}`;
+
+    // Support explicit start/end dates or days shortcut
+    let startStr, endStr;
+    if (req.query.start && req.query.end) {
+      startStr = req.query.start;
+      endStr = req.query.end;
+    } else {
+      const days = parseInt(req.query.days) || 15;
+      const end = new Date();
+      end.setDate(end.getDate() - 1);
+      const start = new Date(end);
+      start.setDate(start.getDate() - days + 1);
+      startStr = formatDate(start);
+      endStr = formatDate(end);
+    }
+
+    const cacheKey = `meta_${startStr}_${endStr}`;
 
     // Return cached data if fresh enough
     if (!forceRefresh && metaAnalysisCache[cacheKey] && (Date.now() - metaAnalysisCache[cacheKey].timestamp < META_CACHE_TTL)) {
-      console.log(`[Meta Cache] Serving cached analysis (${days}j), age: ${Math.round((Date.now() - metaAnalysisCache[cacheKey].timestamp) / 1000)}s`);
+      console.log(`[Meta Cache] Serving cached analysis (${startStr}→${endStr}), age: ${Math.round((Date.now() - metaAnalysisCache[cacheKey].timestamp) / 1000)}s`);
       return res.json(metaAnalysisCache[cacheKey].data);
     }
-    const end = new Date();
-    end.setDate(end.getDate() - 1);
-    const start = new Date(end);
-    start.setDate(start.getDate() - days + 1);
-    const startStr = formatDate(start);
-    const endStr = formatDate(end);
+
+    const start = new Date(startStr + 'T00:00:00');
+    const end = new Date(endStr + 'T00:00:00');
+    const days = Math.round((end - start) / (1000 * 60 * 60 * 24)) + 1;
 
     // Comparison period (same duration ending before start)
     const compEnd = new Date(start);
