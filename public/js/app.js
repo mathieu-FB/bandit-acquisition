@@ -2521,6 +2521,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     } else if (activeTab === 'ecommerce') {
       if (activeSubTab === 'acquisition') {
         metaAnalysisLoadedDays = null;
+        metaAnalysisLoadedRange = null;
         loadMetaAnalysis(null, true);
       } else if (activeSubTab === 'data-produits') {
         loadProductBreakdown();
@@ -2622,6 +2623,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     metaAnalysisLoadedRange = null;
     clearMetaPeriodBtns();
     loadMetaAnalysis();
+  });
+
+  // Meta refresh button (bypass server cache)
+  document.getElementById('metaRefreshBtn').addEventListener('click', () => {
+    metaAnalysisLoadedDays = null;
+    metaAnalysisLoadedRange = null;
+    loadMetaAnalysis(null, true);
   });
 
   // Meta ad filter buttons (Tout / Videos / Static)
