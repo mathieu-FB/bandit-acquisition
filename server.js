@@ -1490,7 +1490,7 @@ app.get('/api/product-breakdown', async (req, res) => {
       return res.json({ configured: false });
     }
 
-    const period = req.query.period || 'mtd'; // mtd | qtd | ytd
+    const period = req.query.period || 'mtd'; // mtd | qtd | ytd | custom
     const now = new Date();
     const year = now.getFullYear();
     const month = now.getMonth() + 1;
@@ -1502,16 +1502,27 @@ app.get('/api/product-breakdown', async (req, res) => {
     const obj = getObjective(year, month);
 
     // Compute period start, label, days
-    let periodStart, periodLabel, daysElapsed, daysTotal;
+    let periodStart, periodEnd, periodLabel, daysElapsed, daysTotal;
 
-    if (period === 'ytd') {
+    if (req.query.start && req.query.end) {
+      // Custom date range
+      periodStart = req.query.start;
+      periodEnd = req.query.end;
+      const s = new Date(periodStart + 'T00:00:00');
+      const e = new Date(periodEnd + 'T00:00:00');
+      daysTotal = Math.round((e - s) / (1000 * 60 * 60 * 24)) + 1;
+      daysElapsed = daysTotal;
+      periodLabel = `${periodStart} → ${periodEnd}`;
+    } else if (period === 'ytd') {
       periodStart = `${year}-01-01`;
+      periodEnd = todayStr;
       periodLabel = `Année ${year}`;
       const startDate = new Date(`${periodStart}T00:00:00`);
       const endOfYear = new Date(year, 11, 31);
       daysTotal = Math.round((endOfYear - startDate) / (1000 * 60 * 60 * 24)) + 1;
       daysElapsed = Math.round((now - startDate) / (1000 * 60 * 60 * 24)) + 1;
     } else if (period === 'qtd') {
+      periodEnd = todayStr;
       if (obj) {
         const qMonths = Object.keys(obj.quarterObj.months).map(Number).sort((a, b) => a - b);
         periodStart = `${year}-${String(qMonths[0]).padStart(2, '0')}-01`;
@@ -1527,12 +1538,12 @@ app.get('/api/product-breakdown', async (req, res) => {
         daysTotal = Math.round((quarterEndDate - quarterStartDate) / (1000 * 60 * 60 * 24)) + 1;
         daysElapsed = Math.round((now - quarterStartDate) / (1000 * 60 * 60 * 24)) + 1;
       }
-      const monthNames2 = ['', 'Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Jun', 'Jul', 'Aoû', 'Sep', 'Oct', 'Nov', 'Déc'];
       const qNum = Math.ceil(month / 3);
       periodLabel = `Q${qNum} ${year}`;
     } else {
       // mtd (default)
       periodStart = monthStart;
+      periodEnd = todayStr;
       daysElapsed = daysElapsedMonth;
       daysTotal = daysInMonth;
       const monthNames2 = ['', 'Janvier', 'Février', 'Mars', 'Avril', 'Mai', 'Juin', 'Juillet', 'Août', 'Septembre', 'Octobre', 'Novembre', 'Décembre'];
@@ -1541,7 +1552,7 @@ app.get('/api/product-breakdown', async (req, res) => {
 
     const [typeMap, orders] = await Promise.all([
       getProductTypeMap(),
-      fetchOrdersWithLineItems(periodStart, todayStr),
+      fetchOrdersWithLineItems(periodStart, periodEnd),
     ]);
 
     // Build refund map: line_item_id → refunded quantity
@@ -1652,7 +1663,7 @@ app.get('/api/product-breakdown', async (req, res) => {
       period: {
         label: periodLabel,
         start: periodStart,
-        end: todayStr,
+        end: periodEnd,
         daysElapsed,
         daysTotal,
       },

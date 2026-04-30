@@ -420,9 +420,18 @@
       <!-- Period buttons -->
       <div class="product-toolbar">
         <div class="product-period-btns">
+          <button class="btn btn-ghost" data-product-quick="today">Aujourd'hui</button>
+          <button class="btn btn-ghost" data-product-quick="yesterday">Hier</button>
+          <button class="btn btn-ghost" data-product-quick="7">7J</button>
           <button class="btn btn-ghost active" data-product-period="mtd">MTD</button>
           <button class="btn btn-ghost" data-product-period="qtd">QTD</button>
           <button class="btn btn-ghost" data-product-period="ytd">YTD</button>
+        </div>
+        <div class="meta-date-picker">
+          <input type="date" id="productDateStart" class="meta-date-input">
+          <span class="meta-date-sep">→</span>
+          <input type="date" id="productDateEnd" class="meta-date-input">
+          <button class="btn btn-ghost btn-sm" id="productDateApply">OK</button>
         </div>
         <span class="product-period-label" id="productPeriodLabel"></span>
       </div>

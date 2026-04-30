@@ -828,9 +828,10 @@ function renderRechargeByCategoryChart(byCategory) {
 // ============================================================
 
 let productPeriod = 'mtd';
+let productDateRange = null; // { start, end } for custom range
 
 async function loadProductBreakdown(period) {
-  if (period) productPeriod = period;
+  if (period) { productPeriod = period; productDateRange = null; }
 
   // Show loader overlay
   const page = document.querySelector('.product-page');
@@ -845,7 +846,10 @@ async function loadProductBreakdown(period) {
   loader.style.display = 'flex';
 
   try {
-    const res = await fetch(`/api/product-breakdown?period=${productPeriod}`);
+    const qs = productDateRange
+      ? `start=${productDateRange.start}&end=${productDateRange.end}`
+      : `period=${productPeriod}`;
+    const res = await fetch(`/api/product-breakdown?${qs}`);
     const data = await res.json();
     const section = document.getElementById('productBreakdownSection');
 
@@ -857,6 +861,8 @@ async function loadProductBreakdown(period) {
 
     section.style.display = 'block';
     document.getElementById('productPeriodLabel').textContent = `${data.period.label} — J${data.period.daysElapsed}/${data.period.daysTotal}`;
+    document.getElementById('productDateStart').value = data.period.start;
+    document.getElementById('productDateEnd').value = data.period.end;
 
     // Doughnut chart
     const ctx = document.getElementById('chart-productBreakdown');
@@ -2552,13 +2558,53 @@ document.addEventListener('DOMContentLoaded', async () => {
     btn.addEventListener('click', () => switchAcqTab(btn.dataset.acqTab));
   });
 
+  // Helper: clear all product period button active states
+  function clearProductPeriodBtns() {
+    document.querySelectorAll('[data-product-period], [data-product-quick]').forEach(b => b.classList.remove('active'));
+  }
+
   // Product period buttons (MTD / QTD / YTD)
   document.querySelectorAll('[data-product-period]').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('[data-product-period]').forEach(b => b.classList.remove('active'));
+      clearProductPeriodBtns();
       btn.classList.add('active');
       loadProductBreakdown(btn.dataset.productPeriod);
     });
+  });
+
+  // Product quick buttons (Aujourd'hui / Hier / 7J)
+  document.querySelectorAll('[data-product-quick]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const quick = btn.dataset.productQuick;
+      const today = new Date();
+      const fmt = d => d.toISOString().split('T')[0];
+      let start, end;
+      if (quick === 'today') {
+        start = end = fmt(today);
+      } else if (quick === 'yesterday') {
+        const y = new Date(today); y.setDate(y.getDate() - 1);
+        start = end = fmt(y);
+      } else {
+        const days = parseInt(quick);
+        end = fmt(new Date(today.getTime() - 86400000));
+        const s = new Date(today); s.setDate(s.getDate() - days);
+        start = fmt(s);
+      }
+      productDateRange = { start, end };
+      clearProductPeriodBtns();
+      btn.classList.add('active');
+      loadProductBreakdown();
+    });
+  });
+
+  // Product custom date picker
+  document.getElementById('productDateApply').addEventListener('click', () => {
+    const start = document.getElementById('productDateStart').value;
+    const end = document.getElementById('productDateEnd').value;
+    if (!start || !end) return;
+    productDateRange = { start, end };
+    clearProductPeriodBtns();
+    loadProductBreakdown();
   });
 
   // Amazon KPI period buttons (MTD / 15J / 30J)
