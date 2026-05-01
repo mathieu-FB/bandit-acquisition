@@ -1124,7 +1124,7 @@ function filterMetaAds(type) {
   else if (type === 'static') filtered = _metaAllTopAds.filter(a => !a.isVideo);
   else if (type === 'acquisition') filtered = _metaAllTopAds.filter(a => a.campaignType === 'acquisition');
   else if (type === 'retargeting') filtered = _metaAllTopAds.filter(a => a.campaignType === 'retargeting');
-  document.getElementById('metaTopAds').innerHTML = renderMetaAdCards(filtered.slice(0, 12));
+  document.getElementById('metaTopAds').innerHTML = renderMetaAdCards(filtered.slice(0, 24));
 }
 
 async function loadMetaAnalysis(forceDays, forceRefresh) {
