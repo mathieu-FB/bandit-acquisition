@@ -946,6 +946,45 @@ app.get('/api/cache/purge-all', (req, res) => {
   res.json({ purged: count });
 });
 
+// Debug: show raw refund data for a date range
+app.get('/api/shopify/debug-refunds', async (req, res) => {
+  try {
+    const start = req.query.start || formatDate(new Date());
+    const end = req.query.end || start;
+    const orders = await fetchAllShopifyOrders(start, end);
+    const refunded = orders.filter(o => o.refunds && o.refunds.length > 0);
+    const details = refunded.map(o => ({
+      name: o.name,
+      financial_status: o.financial_status,
+      currency: o.currency,
+      subtotal_price: o.subtotal_price,
+      total_price: o.total_price,
+      total_tax: o.total_tax,
+      refunds: o.refunds.map(r => ({
+        id: r.id,
+        refund_line_items: (r.refund_line_items || []).map(rli => ({
+          subtotal: rli.subtotal,
+          total_tax: rli.total_tax,
+          subtotal_set: rli.subtotal_set,
+          quantity: rli.quantity,
+        })),
+        order_adjustments: (r.order_adjustments || []).map(adj => ({
+          kind: adj.kind,
+          amount: adj.amount,
+          amount_set: adj.amount_set,
+          tax_amount: adj.tax_amount,
+        })),
+      })),
+      computed: {
+        lineItemsTotal: o.refunds.reduce((s, r) => s + (r.refund_line_items || []).reduce((s2, rli) => s2 + getRefundLineItemSubtotal(rli), 0), 0),
+        adjustmentsTotal: o.refunds.reduce((s, r) => s + (r.order_adjustments || []).reduce((s2, adj) => s2 + getAdjustmentAmount(adj), 0), 0),
+        orderNetSalesHT: orderNetSalesHT(o),
+      },
+    }));
+    res.json({ count: details.length, orders: details });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ============================================================
 // MAIN DASHBOARD ENDPOINT
 // ============================================================
