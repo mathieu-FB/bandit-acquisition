@@ -618,6 +618,17 @@ async function loadDashboard() {
     renderKPI('aov', kpis.aov.current, kpis.aov.previous, fmtCurrency, false);
     renderKPI('discountCodes', kpis.discountCodes.current, kpis.discountCodes.previous, fmtCurrency, false);
     renderKPI('refunds', kpis.refunds.current, kpis.refunds.previous, fmtCurrency, true);
+    // Show refunded order numbers
+    const refundListEl = document.getElementById('refunds-orders-list');
+    if (refundListEl) {
+      if (kpis.refunds.orders && kpis.refunds.orders.length > 0) {
+        refundListEl.innerHTML = kpis.refunds.orders
+          .map(o => `<span class="refund-order">${o.name} <small>${fmtCurrency(o.amount)}</small></span>`)
+          .join('');
+      } else {
+        refundListEl.innerHTML = '';
+      }
+    }
     renderKPI('repeatRate', kpis.repeatRate.current, kpis.repeatRate.previous, fmtPercent, false);
     renderKPI('repeatNetSales', kpis.repeatNetSales.current, kpis.repeatNetSales.previous, fmtCurrency, false);
     renderKPI('blendedCac', kpis.blendedCac.current, kpis.blendedCac.previous, fmtCurrency, true);
