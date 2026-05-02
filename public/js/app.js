@@ -2544,7 +2544,9 @@ document.addEventListener('DOMContentLoaded', async () => {
       } else if (activeSubTab === 'data-produits') {
         loadProductBreakdown();
       } else {
-        loadDashboard();
+        // Purge server-side daily cache then reload
+        fetch('/api/cache/purge-all').then(() => loadDashboard());
+        return;
       }
     }
   });

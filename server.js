@@ -938,6 +938,14 @@ app.get('/api/cache/purge', (req, res) => {
   res.json({ purged, remaining: Object.keys(dailyCache).length });
 });
 
+// Purge ALL cached days
+app.get('/api/cache/purge-all', (req, res) => {
+  const count = Object.keys(dailyCache).length;
+  Object.keys(dailyCache).forEach(k => delete dailyCache[k]);
+  console.log(`[Cache] Purged ALL ${count} days`);
+  res.json({ purged: count });
+});
+
 // ============================================================
 // MAIN DASHBOARD ENDPOINT
 // ============================================================
