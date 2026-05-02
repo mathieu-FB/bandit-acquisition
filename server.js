@@ -766,12 +766,28 @@ async function ensureCached(startStr, endStr) {
       countries[country] = (countries[country] || 0) + 1;
     });
 
+    // Compute refunds total HT for the day
+    let dayRefundsHT = 0;
+    valid.forEach(o => {
+      if (o.refunds && o.refunds.length > 0) {
+        o.refunds.forEach(refund => {
+          if (refund.refund_line_items) {
+            refund.refund_line_items.forEach(rli => { dayRefundsHT += parseFloat(rli.subtotal || 0); });
+          }
+          if (refund.order_adjustments) {
+            refund.order_adjustments.forEach(adj => { dayRefundsHT += parseFloat(adj.amount || 0); });
+          }
+        });
+      }
+    });
+
     dailyCache[day] = {
       shopify: {
         netSales: valid.reduce((s, o) => s + orderNetSalesHT(o), 0),
         shippingHT: valid.reduce((s, o) => s + orderShippingHT(o), 0),
         orders: countable.length,
         discounts: valid.reduce((s, o) => s + parseFloat(o.total_discounts || 0), 0),
+        refundsHT: dayRefundsHT,
         customers,
         countries,
       },
@@ -793,7 +809,7 @@ function aggregateFromCache(startStr, endStr) {
     d.setDate(d.getDate() + 1);
   }
 
-  let netSales = 0, shippingHT = 0, totalOrders = 0, totalDiscounts = 0;
+  let netSales = 0, shippingHT = 0, totalOrders = 0, totalDiscounts = 0, totalRefundsHT = 0;
   const mergedCustomers = {};
   const mergedCountries = {};
 
@@ -811,6 +827,7 @@ function aggregateFromCache(startStr, endStr) {
     shippingHT += c.shopify.shippingHT || 0;
     totalOrders += c.shopify.orders;
     totalDiscounts += c.shopify.discounts;
+    totalRefundsHT += c.shopify.refundsHT || 0;
     shopifyDaily[day] = { sales: c.shopify.netSales, orders: c.shopify.orders };
 
     if (c.shopify.customers) {
@@ -856,7 +873,7 @@ function aggregateFromCache(startStr, endStr) {
   const tiktokRoas = tiktokTotals.spend > 0 ? tiktokTotals.revenue / tiktokTotals.spend : 0;
 
   return {
-    shopify: { netSales, shippingHT, totalOrders, totalDiscounts, aov, repeatRate, repeatNetSales, countries: mergedCountries },
+    shopify: { netSales, shippingHT, totalOrders, totalDiscounts, totalRefundsHT, aov, repeatRate, repeatNetSales, countries: mergedCountries },
     meta: { ...metaTotals, cpm: metaCpm, roas: metaRoas, daily: metaDaily },
     google: { ...googleTotals, cpm: googleCpm, roas: googleRoas, daily: googleDaily },
     tiktok: { ...tiktokTotals, cpm: tiktokCpm, roas: tiktokRoas, daily: tiktokDaily },
@@ -989,6 +1006,7 @@ app.get('/api/dashboard', async (req, res) => {
         orders: { current: shopify.totalOrders, previous: shopifyPrev.totalOrders },
         aov: { current: shopify.aov, previous: shopifyPrev.aov },
         discountCodes: { current: shopify.totalDiscounts, previous: shopifyPrev.totalDiscounts },
+        refunds: { current: shopify.totalRefundsHT, previous: shopifyPrev.totalRefundsHT },
         repeatRate: { current: shopify.repeatRate, previous: shopifyPrev.repeatRate },
         repeatNetSales: { current: shopify.repeatNetSales, previous: shopifyPrev.repeatNetSales },
         blendedCac: { current: blendedCac, previous: blendedCacPrev },

@@ -617,6 +617,7 @@ async function loadDashboard() {
     renderKPI('orders', kpis.orders.current, kpis.orders.previous, fmtNumber, false);
     renderKPI('aov', kpis.aov.current, kpis.aov.previous, fmtCurrency, false);
     renderKPI('discountCodes', kpis.discountCodes.current, kpis.discountCodes.previous, fmtCurrency, false);
+    renderKPI('refunds', kpis.refunds.current, kpis.refunds.previous, fmtCurrency, true);
     renderKPI('repeatRate', kpis.repeatRate.current, kpis.repeatRate.previous, fmtPercent, false);
     renderKPI('repeatNetSales', kpis.repeatNetSales.current, kpis.repeatNetSales.previous, fmtCurrency, false);
     renderKPI('blendedCac', kpis.blendedCac.current, kpis.blendedCac.previous, fmtCurrency, true);

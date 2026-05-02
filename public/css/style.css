@@ -303,8 +303,12 @@ body {
   grid-template-columns: repeat(3, 1fr);
 }
 
+.grid-4 {
+  grid-template-columns: repeat(4, 1fr);
+}
+
 @media (max-width: 900px) {
-  .grid-3 {
+  .grid-3, .grid-4 {
     grid-template-columns: 1fr;
   }
   .dashboard { padding: 16px; }
