@@ -298,6 +298,22 @@ async function fetchAllShopifyOrders(start, end) {
   return orders;
 }
 
+// Get refund amount in shop currency (EUR) — handles multi-currency orders
+function getRefundLineItemSubtotal(rli) {
+  // Prefer subtotal_set.shop_money for multi-currency accuracy
+  if (rli.subtotal_set && rli.subtotal_set.shop_money) {
+    return parseFloat(rli.subtotal_set.shop_money.amount || 0);
+  }
+  return parseFloat(rli.subtotal || 0);
+}
+
+function getAdjustmentAmount(adj) {
+  if (adj.amount_set && adj.amount_set.shop_money) {
+    return parseFloat(adj.amount_set.shop_money.amount || 0);
+  }
+  return parseFloat(adj.amount || 0);
+}
+
 // Compute HT (excl. tax) net sales for an order, minus refunds
 function orderNetSalesHT(order) {
   // In tax-inclusive stores (France), subtotal_price INCLUDES tax
@@ -309,22 +325,15 @@ function orderNetSalesHT(order) {
   // For fully refunded orders, net = 0
   if (order.financial_status === 'refunded') return 0;
 
-  // Subtract refund amounts (line items + order adjustments)
+  // Subtract refund amounts (line items + order adjustments) in shop currency
   let refundedHT = 0;
   if (order.refunds && order.refunds.length > 0) {
     order.refunds.forEach(refund => {
-      // Refund line items (pre-tax subtotal)
       if (refund.refund_line_items) {
-        refund.refund_line_items.forEach(rli => {
-          refundedHT += parseFloat(rli.subtotal || 0);
-        });
+        refund.refund_line_items.forEach(rli => { refundedHT += getRefundLineItemSubtotal(rli); });
       }
-      // Order adjustments (e.g. restocking fees, manual adjustments)
       if (refund.order_adjustments) {
-        refund.order_adjustments.forEach(adj => {
-          // amount is negative for charges to customer, positive for refunds
-          refundedHT += parseFloat(adj.amount || 0);
-        });
+        refund.order_adjustments.forEach(adj => { refundedHT += getAdjustmentAmount(adj); });
       }
     });
   }
@@ -766,7 +775,7 @@ async function ensureCached(startStr, endStr) {
       countries[country] = (countries[country] || 0) + 1;
     });
 
-    // Compute refunds total HT for the day + list refunded orders
+    // Compute refunds total HT for the day + list refunded orders (in shop currency EUR)
     let dayRefundsHT = 0;
     const dayRefundedOrders = [];
     valid.forEach(o => {
@@ -774,10 +783,10 @@ async function ensureCached(startStr, endStr) {
         let orderRefund = 0;
         o.refunds.forEach(refund => {
           if (refund.refund_line_items) {
-            refund.refund_line_items.forEach(rli => { orderRefund += parseFloat(rli.subtotal || 0); });
+            refund.refund_line_items.forEach(rli => { orderRefund += getRefundLineItemSubtotal(rli); });
           }
           if (refund.order_adjustments) {
-            refund.order_adjustments.forEach(adj => { orderRefund += parseFloat(adj.amount || 0); });
+            refund.order_adjustments.forEach(adj => { orderRefund += getAdjustmentAmount(adj); });
           }
         });
         if (orderRefund > 0) {
@@ -1360,8 +1369,8 @@ app.get('/api/shopify/verify', async (req, res) => {
       const discount = parseFloat(o.total_discounts || 0);
       let refundedItems = 0, refundedAdj = 0;
       (o.refunds || []).forEach(r => {
-        (r.refund_line_items || []).forEach(rli => { refundedItems += parseFloat(rli.subtotal || 0); });
-        (r.order_adjustments || []).forEach(adj => { refundedAdj += parseFloat(adj.amount || 0); });
+        (r.refund_line_items || []).forEach(rli => { refundedItems += getRefundLineItemSubtotal(rli); });
+        (r.order_adjustments || []).forEach(adj => { refundedAdj += getAdjustmentAmount(adj); });
       });
       const netHT = o.financial_status === 'refunded' ? 0 : subtotalHT - refundedItems - refundedAdj;
       return {
