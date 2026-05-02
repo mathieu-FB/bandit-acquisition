@@ -325,15 +325,15 @@ function orderNetSalesHT(order) {
   // For fully refunded orders, net = 0
   if (order.financial_status === 'refunded') return 0;
 
-  // Subtract refund amounts (line items + order adjustments) in shop currency
+  // Subtract only refund_line_items (product refunds) in shop currency.
+  // order_adjustments (shipping_refund, refund_discrepancy) are NOT subtracted here:
+  // - shipping is handled separately in orderShippingHT
+  // - refund_discrepancy duplicates the line item totals
   let refundedHT = 0;
   if (order.refunds && order.refunds.length > 0) {
     order.refunds.forEach(refund => {
       if (refund.refund_line_items) {
         refund.refund_line_items.forEach(rli => { refundedHT += getRefundLineItemSubtotal(rli); });
-      }
-      if (refund.order_adjustments) {
-        refund.order_adjustments.forEach(adj => { refundedHT += getAdjustmentAmount(adj); });
       }
     });
   }
@@ -785,9 +785,7 @@ async function ensureCached(startStr, endStr) {
           if (refund.refund_line_items) {
             refund.refund_line_items.forEach(rli => { orderRefund += getRefundLineItemSubtotal(rli); });
           }
-          if (refund.order_adjustments) {
-            refund.order_adjustments.forEach(adj => { orderRefund += getAdjustmentAmount(adj); });
-          }
+          // order_adjustments excluded: refund_discrepancy duplicates line item totals
         });
         if (orderRefund > 0) {
           dayRefundsHT += orderRefund;
@@ -1414,12 +1412,12 @@ app.get('/api/shopify/verify', async (req, res) => {
       const subtotalHT = subtotalTTC - tax;
       const total = parseFloat(o.total_price || 0);
       const discount = parseFloat(o.total_discounts || 0);
-      let refundedItems = 0, refundedAdj = 0;
+      let refundedItems = 0;
       (o.refunds || []).forEach(r => {
         (r.refund_line_items || []).forEach(rli => { refundedItems += getRefundLineItemSubtotal(rli); });
-        (r.order_adjustments || []).forEach(adj => { refundedAdj += getAdjustmentAmount(adj); });
+        // order_adjustments excluded: refund_discrepancy duplicates line item totals
       });
-      const netHT = o.financial_status === 'refunded' ? 0 : subtotalHT - refundedItems - refundedAdj;
+      const netHT = o.financial_status === 'refunded' ? 0 : subtotalHT - refundedItems;
       return {
         id: o.id,
         date: toParisDate(o.created_at),
