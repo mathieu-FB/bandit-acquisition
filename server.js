@@ -975,7 +975,7 @@ app.get('/api/shopify/debug-skus', async (req, res) => {
     orders.forEach(o => {
       (o.line_items || []).forEach(li => {
         const sku = li.sku || '(empty)';
-        if (!skus[sku]) skus[sku] = { sku, title: li.title, variant: li.variant_title, count: 0, inList: EXPORT_FD_SKUS.has(sku) };
+        if (!skus[sku]) skus[sku] = { sku, title: li.title, variant: li.variant_title, count: 0, inList: isFDSku(sku) };
         skus[sku].count += li.quantity;
       });
     });
@@ -1836,7 +1836,7 @@ app.get('/api/product-breakdown', async (req, res) => {
 
 // ============================================================
 // F+D SKUs for export (Shopify 7-digit SKUs)
-const EXPORT_FD_SKUS = new Set([
+const EXPORT_FD_SKUS = [
   '8211742', // Kit de filtration
   '8211653', // Fontaine sans fil, Verte
   '8211660', // Fontaine sans fil, Crème
@@ -1851,7 +1851,14 @@ const EXPORT_FD_SKUS = new Set([
   '8211736', // Distributeur, Pêche
   '8229564', // Distributeur, Mocha
   '8211759', // Sachets absorbeurs humidité
-]);
+];
+const EXPORT_FD_SKUS_SET = new Set(EXPORT_FD_SKUS);
+// Match SKU exactly or by prefix (Amazon adds suffixes like _FBM, -FBM)
+function isFDSku(sku) {
+  if (!sku) return false;
+  if (EXPORT_FD_SKUS_SET.has(sku)) return true;
+  return EXPORT_FD_SKUS.some(s => sku.startsWith(s));
+}
 
 // EXPORT PRODUCT VARIANTS — Fontaines & Distributeurs by SKU
 // ============================================================
@@ -1894,7 +1901,7 @@ app.get('/api/export/product-variants', async (req, res) => {
         const monthData = amazonProductData.months[mk] || {};
         Object.values(monthData).forEach(p => {
           const sku = p.sku || '';
-          if (!sku || !EXPORT_FD_SKUS.has(sku)) return; // filter to F+D SKU list
+          if (!isFDSku(sku)) return; // filter to F+D SKU list
           if (!merged[sku]) merged[sku] = { name: p.name, sku, asin: p.asin, units: 0, ca: 0 };
           merged[sku].units += p.units;
           merged[sku].ca += p.ca;
@@ -1963,7 +1970,7 @@ app.get('/api/export/product-variants', async (req, res) => {
     orders.forEach(order => {
       if (order.financial_status === 'voided') return;
       (order.line_items || []).forEach(li => {
-        if (!li.sku || !EXPORT_FD_SKUS.has(li.sku)) return;
+        if (!isFDSku(li.sku)) return;
 
         const refunded = refundMap[li.id] || 0;
         const netQty = li.quantity - refunded;
