@@ -1824,11 +1824,20 @@ app.get('/api/product-breakdown', async (req, res) => {
 });
 
 // ============================================================
-// F+D SKUs for export
+// F+D SKUs for export (Shopify 7-digit SKUs)
 const EXPORT_FD_SKUS = new Set([
-  '821174', '821165', '821166', '821171', '821172',
-  '821168', '821169', '821173', '821167', '822954',
-  '822956', '821175',
+  '8211742', // Kit de filtration
+  '8211653', // Fontaine sans fil, Verte
+  '8211660', // Fontaine sans fil, Crème
+  '8211676', // Fontaine sans fil, Pêche
+  '8229541', // Fontaine sans fil, Mocha
+  '8211682', // Fontaine filaire, Verte
+  '8229558', // Fontaine filaire, Mocha
+  '8211713', // Distributeur, Verte
+  '8211720', // Distributeur, Crème
+  '8211736', // Distributeur, Pêche
+  '8229564', // Distributeur, Mocha
+  '8211759', // Sachets absorbeurs humidité
 ]);
 
 // EXPORT PRODUCT VARIANTS — Fontaines & Distributeurs by SKU
