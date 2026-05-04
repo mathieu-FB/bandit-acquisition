@@ -2198,17 +2198,14 @@ app.get('/api/amazon/dashboard', async (req, res) => {
       : quarterStart;
     const salesQTD = await fetchAmazonSalesMetrics(fetchStart, todayStr);
 
-    // Get ad spend — wait for in-progress or trigger new refresh if needed
+    // Get ad spend — use cache immediately, trigger background refresh if stale
     let adSpend = 0;
     if (isAmazonAdsConfigured()) {
       const cachedSpend = amazonAdSpendCache.spend;
       const stale = Date.now() - amazonAdSpendCache.lastUpdate > 30 * 60 * 1000;
-      if (cachedSpend !== null && !stale) {
-        adSpend = cachedSpend;
-      } else {
-        // Either trigger a new refresh, or await the one already in progress
-        await refreshAmazonAdSpend();
-        adSpend = amazonAdSpendCache.spend || 0;
+      adSpend = cachedSpend || 0;
+      if ((cachedSpend === null || stale) && !amazonAdSpendCache.fetching) {
+        refreshAmazonAdSpend(); // fire and forget — don't block dashboard
       }
     }
 
