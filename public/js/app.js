@@ -2638,7 +2638,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
       const res = await fetch(`/api/export/product-variants?${qs}`);
       const data = await res.json();
-      if (!data.rows || data.rows.length === 0) { alert('Aucune donnée pour cette période'); return; }
+      if (!data.rows || data.rows.length === 0) { alert('Aucune donnée pour cette période\n\nDebug: ' + JSON.stringify(data._debug || data)); return; }
 
       const sep = ';';
       const header = ['Produit', 'SKU', 'Vol', 'Poids Vol', 'CA €', 'Poids CA'];

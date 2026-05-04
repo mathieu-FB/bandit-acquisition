@@ -1924,7 +1924,18 @@ app.get('/api/export/product-variants', async (req, res) => {
           pctCA: totalCA > 0 ? ((p.ca / totalCA) * 100) : 0,
         }));
 
-      return res.json({ source: 'amazon', start: periodStart, end: periodEnd, rows, totalVolume: totalVol, totalCA: Math.round(totalCA * 100) / 100 });
+      // Debug: log what months were scanned and what was found
+      const monthsScanned = [];
+      const dScan = new Date(startMonth + '-01');
+      while (dScan <= endD) {
+        const mk2 = `${dScan.getFullYear()}-${String(dScan.getMonth() + 1).padStart(2, '0')}`;
+        const md = amazonProductData.months[mk2];
+        monthsScanned.push({ month: mk2, productCount: md ? Object.keys(md).length : 0 });
+        dScan.setMonth(dScan.getMonth() + 1);
+      }
+      console.log('[Amazon Export]', { periodStart, periodEnd, startMonth, endMonth: periodEnd.substring(0, 7), monthsScanned, mergedCount: products.length, totalVol, totalCA });
+
+      return res.json({ source: 'amazon', start: periodStart, end: periodEnd, rows, totalVolume: totalVol, totalCA: Math.round(totalCA * 100) / 100, _debug: { monthsScanned, mergedCount: products.length } });
     }
 
     // Shopify: aggregate by variant SKU for Fontaines & Distributeurs
