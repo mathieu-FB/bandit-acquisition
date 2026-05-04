@@ -944,6 +944,15 @@ app.get('/api/cache/purge-all', (req, res) => {
   res.json({ purged: count });
 });
 
+// Reset Amazon product data (forces re-fetch with SellerSKU)
+app.get('/api/amazon/reset-products', (req, res) => {
+  amazonProductData = { months: {}, lastFetch: {} };
+  saveAmazonProductData(amazonProductData);
+  fontaineSKUsCache = null;
+  console.log('[Amazon] Product data reset — will re-fetch on next dashboard load');
+  res.json({ status: 'ok', message: 'Amazon product data reset' });
+});
+
 // Debug: show raw refund data for a date range
 app.get('/api/shopify/debug-refunds', async (req, res) => {
   try {
@@ -1159,6 +1168,8 @@ const PRODUCT_CATEGORIES = [
   },
 ];
 
+const FONTAINE_TYPES = new Set(PRODUCT_CATEGORIES[0].types); // Fontaines & Distributeurs
+
 // Product ID → product_type cache
 let productTypeMap = null;
 let productTypeMapExpiry = 0;
@@ -1192,6 +1203,41 @@ async function getProductTypeMap() {
   productTypeMapExpiry = Date.now() + 3600 * 1000; // cache 1h
   console.log(`[ProductTypeMap] Cached ${Object.keys(map).length} products`);
   return map;
+}
+
+// Get all Shopify variant SKUs for Fontaines & Distributeurs products
+let fontaineSKUsCache = null;
+let fontaineSKUsCacheExpiry = 0;
+
+async function getFontaineSKUs() {
+  if (fontaineSKUsCache && Date.now() < fontaineSKUsCacheExpiry) return fontaineSKUsCache;
+
+  const typeMap = await getProductTypeMap();
+  // Get product IDs that are Fontaines & Distributeurs
+  const fontaineProductIds = new Set();
+  Object.entries(typeMap).forEach(([pid, ptype]) => {
+    if (FONTAINE_TYPES.has(ptype)) fontaineProductIds.add(pid);
+  });
+
+  // Fetch variants with SKUs for those products
+  const skuSet = new Set();
+  const token = process.env.SHOPIFY_ACCESS_TOKEN;
+  for (const pid of fontaineProductIds) {
+    const url = `https://${process.env.SHOPIFY_STORE_URL}/admin/api/2024-01/products/${pid}.json?fields=variants`;
+    const res = await fetch(url, {
+      headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+    });
+    if (!res.ok) continue;
+    const data = await res.json();
+    (data.product?.variants || []).forEach(v => {
+      if (v.sku) skuSet.add(v.sku.trim());
+    });
+  }
+
+  fontaineSKUsCache = skuSet;
+  fontaineSKUsCacheExpiry = Date.now() + 3600 * 1000;
+  console.log(`[FontaineSKUs] Cached ${skuSet.size} SKUs`);
+  return skuSet;
 }
 
 async function fetchOrdersWithLineItems(start, end) {
@@ -1763,8 +1809,6 @@ app.get('/api/product-breakdown', async (req, res) => {
 // EXPORT PRODUCT VARIANTS — Fontaines & Distributeurs by SKU
 // ============================================================
 
-const FONTAINE_TYPES = new Set(PRODUCT_CATEGORIES[0].types); // Fontaines & Distributeurs
-
 app.get('/api/export/product-variants', async (req, res) => {
   try {
     const source = req.query.source || 'shopify';
@@ -1792,19 +1836,24 @@ app.get('/api/export/product-variants', async (req, res) => {
         periodEnd = formatDate(now);
       }
 
-      // Aggregate across all months in the period
+      // Get Shopify Fontaines & Distributeurs SKUs to filter Amazon data
+      const fontaineSKUs = await getFontaineSKUs();
+
+      // Aggregate across all months in the period, keyed by SellerSKU
       const startMonth = periodStart.substring(0, 7);
       const endMonth = periodEnd.substring(0, 7);
-      const merged = {};
+      const merged = {}; // keyed by sku
       const d = new Date(startMonth + '-01');
       const endD = new Date(endMonth + '-01');
       while (d <= endD) {
         const mk = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
         const monthData = amazonProductData.months[mk] || {};
         Object.values(monthData).forEach(p => {
-          if (!merged[p.asin]) merged[p.asin] = { name: p.name, asin: p.asin, units: 0, ca: 0 };
-          merged[p.asin].units += p.units;
-          merged[p.asin].ca += p.ca;
+          const sku = p.sku || '';
+          if (!sku || !fontaineSKUs.has(sku)) return; // filter to Fontaines & Distributeurs SKUs only
+          if (!merged[sku]) merged[sku] = { name: p.name, sku, asin: p.asin, units: 0, ca: 0 };
+          merged[sku].units += p.units;
+          merged[sku].ca += p.ca;
         });
         d.setMonth(d.getMonth() + 1);
       }
@@ -1817,7 +1866,7 @@ app.get('/api/export/product-variants', async (req, res) => {
         .sort((a, b) => b.units - a.units)
         .map(p => ({
           name: p.name,
-          sku: p.asin,
+          sku: p.sku,
           volume: p.units,
           pctVolume: totalVol > 0 ? ((p.units / totalVol) * 100) : 0,
           ca: Math.round(p.ca * 100) / 100,
@@ -2077,9 +2126,11 @@ async function fetchAmazonTopProducts(start, end) {
       (r.items.payload?.OrderItems || []).forEach(item => {
         const asin = item.ASIN || 'unknown';
         const name = item.Title || asin;
+        const sku = item.SellerSKU || '';
         const qty = parseInt(item.QuantityOrdered || 0);
         const price = parseFloat(item.ItemPrice?.Amount || 0);
-        if (!productAgg[asin]) productAgg[asin] = { name, asin, units: 0, ca: 0 };
+        if (!productAgg[asin]) productAgg[asin] = { name, asin, sku, units: 0, ca: 0 };
+        if (sku && !productAgg[asin].sku) productAgg[asin].sku = sku;
         productAgg[asin].units += qty;
         productAgg[asin].ca += price;
       });
