@@ -1760,6 +1760,124 @@ app.get('/api/product-breakdown', async (req, res) => {
 });
 
 // ============================================================
+// EXPORT PRODUCT VARIANTS — Fontaines & Distributeurs by SKU
+// ============================================================
+
+const FONTAINE_TYPES = new Set(PRODUCT_CATEGORIES[0].types); // Fontaines & Distributeurs
+
+app.get('/api/export/product-variants', async (req, res) => {
+  try {
+    const source = req.query.source || 'shopify';
+
+    if (source === 'amazon') {
+      // Amazon: use stored product data
+      const start = req.query.start || `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01`;
+      const end = req.query.end || formatDate(new Date());
+      const monthKey = start.substring(0, 7);
+      const monthData = amazonProductData.months[monthKey] || {};
+      const products = Object.values(monthData);
+
+      let totalVol = 0, totalCA = 0;
+      products.forEach(p => { totalVol += p.units; totalCA += p.ca; });
+
+      const rows = products
+        .sort((a, b) => b.units - a.units)
+        .map(p => ({
+          name: p.name,
+          sku: p.asin,
+          volume: p.units,
+          pctVolume: totalVol > 0 ? ((p.units / totalVol) * 100) : 0,
+          ca: Math.round(p.ca * 100) / 100,
+          pctCA: totalCA > 0 ? ((p.ca / totalCA) * 100) : 0,
+        }));
+
+      return res.json({ source: 'amazon', start, end, rows, totalVolume: totalVol, totalCA });
+    }
+
+    // Shopify: aggregate by variant SKU for Fontaines & Distributeurs
+    const period = req.query.period || 'mtd';
+    let periodStart, periodEnd;
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth() + 1;
+
+    if (req.query.start && req.query.end) {
+      periodStart = req.query.start;
+      periodEnd = req.query.end;
+    } else if (period === 'ytd') {
+      periodStart = `${year}-01-01`;
+      periodEnd = formatDate(now);
+    } else if (period === 'qtd') {
+      const qStart = Math.floor((month - 1) / 3) * 3 + 1;
+      periodStart = `${year}-${String(qStart).padStart(2, '0')}-01`;
+      periodEnd = formatDate(now);
+    } else {
+      periodStart = `${year}-${String(month).padStart(2, '0')}-01`;
+      periodEnd = formatDate(now);
+    }
+
+    const [typeMap, orders] = await Promise.all([
+      getProductTypeMap(),
+      fetchOrdersWithLineItems(periodStart, periodEnd),
+    ]);
+
+    // Build refund map
+    const refundMap = {};
+    orders.forEach(order => {
+      if (order.refunds) {
+        order.refunds.forEach(refund => {
+          (refund.refund_line_items || []).forEach(rli => {
+            refundMap[rli.line_item_id] = (refundMap[rli.line_item_id] || 0) + rli.quantity;
+          });
+        });
+      }
+    });
+
+    // Aggregate by SKU, filter for Fontaines & Distributeurs types
+    const skuAgg = {};
+    let totalVol = 0, totalCA = 0;
+
+    orders.forEach(order => {
+      if (order.financial_status === 'voided') return;
+      (order.line_items || []).forEach(li => {
+        const productType = typeMap[li.product_id] || 'Autre';
+        if (!FONTAINE_TYPES.has(productType)) return;
+
+        const refunded = refundMap[li.id] || 0;
+        const netQty = li.quantity - refunded;
+        if (netQty <= 0) return;
+
+        const ca = parseFloat(li.price || 0) * netQty;
+        const sku = li.sku || `PID-${li.product_id}`;
+        const name = li.variant_title
+          ? `${li.title}, ${li.variant_title}`
+          : li.title;
+
+        if (!skuAgg[sku]) skuAgg[sku] = { name, sku, volume: 0, ca: 0 };
+        skuAgg[sku].volume += netQty;
+        skuAgg[sku].ca += ca;
+        totalVol += netQty;
+        totalCA += ca;
+      });
+    });
+
+    const rows = Object.values(skuAgg)
+      .sort((a, b) => b.volume - a.volume)
+      .map(p => ({
+        ...p,
+        ca: Math.round(p.ca * 100) / 100,
+        pctVolume: totalVol > 0 ? ((p.volume / totalVol) * 100) : 0,
+        pctCA: totalCA > 0 ? ((p.ca / totalCA) * 100) : 0,
+      }));
+
+    res.json({ source: 'shopify', start: periodStart, end: periodEnd, rows, totalVolume: totalVol, totalCA });
+  } catch (err) {
+    console.error('Export product variants error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
 // AMAZON SP-API + ADS API
 // ============================================================
 

@@ -860,6 +860,16 @@ body {
   gap: 4px;
 }
 
+.export-btns {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+}
+.export-btns .btn {
+  font-size: 12px;
+  border: 1px solid var(--border);
+}
+
 .product-period-label {
   font-size: 13px;
   color: var(--text-muted);

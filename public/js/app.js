@@ -2621,6 +2621,59 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadProductBreakdown();
   });
 
+  // Export Fontaines & Distributeurs buttons
+  async function exportProductVariants(source) {
+    let qs;
+    if (source === 'amazon') {
+      const now = new Date();
+      const start = productDateRange ? productDateRange.start : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+      const end = productDateRange ? productDateRange.end : now.toISOString().split('T')[0];
+      qs = `source=amazon&start=${start}&end=${end}`;
+    } else {
+      qs = productDateRange
+        ? `source=shopify&start=${productDateRange.start}&end=${productDateRange.end}`
+        : `source=shopify&period=${productPeriod}`;
+    }
+    try {
+      const res = await fetch(`/api/export/product-variants?${qs}`);
+      const data = await res.json();
+      if (!data.rows || data.rows.length === 0) { alert('Aucune donnée pour cette période'); return; }
+
+      // Build CSV
+      const sep = ';';
+      const header = ['Produit', 'SKU', 'Vol', 'Poids Vol', 'CA €', 'Poids CA'];
+      const lines = [header.join(sep)];
+      data.rows.forEach(r => {
+        lines.push([
+          `"${r.name}"`,
+          r.sku,
+          r.volume,
+          (r.pctVolume).toFixed(0) + '%',
+          r.ca.toFixed(0),
+          (r.pctCA).toFixed(0) + '%',
+        ].join(sep));
+      });
+      lines.push(['TOTAL', '', data.totalVolume, '100%', Math.round(data.totalCA), '100%'].join(sep));
+
+      // Trigger download
+      const bom = '\uFEFF'; // UTF-8 BOM for Excel
+      const blob = new Blob([bom + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const srcLabel = source === 'amazon' ? 'Amazon' : 'Site';
+      a.download = `Export_Fontaines_${srcLabel}_${data.start}_${data.end}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Export error:', err);
+      alert('Erreur lors de l\'export');
+    }
+  }
+
+  document.getElementById('exportSiteBtn').addEventListener('click', () => exportProductVariants('shopify'));
+  document.getElementById('exportAmazonBtn').addEventListener('click', () => exportProductVariants('amazon'));
+
   // Amazon KPI period buttons (MTD / 15J / 30J)
   document.querySelectorAll('[data-amz-days]').forEach(btn => {
     btn.addEventListener('click', () => {
