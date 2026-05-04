@@ -2545,9 +2545,9 @@ app.get('/api/amazon/dashboard', async (req, res) => {
         },
       } : null,
       kpis: {
-        ca: kpiDays > 0 ? kpiCA : mtdCA,
-        orders: kpiDays > 0 ? kpiOrders : mtdOrders,
-        tacos: kpiDays > 0 ? tacosKpi : tacosMTD,
+        ca: (kpiDays > 0 || customStart) ? kpiCA : mtdCA,
+        orders: (kpiDays > 0 || customStart) ? kpiOrders : mtdOrders,
+        tacos: (kpiDays > 0 || customStart) ? tacosKpi : tacosMTD,
         label: kpiLabel,
       },
       topProducts,
