@@ -1832,6 +1832,8 @@ const EXPORT_FD_SKUS = new Set([
   '8211676', // Fontaine sans fil, Pêche
   '8229541', // Fontaine sans fil, Mocha
   '8211682', // Fontaine filaire, Verte
+  '8211699', // Fontaine filaire, Crème
+  '8211707', // Fontaine filaire, Pêche
   '8229558', // Fontaine filaire, Mocha
   '8211713', // Distributeur, Verte
   '8211720', // Distributeur, Crème
