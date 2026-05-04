@@ -1890,9 +1890,24 @@ app.get('/api/export/product-variants', async (req, res) => {
         periodEnd = formatDate(now);
       }
 
-      // Aggregate across all months in the period, keyed by SellerSKU
+      // Fetch missing months from Amazon SP-API before aggregating
       const startMonth = periodStart.substring(0, 7);
       const endMonth = periodEnd.substring(0, 7);
+      const fetchD = new Date(startMonth + '-01');
+      const fetchEndD = new Date(endMonth + '-01');
+      while (fetchD <= fetchEndD) {
+        const mk = `${fetchD.getFullYear()}-${String(fetchD.getMonth() + 1).padStart(2, '0')}`;
+        if (!amazonProductData.months[mk] || Object.keys(amazonProductData.months[mk]).length === 0) {
+          const mStart = `${mk}-01`;
+          const lastDay = new Date(fetchD.getFullYear(), fetchD.getMonth() + 1, 0).getDate();
+          const mEnd = `${mk}-${String(lastDay).padStart(2, '0')}`;
+          console.log(`[Amazon Export] Fetching missing month ${mk}...`);
+          await fetchAmazonTopProducts(mStart, mEnd);
+        }
+        fetchD.setMonth(fetchD.getMonth() + 1);
+      }
+
+      // Aggregate across all months in the period, keyed by SellerSKU
       const merged = {}; // keyed by sku
       const d = new Date(startMonth + '-01');
       const endD = new Date(endMonth + '-01');
