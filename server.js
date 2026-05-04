@@ -953,7 +953,18 @@ app.get('/api/amazon/reset-products', (req, res) => {
   res.json({ status: 'ok', message: 'Amazon product data reset' });
 });
 
-// Debug: show raw refund data for a date range
+// Debug: show Amazon product data (SellerSKUs)
+app.get('/api/amazon/debug-products', (req, res) => {
+  const months = Object.keys(amazonProductData.months).filter(k => !k.includes('_'));
+  const result = {};
+  months.forEach(mk => {
+    const products = Object.values(amazonProductData.months[mk] || {});
+    result[mk] = products.map(p => ({ asin: p.asin, sku: p.sku || '(none)', name: p.name, units: p.units }))
+      .sort((a, b) => b.units - a.units).slice(0, 20);
+  });
+  res.json({ months: result, lastFetch: amazonProductData.lastFetch });
+});
+
 // Debug: show SKUs from line items for export troubleshooting
 app.get('/api/shopify/debug-skus', async (req, res) => {
   try {
