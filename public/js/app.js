@@ -2648,6 +2648,10 @@ document.addEventListener('DOMContentLoaded', async () => {
       clearTimeout(timeout);
       const data = await res.json();
 
+      if (data.fetching) {
+        alert('Récupération des données Amazon en cours pour : ' + (data.missingMonths || []).join(', ') + '\n\nPatientez 1-2 minutes puis réessayez.');
+        return;
+      }
       if (!data.rows || data.rows.length === 0) { alert('Aucune donnée pour cette période'); return; }
 
       const sep = ';';
