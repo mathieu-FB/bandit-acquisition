@@ -446,8 +446,7 @@
         </div>
         <span class="product-period-label" id="productPeriodLabel"></span>
         <div class="export-btns">
-          <button class="btn btn-ghost btn-sm" id="exportSiteBtn" title="Export CSV Fontaines & Distributeurs — Site">⤓ Export Site</button>
-          <button class="btn btn-ghost btn-sm" id="exportAmazonBtn" title="Export CSV Fontaines & Distributeurs — Amazon">⤓ Export Amazon</button>
+          <button class="btn btn-ghost btn-sm" id="exportSiteBtn" title="Export CSV Fontaines & Distributeurs — Site">⤓ Export F+D</button>
         </div>
       </div>
 
@@ -833,13 +832,25 @@
         </section>
 
         <!-- KPIs ROW -->
-        <div class="meta-toolbar" style="max-width:1400px;margin:0 auto 12px;">
-          <div class="meta-period-btns">
+        <div class="product-toolbar" style="max-width:1400px;margin:0 auto 12px;">
+          <div class="product-period-btns">
+            <button class="btn btn-ghost" data-amz-quick="today">Aujourd'hui</button>
+            <button class="btn btn-ghost" data-amz-quick="yesterday">Hier</button>
+            <button class="btn btn-ghost" data-amz-quick="7">7J</button>
             <button class="btn btn-ghost active" data-amz-days="0">MTD</button>
-            <button class="btn btn-ghost" data-amz-days="15">15 jours</button>
-            <button class="btn btn-ghost" data-amz-days="30">30 jours</button>
+            <button class="btn btn-ghost" data-amz-days="15">15J</button>
+            <button class="btn btn-ghost" data-amz-days="30">30J</button>
+          </div>
+          <div class="meta-date-picker">
+            <input type="date" id="amzDateStart" class="meta-date-input">
+            <span class="meta-date-sep">→</span>
+            <input type="date" id="amzDateEnd" class="meta-date-input">
+            <button class="btn btn-ghost btn-sm" id="amzDateApply">OK</button>
           </div>
           <span class="meta-period-label" id="amzKpiPeriodLabel"></span>
+          <div class="export-btns">
+            <button class="btn btn-ghost btn-sm" id="exportAmazonBtn" title="Export CSV Fontaines & Distributeurs — Amazon">⤓ Export F+D</button>
+          </div>
         </div>
         <section class="grid grid-3" style="max-width:1400px;margin:0 auto 20px;">
           <div class="card">

@@ -2390,15 +2390,23 @@ app.get('/api/amazon/dashboard', async (req, res) => {
       daysElapsedQuarter = Math.round((now - quarterStartDate) / (1000 * 60 * 60 * 24)) + 1;
     }
 
-    // KPI period (15J / 30J selector, default MTD)
+    // KPI period (15J / 30J selector, or custom start/end)
     const kpiDays = parseInt(req.query.days) || 0;
+    const customStart = req.query.start;
+    const customEnd = req.query.end;
 
     // Fetch sales data + get cached ad spend
-    // Ensure we fetch enough data for 30J selector (may be before quarter start)
-    const fetchStart = kpiDays > 0
-      ? formatDate(new Date(Math.min(new Date(quarterStart).getTime(), Date.now() - kpiDays * 86400000)))
-      : quarterStart;
-    const salesQTD = await fetchAmazonSalesMetrics(fetchStart, todayStr);
+    let fetchStart;
+    let fetchEnd = todayStr;
+    if (customStart && customEnd) {
+      fetchStart = customStart < quarterStart ? customStart : quarterStart;
+      fetchEnd = customEnd;
+    } else if (kpiDays > 0) {
+      fetchStart = formatDate(new Date(Math.min(new Date(quarterStart).getTime(), Date.now() - kpiDays * 86400000)));
+    } else {
+      fetchStart = quarterStart;
+    }
+    const salesQTD = await fetchAmazonSalesMetrics(fetchStart, fetchEnd);
 
     // Get ad spend — use cache immediately, trigger background refresh if stale
     let adSpend = 0;
@@ -2436,7 +2444,13 @@ app.get('/api/amazon/dashboard', async (req, res) => {
     // KPI period aggregation (after sales data is loaded)
     let kpiCA = mtdCA, kpiOrders = mtdOrders;
     let kpiLabel = '';
-    if (kpiDays > 0) {
+    if (customStart && customEnd) {
+      kpiCA = 0; kpiOrders = 0;
+      Object.entries(dailyCA).forEach(([date, d]) => {
+        if (date >= customStart && date <= customEnd) { kpiCA += d.ca; kpiOrders += d.orders; }
+      });
+      kpiLabel = `${customStart} → ${customEnd}`;
+    } else if (kpiDays > 0) {
       kpiCA = 0; kpiOrders = 0;
       const kpiStart = formatDate(new Date(Date.now() - kpiDays * 86400000));
       Object.entries(dailyCA).forEach(([date, d]) => {

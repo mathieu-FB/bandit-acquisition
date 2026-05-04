@@ -1659,10 +1659,11 @@ function resetSparkCreator() {
 
 let amazonLoaded = false;
 let amazonKpiDays = 0; // 0 = MTD, 15, 30
+let amazonDateRange = null; // { start, end } for custom range
 
 async function loadAmazonDashboard(force, days) {
-  if (days !== undefined) amazonKpiDays = days;
-  if (amazonLoaded && !force && days === undefined) return;
+  if (days !== undefined) { amazonKpiDays = days; amazonDateRange = null; }
+  if (amazonLoaded && !force && days === undefined && !amazonDateRange) return;
 
   const loading = document.getElementById('amazonLoading');
   const results = document.getElementById('amazonResults');
@@ -1673,7 +1674,12 @@ async function loadAmazonDashboard(force, days) {
   notConfigured.style.display = 'none';
 
   try {
-    const amzQs = amazonKpiDays > 0 ? `?days=${amazonKpiDays}` : '';
+    let amzQs = '';
+    if (amazonDateRange) {
+      amzQs = `?start=${amazonDateRange.start}&end=${amazonDateRange.end}`;
+    } else if (amazonKpiDays > 0) {
+      amzQs = `?days=${amazonKpiDays}`;
+    }
     const res = await fetch(`/api/amazon/dashboard${amzQs}`);
     const data = await res.json();
 
@@ -2621,20 +2627,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadProductBreakdown();
   });
 
-  // Export Fontaines & Distributeurs buttons
-  async function exportProductVariants(source) {
+  // Export Fontaines & Distributeurs — builds CSV from /api/export/product-variants
+  async function exportProductVariants(source, dateRange, period) {
     let qs;
-    if (productDateRange) {
-      qs = `source=${source}&start=${productDateRange.start}&end=${productDateRange.end}`;
+    if (dateRange) {
+      qs = `source=${source}&start=${dateRange.start}&end=${dateRange.end}`;
     } else {
-      qs = `source=${source}&period=${productPeriod}`;
+      qs = `source=${source}&period=${period || 'mtd'}`;
     }
     try {
       const res = await fetch(`/api/export/product-variants?${qs}`);
       const data = await res.json();
       if (!data.rows || data.rows.length === 0) { alert('Aucune donnée pour cette période'); return; }
 
-      // Build CSV
       const sep = ';';
       const header = ['Produit', 'SKU', 'Vol', 'Poids Vol', 'CA €', 'Poids CA'];
       const lines = [header.join(sep)];
@@ -2650,14 +2655,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       });
       lines.push(['TOTAL', '', data.totalVolume, '100%', Math.round(data.totalCA), '100%'].join(sep));
 
-      // Trigger download
-      const bom = '\uFEFF'; // UTF-8 BOM for Excel
+      const bom = '\uFEFF';
       const blob = new Blob([bom + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       const srcLabel = source === 'amazon' ? 'Amazon' : 'Site';
-      a.download = `Export_Fontaines_${srcLabel}_${data.start}_${data.end}.csv`;
+      a.download = `Export_FD_${srcLabel}_${data.start}_${data.end}.csv`;
       a.click();
       URL.revokeObjectURL(url);
     } catch (err) {
@@ -2666,16 +2670,63 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   }
 
-  document.getElementById('exportSiteBtn').addEventListener('click', () => exportProductVariants('shopify'));
-  document.getElementById('exportAmazonBtn').addEventListener('click', () => exportProductVariants('amazon'));
+  // Export Site — uses product tab period
+  document.getElementById('exportSiteBtn').addEventListener('click', () => {
+    exportProductVariants('shopify', productDateRange, productPeriod);
+  });
+
+  // Export Amazon — uses amazon tab period
+  document.getElementById('exportAmazonBtn').addEventListener('click', () => {
+    exportProductVariants('amazon', amazonDateRange, 'mtd');
+  });
+
+  // Helper: clear all amazon period button active states
+  function clearAmzPeriodBtns() {
+    document.querySelectorAll('[data-amz-days], [data-amz-quick]').forEach(b => b.classList.remove('active'));
+  }
+
+  // Amazon quick date buttons (Aujourd'hui / Hier / 7J)
+  document.querySelectorAll('[data-amz-quick]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const val = btn.dataset.amzQuick;
+      const fmt = d => d.toISOString().split('T')[0];
+      let start, end = fmt(new Date());
+      if (val === 'today') {
+        start = end;
+      } else if (val === 'yesterday') {
+        const y = new Date(); y.setDate(y.getDate() - 1);
+        start = fmt(y); end = start;
+      } else {
+        const s = new Date(); s.setDate(s.getDate() - parseInt(val));
+        start = fmt(s);
+      }
+      amazonDateRange = { start, end };
+      amazonKpiDays = 0;
+      clearAmzPeriodBtns();
+      btn.classList.add('active');
+      loadAmazonDashboard(true);
+    });
+  });
 
   // Amazon KPI period buttons (MTD / 15J / 30J)
   document.querySelectorAll('[data-amz-days]').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('[data-amz-days]').forEach(b => b.classList.remove('active'));
+      clearAmzPeriodBtns();
       btn.classList.add('active');
+      amazonDateRange = null;
       loadAmazonDashboard(true, parseInt(btn.dataset.amzDays));
     });
+  });
+
+  // Amazon custom date apply
+  document.getElementById('amzDateApply').addEventListener('click', () => {
+    const start = document.getElementById('amzDateStart').value;
+    const end = document.getElementById('amzDateEnd').value;
+    if (!start || !end) return;
+    amazonDateRange = { start, end };
+    amazonKpiDays = 0;
+    clearAmzPeriodBtns();
+    loadAmazonDashboard(true);
   });
 
   // Helper: clear all meta period button active states
