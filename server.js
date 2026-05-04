@@ -954,6 +954,24 @@ app.get('/api/amazon/reset-products', (req, res) => {
 });
 
 // Debug: show raw refund data for a date range
+// Debug: show SKUs from line items for export troubleshooting
+app.get('/api/shopify/debug-skus', async (req, res) => {
+  try {
+    const start = req.query.start || formatDate(new Date());
+    const end = req.query.end || start;
+    const orders = await fetchOrdersWithLineItems(start, end);
+    const skus = {};
+    orders.forEach(o => {
+      (o.line_items || []).forEach(li => {
+        const sku = li.sku || '(empty)';
+        if (!skus[sku]) skus[sku] = { sku, title: li.title, variant: li.variant_title, count: 0, inList: EXPORT_FD_SKUS.has(sku) };
+        skus[sku].count += li.quantity;
+      });
+    });
+    res.json({ period: { start, end }, orderCount: orders.length, skus: Object.values(skus).sort((a, b) => b.count - a.count) });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 app.get('/api/shopify/debug-refunds', async (req, res) => {
   try {
     const start = req.query.start || formatDate(new Date());
@@ -2397,15 +2415,17 @@ app.get('/api/amazon/dashboard', async (req, res) => {
     const customEnd = req.query.end;
 
     // Fetch sales data + get cached ad spend
-    let fetchStart;
-    let fetchEnd = todayStr;
+    let fetchStart, fetchEnd;
     if (customStart && customEnd) {
+      // For custom dates, fetch exactly that range (plus quarter for objectives)
       fetchStart = customStart < quarterStart ? customStart : quarterStart;
-      fetchEnd = customEnd;
+      fetchEnd = customEnd > todayStr ? todayStr : customEnd;
     } else if (kpiDays > 0) {
       fetchStart = formatDate(new Date(Math.min(new Date(quarterStart).getTime(), Date.now() - kpiDays * 86400000)));
+      fetchEnd = todayStr;
     } else {
       fetchStart = quarterStart;
+      fetchEnd = todayStr;
     }
     const salesQTD = await fetchAmazonSalesMetrics(fetchStart, fetchEnd);
 
