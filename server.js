@@ -1806,6 +1806,13 @@ app.get('/api/product-breakdown', async (req, res) => {
 });
 
 // ============================================================
+// F+D SKUs for export
+const EXPORT_FD_SKUS = new Set([
+  '821174', '821165', '821166', '821171', '821172',
+  '821168', '821169', '821173', '821167', '822954',
+  '822956', '821175',
+]);
+
 // EXPORT PRODUCT VARIANTS — Fontaines & Distributeurs by SKU
 // ============================================================
 
@@ -1836,9 +1843,6 @@ app.get('/api/export/product-variants', async (req, res) => {
         periodEnd = formatDate(now);
       }
 
-      // Get Shopify Fontaines & Distributeurs SKUs to filter Amazon data
-      const fontaineSKUs = await getFontaineSKUs();
-
       // Aggregate across all months in the period, keyed by SellerSKU
       const startMonth = periodStart.substring(0, 7);
       const endMonth = periodEnd.substring(0, 7);
@@ -1850,7 +1854,7 @@ app.get('/api/export/product-variants', async (req, res) => {
         const monthData = amazonProductData.months[mk] || {};
         Object.values(monthData).forEach(p => {
           const sku = p.sku || '';
-          if (!sku || !fontaineSKUs.has(sku)) return; // filter to Fontaines & Distributeurs SKUs only
+          if (!sku || !EXPORT_FD_SKUS.has(sku)) return; // filter to F+D SKU list
           if (!merged[sku]) merged[sku] = { name: p.name, sku, asin: p.asin, units: 0, ca: 0 };
           merged[sku].units += p.units;
           merged[sku].ca += p.ca;
@@ -1898,10 +1902,7 @@ app.get('/api/export/product-variants', async (req, res) => {
       periodEnd = formatDate(now);
     }
 
-    const [typeMap, orders] = await Promise.all([
-      getProductTypeMap(),
-      fetchOrdersWithLineItems(periodStart, periodEnd),
-    ]);
+    const orders = await fetchOrdersWithLineItems(periodStart, periodEnd);
 
     // Build refund map
     const refundMap = {};
@@ -1915,17 +1916,14 @@ app.get('/api/export/product-variants', async (req, res) => {
       }
     });
 
-    // Aggregate by SKU, filter for Fontaines & Distributeurs types
-    // Exclude line items without product_id (tips, shipping protection, etc.)
+    // Aggregate by SKU, filter by explicit F+D SKU list
     const skuAgg = {};
     let totalVol = 0, totalCA = 0;
 
     orders.forEach(order => {
       if (order.financial_status === 'voided') return;
       (order.line_items || []).forEach(li => {
-        if (!li.product_id) return; // skip non-product line items
-        const productType = typeMap[li.product_id] || 'Autre';
-        if (!FONTAINE_TYPES.has(productType)) return;
+        if (!li.sku || !EXPORT_FD_SKUS.has(li.sku)) return;
 
         const refunded = refundMap[li.id] || 0;
         const netQty = li.quantity - refunded;
