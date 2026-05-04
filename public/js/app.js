@@ -2628,17 +2628,27 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   // Export Fontaines & Distributeurs — builds CSV from /api/export/product-variants
-  async function exportProductVariants(source, dateRange, period) {
+  async function exportProductVariants(source, dateRange, period, btn) {
     let qs;
     if (dateRange) {
       qs = `source=${source}&start=${dateRange.start}&end=${dateRange.end}`;
     } else {
       qs = `source=${source}&period=${period || 'mtd'}`;
     }
+
+    // Show loader on button
+    const origText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '⏳ Chargement...';
+
     try {
-      const res = await fetch(`/api/export/product-variants?${qs}`);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 300000); // 5 min timeout
+      const res = await fetch(`/api/export/product-variants?${qs}`, { signal: controller.signal });
+      clearTimeout(timeout);
       const data = await res.json();
-      if (!data.rows || data.rows.length === 0) { alert('Aucune donnée pour cette période\n\nDebug: ' + JSON.stringify(data._debug || data)); return; }
+
+      if (!data.rows || data.rows.length === 0) { alert('Aucune donnée pour cette période'); return; }
 
       const sep = ';';
       const header = ['Produit', 'SKU', 'Vol', 'Poids Vol', 'CA €', 'Poids CA'];
@@ -2666,18 +2676,25 @@ document.addEventListener('DOMContentLoaded', async () => {
       URL.revokeObjectURL(url);
     } catch (err) {
       console.error('Export error:', err);
-      alert('Erreur lors de l\'export');
+      if (err.name === 'AbortError') {
+        alert('Le chargement a pris trop de temps. Réessayez — les données sont peut-être en cours de récupération côté Amazon.');
+      } else {
+        alert('Erreur lors de l\'export');
+      }
+    } finally {
+      btn.disabled = false;
+      btn.textContent = origText;
     }
   }
 
   // Export Site — uses product tab period
-  document.getElementById('exportSiteBtn').addEventListener('click', () => {
-    exportProductVariants('shopify', productDateRange, productPeriod);
+  document.getElementById('exportSiteBtn').addEventListener('click', (e) => {
+    exportProductVariants('shopify', productDateRange, productPeriod, e.currentTarget);
   });
 
   // Export Amazon — uses amazon tab period
-  document.getElementById('exportAmazonBtn').addEventListener('click', () => {
-    exportProductVariants('amazon', amazonDateRange, 'mtd');
+  document.getElementById('exportAmazonBtn').addEventListener('click', (e) => {
+    exportProductVariants('amazon', amazonDateRange, 'mtd', e.currentTarget);
   });
 
   // Helper: clear all amazon period button active states
