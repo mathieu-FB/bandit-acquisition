@@ -1916,12 +1916,14 @@ app.get('/api/export/product-variants', async (req, res) => {
     });
 
     // Aggregate by SKU, filter for Fontaines & Distributeurs types
+    // Exclude line items without product_id (tips, shipping protection, etc.)
     const skuAgg = {};
     let totalVol = 0, totalCA = 0;
 
     orders.forEach(order => {
       if (order.financial_status === 'voided') return;
       (order.line_items || []).forEach(li => {
+        if (!li.product_id) return; // skip non-product line items
         const productType = typeMap[li.product_id] || 'Autre';
         if (!FONTAINE_TYPES.has(productType)) return;
 
@@ -1929,7 +1931,8 @@ app.get('/api/export/product-variants', async (req, res) => {
         const netQty = li.quantity - refunded;
         if (netQty <= 0) return;
 
-        const ca = parseFloat(li.price || 0) * netQty;
+        // CA HT: li.price is TTC in French stores, divide by 1.20 for HT
+        const ca = (parseFloat(li.price || 0) / 1.20) * netQty;
         const sku = li.sku || `PID-${li.product_id}`;
         const name = li.variant_title
           ? `${li.title}, ${li.variant_title}`
