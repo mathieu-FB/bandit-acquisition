@@ -2624,15 +2624,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Export Fontaines & Distributeurs buttons
   async function exportProductVariants(source) {
     let qs;
-    if (source === 'amazon') {
-      const now = new Date();
-      const start = productDateRange ? productDateRange.start : `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
-      const end = productDateRange ? productDateRange.end : now.toISOString().split('T')[0];
-      qs = `source=amazon&start=${start}&end=${end}`;
+    if (productDateRange) {
+      qs = `source=${source}&start=${productDateRange.start}&end=${productDateRange.end}`;
     } else {
-      qs = productDateRange
-        ? `source=shopify&start=${productDateRange.start}&end=${productDateRange.end}`
-        : `source=shopify&period=${productPeriod}`;
+      qs = `source=${source}&period=${productPeriod}`;
     }
     try {
       const res = await fetch(`/api/export/product-variants?${qs}`);

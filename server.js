@@ -1770,13 +1770,46 @@ app.get('/api/export/product-variants', async (req, res) => {
     const source = req.query.source || 'shopify';
 
     if (source === 'amazon') {
-      // Amazon: use stored product data
-      const start = req.query.start || `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01`;
-      const end = req.query.end || formatDate(new Date());
-      const monthKey = start.substring(0, 7);
-      const monthData = amazonProductData.months[monthKey] || {};
-      const products = Object.values(monthData);
+      // Determine period
+      const period = req.query.period || 'mtd';
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = now.getMonth() + 1;
+      let periodStart, periodEnd;
 
+      if (req.query.start && req.query.end) {
+        periodStart = req.query.start;
+        periodEnd = req.query.end;
+      } else if (period === 'ytd') {
+        periodStart = `${year}-01-01`;
+        periodEnd = formatDate(now);
+      } else if (period === 'qtd') {
+        const qStart = Math.floor((month - 1) / 3) * 3 + 1;
+        periodStart = `${year}-${String(qStart).padStart(2, '0')}-01`;
+        periodEnd = formatDate(now);
+      } else {
+        periodStart = `${year}-${String(month).padStart(2, '0')}-01`;
+        periodEnd = formatDate(now);
+      }
+
+      // Aggregate across all months in the period
+      const startMonth = periodStart.substring(0, 7);
+      const endMonth = periodEnd.substring(0, 7);
+      const merged = {};
+      const d = new Date(startMonth + '-01');
+      const endD = new Date(endMonth + '-01');
+      while (d <= endD) {
+        const mk = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+        const monthData = amazonProductData.months[mk] || {};
+        Object.values(monthData).forEach(p => {
+          if (!merged[p.asin]) merged[p.asin] = { name: p.name, asin: p.asin, units: 0, ca: 0 };
+          merged[p.asin].units += p.units;
+          merged[p.asin].ca += p.ca;
+        });
+        d.setMonth(d.getMonth() + 1);
+      }
+
+      const products = Object.values(merged);
       let totalVol = 0, totalCA = 0;
       products.forEach(p => { totalVol += p.units; totalCA += p.ca; });
 
@@ -1791,7 +1824,7 @@ app.get('/api/export/product-variants', async (req, res) => {
           pctCA: totalCA > 0 ? ((p.ca / totalCA) * 100) : 0,
         }));
 
-      return res.json({ source: 'amazon', start, end, rows, totalVolume: totalVol, totalCA });
+      return res.json({ source: 'amazon', start: periodStart, end: periodEnd, rows, totalVolume: totalVol, totalCA: Math.round(totalCA * 100) / 100 });
     }
 
     // Shopify: aggregate by variant SKU for Fontaines & Distributeurs
