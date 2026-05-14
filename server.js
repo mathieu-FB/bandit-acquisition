@@ -8,11 +8,16 @@ const cron = require('node-cron');
 const multer = require('multer');
 const { GoogleAdsApi, fromMicros } = require('google-ads-api');
 const { sendReport } = require('./daily-report');
+const cache = require('./cache');
 
 const crypto = require('crypto');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// Initialize SQLite-backed cache early (before any endpoint registration)
+const CACHE_DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+cache.init({ dataDir: CACHE_DATA_DIR });
 
 app.set('trust proxy', true);
 app.use(express.json());
@@ -942,6 +947,11 @@ app.get('/api/cache/purge-all', (req, res) => {
   Object.keys(dailyCache).forEach(k => delete dailyCache[k]);
   console.log(`[Cache] Purged ALL ${count} days`);
   res.json({ purged: count });
+});
+
+// SQLite cache status (PR1 — observability before refactor)
+app.get('/api/cache/db-status', (req, res) => {
+  res.json(cache.stats());
 });
 
 // Reset Amazon product data (forces re-fetch with SellerSKU)
@@ -4852,6 +4862,14 @@ Règles :
 app.listen(PORT, () => {
   console.log(`Bandit Acquisition Dashboard running on http://localhost:${PORT}`);
   console.log(`Daily report scheduled at 00:01 (Europe/Paris)`);
+
+  // Preload SQLite cache into RAM (last 90 days + Amazon data + ancillary caches)
+  try {
+    const loaded = cache.preload({ days: 90 });
+    console.log(`[Cache] Preloaded ${loaded.days} days, ${loaded.amazonMonths} Amazon months in ${loaded.elapsedMs}ms`);
+  } catch (err) {
+    console.error('[Cache] Preload error (non-fatal):', err.message);
+  }
 
   // Refresh Amazon Ad spend on startup (background)
   if (isAmazonAdsConfigured()) {
