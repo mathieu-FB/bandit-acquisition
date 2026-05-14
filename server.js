@@ -958,7 +958,6 @@ app.get('/api/cache/db-status', (req, res) => {
 // Reset Amazon product data (forces re-fetch with SellerSKU)
 app.get('/api/amazon/reset-products', (req, res) => {
   cache.resetAmazonProducts();
-  fontaineSKUsCache = null;
   console.log('[Amazon] Product data reset — will re-fetch on next dashboard load');
   res.json({ status: 'ok', message: 'Amazon product data reset' });
 });
@@ -1212,12 +1211,12 @@ const PRODUCT_CATEGORIES = [
 
 const FONTAINE_TYPES = new Set(PRODUCT_CATEGORIES[0].types); // Fontaines & Distributeurs
 
-// Product ID → product_type cache
-let productTypeMap = null;
-let productTypeMapExpiry = 0;
+// Product ID → product_type cache (1h TTL, backed by cache.js SQLite)
+const PRODUCT_TYPE_TTL = 60 * 60 * 1000;
 
 async function getProductTypeMap() {
-  if (productTypeMap && Date.now() < productTypeMapExpiry) return productTypeMap;
+  const cached = cache.getProductTypeMap(PRODUCT_TYPE_TTL);
+  if (cached) return cached;
 
   const map = {};
   let url = `https://${process.env.SHOPIFY_STORE_URL}/admin/api/2024-01/products.json?` +
@@ -1241,44 +1240,55 @@ async function getProductTypeMap() {
     }
   }
 
-  productTypeMap = map;
-  productTypeMapExpiry = Date.now() + 3600 * 1000; // cache 1h
+  cache.setProductTypeMap(map);
   console.log(`[ProductTypeMap] Cached ${Object.keys(map).length} products`);
   return map;
 }
 
 // Get all Shopify variant SKUs for Fontaines & Distributeurs products
-let fontaineSKUsCache = null;
-let fontaineSKUsCacheExpiry = 0;
+const FONTAINE_SKUS_TTL = 60 * 60 * 1000; // 1h
 
+// Fetch variant SKUs for Fontaines & Distributeurs in a SINGLE paginated REST pass.
+// Replaces the previous N+1 (one /products/{id}.json call per matching product).
 async function getFontaineSKUs() {
-  if (fontaineSKUsCache && Date.now() < fontaineSKUsCacheExpiry) return fontaineSKUsCache;
+  const cached = cache.getFontaineSKUs(FONTAINE_SKUS_TTL);
+  if (cached) return cached;
 
-  const typeMap = await getProductTypeMap();
-  // Get product IDs that are Fontaines & Distributeurs
-  const fontaineProductIds = new Set();
-  Object.entries(typeMap).forEach(([pid, ptype]) => {
-    if (FONTAINE_TYPES.has(ptype)) fontaineProductIds.add(pid);
-  });
-
-  // Fetch variants with SKUs for those products
   const skuSet = new Set();
+  const productIdsBySku = new Map();
+  let url = `https://${process.env.SHOPIFY_STORE_URL}/admin/api/2024-01/products.json?` +
+    new URLSearchParams({ limit: '250', fields: 'id,product_type,variants' }).toString();
   const token = process.env.SHOPIFY_ACCESS_TOKEN;
-  for (const pid of fontaineProductIds) {
-    const url = `https://${process.env.SHOPIFY_STORE_URL}/admin/api/2024-01/products/${pid}.json?fields=variants`;
+
+  while (url) {
     const res = await fetch(url, {
       headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
     });
-    if (!res.ok) continue;
+    if (!res.ok) break;
     const data = await res.json();
-    (data.product?.variants || []).forEach(v => {
-      if (v.sku) skuSet.add(v.sku.trim());
+    (data.products || []).forEach(p => {
+      const type = (p.product_type || '').trim();
+      if (!FONTAINE_TYPES.has(type)) return;
+      (p.variants || []).forEach(v => {
+        if (v.sku) {
+          const sku = v.sku.trim();
+          skuSet.add(sku);
+          productIdsBySku.set(sku, String(p.id));
+        }
+      });
     });
+
+    const link = res.headers.get('link');
+    if (link && link.includes('rel="next"')) {
+      const match = link.match(/<([^>]+)>;\s*rel="next"/);
+      url = match ? match[1] : null;
+    } else {
+      url = null;
+    }
   }
 
-  fontaineSKUsCache = skuSet;
-  fontaineSKUsCacheExpiry = Date.now() + 3600 * 1000;
-  console.log(`[FontaineSKUs] Cached ${skuSet.size} SKUs`);
+  cache.setFontaineSKUs(skuSet, productIdsBySku);
+  console.log(`[FontaineSKUs] Cached ${skuSet.size} SKUs (single paginated REST pass)`);
   return skuSet;
 }
 
@@ -1331,7 +1341,7 @@ function getObjective(year, month) {
 // RECHARGE — Subscription tracking
 // ============================================================
 
-const rechargeCache = { data: null, timestamp: 0 };
+// Recharge snapshot — backed by cache.js (SQLite, 1h TTL)
 const RECHARGE_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
 async function fetchRechargeSubscriptions() {
@@ -1468,15 +1478,15 @@ app.get('/api/recharge/subscriptions', async (req, res) => {
     if (!token) return res.status(400).json({ error: 'Recharge non configuré. Ajoutez RECHARGE_API_TOKEN dans les variables d\'environnement.' });
 
     const forceRefresh = req.query.refresh === '1';
-    if (!forceRefresh && rechargeCache.data && (Date.now() - rechargeCache.timestamp < RECHARGE_CACHE_TTL)) {
-      return res.json(rechargeCache.data);
+    if (!forceRefresh) {
+      const cached = cache.getRechargeSnapshot(RECHARGE_CACHE_TTL);
+      if (cached) return res.json(cached);
     }
 
     const data = await fetchRechargeSubscriptions();
     if (!data) return res.status(500).json({ error: 'Erreur API Recharge' });
 
-    rechargeCache.data = data;
-    rechargeCache.timestamp = Date.now();
+    cache.setRechargeSnapshot(data);
     res.json(data);
   } catch (err) {
     console.error('[Recharge] Error:', err);
@@ -2748,9 +2758,8 @@ async function fetchMetaCampaignInsights(start, end) {
   return json.data || [];
 }
 
-// Meta analysis cache: { key: { data, timestamp } }
-const metaAnalysisCache = {};
-const META_CACHE_TTL = 30 * 60 * 1000; // 30 minutes
+// Meta analysis cache — backed by cache.js (SQLite, 30min TTL)
+const META_CACHE_TTL = 30 * 60 * 1000;
 
 app.get('/api/meta/analysis', async (req, res) => {
   try {
@@ -2778,9 +2787,12 @@ app.get('/api/meta/analysis', async (req, res) => {
     const cacheKey = `meta_${startStr}_${endStr}`;
 
     // Return cached data if fresh enough
-    if (!forceRefresh && metaAnalysisCache[cacheKey] && (Date.now() - metaAnalysisCache[cacheKey].timestamp < META_CACHE_TTL)) {
-      console.log(`[Meta Cache] Serving cached analysis (${startStr}→${endStr}), age: ${Math.round((Date.now() - metaAnalysisCache[cacheKey].timestamp) / 1000)}s`);
-      return res.json(metaAnalysisCache[cacheKey].data);
+    if (!forceRefresh) {
+      const cached = cache.getMetaAnalysis(cacheKey, META_CACHE_TTL);
+      if (cached) {
+        console.log(`[Meta Cache] Serving cached analysis (${startStr}→${endStr})`);
+        return res.json(cached);
+      }
     }
 
     const start = new Date(startStr + 'T00:00:00');
@@ -2959,9 +2971,9 @@ IMPORTANT: Réponds UNIQUEMENT avec le JSON, pas de texte avant/après. Le conte
       analysis,
     };
 
-    // Store in cache
-    metaAnalysisCache[cacheKey] = { data: result, timestamp: Date.now() };
-    console.log(`[Meta Cache] Stored analysis (${days}j)`);
+    // Store in cache (SQLite write-through)
+    cache.setMetaAnalysis(cacheKey, result);
+    console.log(`[Meta Cache] Stored analysis (${startStr}→${endStr})`);
 
     res.json(result);
   } catch (err) {
@@ -4034,11 +4046,13 @@ async function fetchAllWonDeals() {
   return deals;
 }
 
-// Cache for Pipedrive deal fields (custom field keys + option labels)
-let pipedriveFieldsCache = null;
+// Pipedrive deal fields — backed by cache.js (SQLite, 24h TTL)
+const PIPEDRIVE_FIELDS_TTL = 24 * 60 * 60 * 1000;
 
 async function fetchPipedriveDealFields() {
-  if (pipedriveFieldsCache) return pipedriveFieldsCache;
+  const cached = cache.getPipedriveFields(PIPEDRIVE_FIELDS_TTL);
+  if (cached) return cached;
+
   const token = process.env.PIPEDRIVE_API_TOKEN;
   const base = pipedriveBase();
   const fields = [];
@@ -4053,7 +4067,7 @@ async function fetchPipedriveDealFields() {
     more = data.additional_data?.pagination?.more_items_in_collection || false;
     start += 500;
   }
-  pipedriveFieldsCache = fields;
+  cache.setPipedriveFields(fields);
   console.log(`[Pipedrive] Cached ${fields.length} deal fields`);
   return fields;
 }
