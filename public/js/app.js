@@ -2550,8 +2550,15 @@ document.addEventListener('DOMContentLoaded', async () => {
       } else if (activeSubTab === 'data-produits') {
         loadProductBreakdown();
       } else {
-        // Purge server-side daily cache then reload
-        fetch('/api/cache/purge-all').then(() => loadDashboard());
+        // Purge the selected range + comparison range, then reload
+        const dates = getSelectedDates();
+        const purges = [
+          fetch(`/api/cache/purge-range?start=${dates.start}&end=${dates.end}`),
+        ];
+        if (dates.comp_start && dates.comp_end) {
+          purges.push(fetch(`/api/cache/purge-range?start=${dates.comp_start}&end=${dates.comp_end}`));
+        }
+        Promise.all(purges).then(() => loadDashboard());
         return;
       }
     }
