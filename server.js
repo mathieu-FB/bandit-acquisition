@@ -16,8 +16,8 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 // Initialize SQLite-backed cache early (before any endpoint registration)
-const CACHE_DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
-cache.init({ dataDir: CACHE_DATA_DIR });
+const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
+cache.init({ dataDir: DATA_DIR });
 
 app.set('trust proxy', true);
 app.use(express.json());
@@ -956,8 +956,7 @@ app.get('/api/cache/db-status', (req, res) => {
 
 // Reset Amazon product data (forces re-fetch with SellerSKU)
 app.get('/api/amazon/reset-products', (req, res) => {
-  amazonProductData = { months: {}, lastFetch: {} };
-  saveAmazonProductData(amazonProductData);
+  cache.resetAmazonProducts();
   fontaineSKUsCache = null;
   console.log('[Amazon] Product data reset — will re-fetch on next dashboard load');
   res.json({ status: 'ok', message: 'Amazon product data reset' });
@@ -965,14 +964,17 @@ app.get('/api/amazon/reset-products', (req, res) => {
 
 // Debug: show Amazon product data (SellerSKUs)
 app.get('/api/amazon/debug-products', (req, res) => {
-  const months = Object.keys(amazonProductData.months).filter(k => !k.includes('_'));
+  const months = cache.getAllAmazonMonths();
   const result = {};
+  const lastFetch = {};
   months.forEach(mk => {
-    const products = Object.values(amazonProductData.months[mk] || {});
+    const products = Object.values(cache.getAmazonMonth(mk));
     result[mk] = products.map(p => ({ asin: p.asin, sku: p.sku || '(none)', name: p.name, units: p.units }))
       .sort((a, b) => b.units - a.units).slice(0, 20);
+    const wm = cache.getAmazonFetchWatermark(mk);
+    if (wm) lastFetch[mk] = wm;
   });
-  res.json({ months: result, lastFetch: amazonProductData.lastFetch });
+  res.json({ months: result, lastFetch });
 });
 
 // Debug: show SKUs from line items for export troubleshooting
@@ -1908,7 +1910,7 @@ app.get('/api/export/product-variants', async (req, res) => {
       const checkEndD = new Date(endMonth + '-01');
       while (checkD <= checkEndD) {
         const mk = `${checkD.getFullYear()}-${String(checkD.getMonth() + 1).padStart(2, '0')}`;
-        if (!amazonProductData.months[mk] || Object.keys(amazonProductData.months[mk]).length === 0) {
+        if (Object.keys(cache.getAmazonMonth(mk)).length === 0) {
           missingMonths.push(mk);
         }
         checkD.setMonth(checkD.getMonth() + 1);
@@ -1923,7 +1925,7 @@ app.get('/api/export/product-variants', async (req, res) => {
           const mEnd = `${mk}-${String(lastDay).padStart(2, '0')}`;
           console.log(`[Amazon Export] Background fetch for ${mk}...`);
           fetchAmazonTopProducts(mStart, mEnd).then(() => {
-            console.log(`[Amazon Export] ${mk} done — ${Object.keys(amazonProductData.months[mk] || {}).length} products`);
+            console.log(`[Amazon Export] ${mk} done — ${Object.keys(cache.getAmazonMonth(mk)).length} products`);
           }).catch(err => console.error(`[Amazon Export] ${mk} error:`, err.message));
         });
         return res.json({ source: 'amazon', rows: [], fetching: true, missingMonths });
@@ -1935,7 +1937,7 @@ app.get('/api/export/product-variants', async (req, res) => {
       const endD = new Date(endMonth + '-01');
       while (d <= endD) {
         const mk = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-        const monthData = amazonProductData.months[mk] || {};
+        const monthData = cache.getAmazonMonth(mk);
         Object.values(monthData).forEach(p => {
           const sku = p.sku || '';
           if (!isFDSku(sku)) return; // filter to F+D SKU list
@@ -1966,8 +1968,8 @@ app.get('/api/export/product-variants', async (req, res) => {
       const dScan = new Date(startMonth + '-01');
       while (dScan <= endD) {
         const mk2 = `${dScan.getFullYear()}-${String(dScan.getMonth() + 1).padStart(2, '0')}`;
-        const md = amazonProductData.months[mk2];
-        monthsScanned.push({ month: mk2, productCount: md ? Object.keys(md).length : 0 });
+        const md = cache.getAmazonMonth(mk2);
+        monthsScanned.push({ month: mk2, productCount: Object.keys(md).length });
         dScan.setMonth(dScan.getMonth() + 1);
       }
       console.log('[Amazon Export]', { periodStart, periodEnd, startMonth, endMonth: periodEnd.substring(0, 7), monthsScanned, mergedCount: products.length, totalVol, totalCA });
@@ -2101,35 +2103,8 @@ async function fetchAmazonSalesMetrics(start, end) {
 }
 
 // ============================================================
-// AMAZON PRODUCT STATS — Persistent JSON storage + incremental fetch
+// AMAZON PRODUCT STATS — backed by cache.js (SQLite on Railway volume)
 // ============================================================
-
-const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
-const AMAZON_DATA_DIR = process.env.AMAZON_DATA_DIR || DATA_DIR;
-const AMAZON_PRODUCTS_FILE = path.join(AMAZON_DATA_DIR, 'amazon-products.json');
-
-function loadAmazonProductData() {
-  try {
-    if (fs.existsSync(AMAZON_PRODUCTS_FILE)) {
-      return JSON.parse(fs.readFileSync(AMAZON_PRODUCTS_FILE, 'utf8'));
-    }
-  } catch (err) {
-    console.error('[Amazon] Error loading product data:', err.message);
-  }
-  return { months: {}, lastFetch: {} };
-}
-
-function saveAmazonProductData(data) {
-  try {
-    if (!fs.existsSync(AMAZON_DATA_DIR)) fs.mkdirSync(AMAZON_DATA_DIR, { recursive: true });
-    fs.writeFileSync(AMAZON_PRODUCTS_FILE, JSON.stringify(data, null, 2));
-  } catch (err) {
-    console.error('[Amazon] Error saving product data:', err.message);
-  }
-}
-
-// In-memory cache loaded from file on startup
-let amazonProductData = loadAmazonProductData();
 
 async function fetchAmazonTopProducts(start, end) {
   const token = await getAmazonAccessToken();
@@ -2139,8 +2114,8 @@ async function fetchAmazonTopProducts(start, end) {
   // Month key for storage (e.g. "2026-04")
   const monthKey = start.substring(0, 7);
 
-  // Determine where to start fetching from (incremental)
-  const lastFetchTime = amazonProductData.lastFetch[monthKey] || null;
+  // Determine where to start fetching from (incremental via watermark)
+  const lastFetchTime = cache.getAmazonFetchWatermark(monthKey);
   const createdAfter = lastFetchTime || `${start}T00:00:00Z`;
   const twoMinAgo = new Date(Date.now() - 3 * 60 * 1000).toISOString();
   const createdBefore = `${end}T23:59:59Z` < twoMinAgo ? `${end}T23:59:59Z` : twoMinAgo;
@@ -2149,7 +2124,7 @@ async function fetchAmazonTopProducts(start, end) {
   if (lastFetchTime) {
     const lastFetchDate = new Date(lastFetchTime);
     if (Date.now() - lastFetchDate.getTime() < 10 * 60 * 1000) {
-      const monthData = amazonProductData.months[monthKey] || {};
+      const monthData = cache.getAmazonMonth(monthKey);
       return Object.values(monthData).sort((a, b) => b.ca - a.ca).slice(0, 5);
     }
   }
@@ -2183,18 +2158,18 @@ async function fetchAmazonTopProducts(start, end) {
   console.log(`[Amazon] Incremental fetch: ${allOrders.length} new orders since ${createdAfter}`);
 
   if (allOrders.length === 0) {
-    amazonProductData.lastFetch[monthKey] = createdBefore;
-    saveAmazonProductData(amazonProductData);
-    const monthData = amazonProductData.months[monthKey] || {};
+    cache.setAmazonFetchWatermark(monthKey, createdBefore);
+    const monthData = cache.getAmazonMonth(monthKey);
     return Object.values(monthData).sort((a, b) => b.ca - a.ca).slice(0, 5);
   }
 
-  // Fetch order items in parallel batches of 5
-  const productAgg = amazonProductData.months[monthKey] || {};
-  const processedOrderIds = new Set(Object.keys(amazonProductData.months[monthKey + '_orderIds'] || {}));
+  // Accumulate on top of the existing month state (shallow copy so cache RAM isn't mutated mid-loop)
+  const existing = cache.getAmazonMonth(monthKey);
+  const productAgg = { ...existing };
+  const newlyProcessedOrderIds = [];
 
   for (let i = 0; i < allOrders.length; i += 5) {
-    const batch = allOrders.slice(i, i + 5).filter(o => !processedOrderIds.has(o.AmazonOrderId));
+    const batch = allOrders.slice(i, i + 5).filter(o => !cache.isAmazonOrderProcessed(monthKey, o.AmazonOrderId));
     if (batch.length === 0) continue;
 
     const results = await Promise.all(batch.map(async (order) => {
@@ -2218,7 +2193,7 @@ async function fetchAmazonTopProducts(start, end) {
 
     results.forEach(r => {
       if (!r.items) return;
-      processedOrderIds.add(r.orderId);
+      newlyProcessedOrderIds.push(r.orderId);
       (r.items.payload?.OrderItems || []).forEach(item => {
         const asin = item.ASIN || 'unknown';
         const name = item.Title || asin;
@@ -2236,13 +2211,14 @@ async function fetchAmazonTopProducts(start, end) {
     if (i + 5 < allOrders.length) await new Promise(r => setTimeout(r, 1200));
   }
 
-  // Save to persistent storage
-  amazonProductData.months[monthKey] = productAgg;
-  amazonProductData.months[monthKey + '_orderIds'] = Object.fromEntries([...processedOrderIds].map(id => [id, 1]));
-  amazonProductData.lastFetch[monthKey] = createdBefore;
-  saveAmazonProductData(amazonProductData);
+  // Persist via cache module (write-through to SQLite)
+  cache.upsertAmazonProducts(monthKey, productAgg);
+  if (newlyProcessedOrderIds.length > 0) {
+    cache.markAmazonOrdersProcessedBulk(monthKey, newlyProcessedOrderIds);
+  }
+  cache.setAmazonFetchWatermark(monthKey, createdBefore);
 
-  console.log(`[Amazon] Saved ${Object.keys(productAgg).length} products, ${processedOrderIds.size} orders processed for ${monthKey}`);
+  console.log(`[Amazon] Saved ${Object.keys(productAgg).length} products, ${newlyProcessedOrderIds.length} new orders processed for ${monthKey}`);
 
   return Object.values(productAgg).sort((a, b) => b.ca - a.ca).slice(0, 5);
 }
@@ -2268,33 +2244,10 @@ async function getAmazonAdsAccessToken() {
   return json.access_token;
 }
 
-// Amazon Ads spend — background fetch + persistent cache
-let amazonAdSpendCache = { spend: null, lastUpdate: 0, reportId: null, fetching: false };
+// Amazon Ads spend — persistent state lives in cache module (SQLite via cache.js)
+// We keep only runtime flags here; spend + lastUpdate are read/written via cache.*
+let amazonAdSpendFetching = false;
 let amazonAdSpendPromise = null; // shared promise so callers can await an in-progress refresh
-
-// Load cached ad spend from file
-function loadAdSpendCache() {
-  try {
-    const file = path.join(AMAZON_DATA_DIR, 'amazon-adspend.json');
-    if (fs.existsSync(file)) {
-      const data = JSON.parse(fs.readFileSync(file, 'utf8'));
-      amazonAdSpendCache.spend = data.spend;
-      amazonAdSpendCache.lastUpdate = data.lastUpdate || 0;
-      console.log(`[Amazon Ads] Loaded cached spend: ${data.spend}`);
-    }
-  } catch (err) { console.error('[Amazon Ads] Cache load error:', err.message); }
-}
-loadAdSpendCache();
-
-function saveAdSpendCache() {
-  try {
-    if (!fs.existsSync(AMAZON_DATA_DIR)) fs.mkdirSync(AMAZON_DATA_DIR, { recursive: true });
-    fs.writeFileSync(path.join(AMAZON_DATA_DIR, 'amazon-adspend.json'), JSON.stringify({
-      spend: amazonAdSpendCache.spend,
-      lastUpdate: amazonAdSpendCache.lastUpdate,
-    }));
-  } catch (err) { console.error('[Amazon Ads] Cache save error:', err.message); }
-}
 
 // Request one report, poll, download, return spend total
 async function fetchOneAdReport(token, profileId, adProduct, reportTypeId, start, end) {
@@ -2388,8 +2341,8 @@ async function fetchOneAdReport(token, profileId, adProduct, reportTypeId, start
 
 // Background: fetch all 3 ad types and sum spend
 async function refreshAmazonAdSpend() {
-  if (amazonAdSpendCache.fetching) return amazonAdSpendPromise;
-  amazonAdSpendCache.fetching = true;
+  if (amazonAdSpendFetching) return amazonAdSpendPromise;
+  amazonAdSpendFetching = true;
 
   amazonAdSpendPromise = (async () => {
     try {
@@ -2409,14 +2362,12 @@ async function refreshAmazonAdSpend() {
       const sdSpend = await fetchOneAdReport(token, profileId, 'SPONSORED_DISPLAY', 'sdCampaigns', start, yesterday);
 
       const totalSpend = spSpend + sbSpend + sdSpend;
-      amazonAdSpendCache.spend = totalSpend;
-      amazonAdSpendCache.lastUpdate = Date.now();
-      saveAdSpendCache();
+      cache.setAmazonAdSpend(totalSpend);
       console.log(`[Amazon Ads] Total spend: ${totalSpend}€ (SP: ${spSpend}, SB: ${sbSpend}, SD: ${sdSpend})`);
     } catch (err) {
       console.error('[Amazon Ads] Refresh error:', err.message);
     } finally {
-      amazonAdSpendCache.fetching = false;
+      amazonAdSpendFetching = false;
       amazonAdSpendPromise = null;
     }
   })();
@@ -2427,12 +2378,13 @@ async function refreshAmazonAdSpend() {
 // Returns cached spend immediately, triggers background refresh if stale (>30 min)
 function fetchAmazonAdSpend() {
   if (isAmazonAdsConfigured()) {
-    const stale = Date.now() - amazonAdSpendCache.lastUpdate > 30 * 60 * 1000;
-    if (stale && !amazonAdSpendCache.fetching) {
+    const ad = cache.getAmazonAdSpend();
+    const stale = Date.now() - ad.lastUpdate > 30 * 60 * 1000;
+    if (stale && !amazonAdSpendFetching) {
       refreshAmazonAdSpend(); // fire and forget
     }
   }
-  return amazonAdSpendCache.spend || 0;
+  return cache.getAmazonAdSpend().spend || 0;
 }
 
 function isAmazonConfigured() {
@@ -2509,10 +2461,11 @@ app.get('/api/amazon/dashboard', async (req, res) => {
     // Get ad spend — use cache immediately, trigger background refresh if stale
     let adSpend = 0;
     if (isAmazonAdsConfigured()) {
-      const cachedSpend = amazonAdSpendCache.spend;
-      const stale = Date.now() - amazonAdSpendCache.lastUpdate > 30 * 60 * 1000;
+      const ad = cache.getAmazonAdSpend();
+      const cachedSpend = ad.spend;
+      const stale = Date.now() - ad.lastUpdate > 30 * 60 * 1000;
       adSpend = cachedSpend || 0;
-      if ((cachedSpend === null || stale) && !amazonAdSpendCache.fetching) {
+      if ((cachedSpend === null || stale) && !amazonAdSpendFetching) {
         refreshAmazonAdSpend(); // fire and forget — don't block dashboard
       }
     }
@@ -3664,14 +3617,15 @@ app.get('/api/amazon/test-ads', async (req, res) => {
 });
 
 app.get('/api/amazon/ads-status', (req, res) => {
+  const ad = cache.getAmazonAdSpend();
   res.json({
     configured: isAmazonAdsConfigured(),
     profileId: process.env.AMAZON_ADS_PROFILE_ID || 'NOT SET',
     cache: {
-      spend: amazonAdSpendCache.spend,
-      lastUpdate: amazonAdSpendCache.lastUpdate ? new Date(amazonAdSpendCache.lastUpdate).toISOString() : null,
-      fetching: amazonAdSpendCache.fetching,
-      ageMinutes: amazonAdSpendCache.lastUpdate ? Math.round((Date.now() - amazonAdSpendCache.lastUpdate) / 60000) : null,
+      spend: ad.spend,
+      lastUpdate: ad.lastUpdate ? new Date(ad.lastUpdate).toISOString() : null,
+      fetching: amazonAdSpendFetching,
+      ageMinutes: ad.lastUpdate ? Math.round((Date.now() - ad.lastUpdate) / 60000) : null,
     },
   });
 });
@@ -3679,13 +3633,12 @@ app.get('/api/amazon/ads-status', (req, res) => {
 // Force refresh ad spend — waits for completion and returns result
 app.get('/api/amazon/force-refresh-ads', async (req, res) => {
   try {
-    if (amazonAdSpendCache.fetching && !req.query.force) return res.json({ status: 'already_fetching', hint: 'Add ?force=1 to override' });
-    amazonAdSpendCache.fetching = false; // reset any stuck state
-    amazonAdSpendCache.fetching = true;
+    if (amazonAdSpendFetching && !req.query.force) return res.json({ status: 'already_fetching', hint: 'Add ?force=1 to override' });
+    amazonAdSpendFetching = true;
 
     const token = await getAmazonAdsAccessToken();
     const profileId = process.env.AMAZON_ADS_PROFILE_ID;
-    if (!token || !profileId) { amazonAdSpendCache.fetching = false; return res.json({ error: 'Not configured' }); }
+    if (!token || !profileId) { amazonAdSpendFetching = false; return res.json({ error: 'Not configured' }); }
 
     const now = new Date();
     const start = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
@@ -3697,14 +3650,12 @@ app.get('/api/amazon/force-refresh-ads', async (req, res) => {
     const sdSpend = await fetchOneAdReport(token, profileId, 'SPONSORED_DISPLAY', 'sdCampaigns', start, yesterday);
 
     const totalSpend = spSpend + sbSpend + sdSpend;
-    amazonAdSpendCache.spend = totalSpend;
-    amazonAdSpendCache.lastUpdate = Date.now();
-    amazonAdSpendCache.fetching = false;
-    saveAdSpendCache();
+    cache.setAmazonAdSpend(totalSpend);
+    amazonAdSpendFetching = false;
 
     res.json({ status: 'ok', sp: spSpend, sb: sbSpend, sd: sdSpend, total: totalSpend });
   } catch (err) {
-    amazonAdSpendCache.fetching = false;
+    amazonAdSpendFetching = false;
     res.status(500).json({ error: err.message });
   }
 });
