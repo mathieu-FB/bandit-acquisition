@@ -704,25 +704,15 @@ function aggregateTikTokData(rawData) {
 // DAILY CACHE — stores per-day data to avoid re-fetching
 // ============================================================
 
-const dailyCache = {}; // { "2026-01-01": { shopify, meta, google, tiktok } }
-let lastCacheInvalidation = null;
-
-function invalidateFreshDays() {
-  const today = formatDate(new Date());
-  // Always clear today (data still incoming)
-  delete dailyCache[today];
-  if (lastCacheInvalidation !== today) {
-    // New day — also invalidate yesterday (final numbers may have changed)
-    const y = new Date();
-    y.setDate(y.getDate() - 1);
-    delete dailyCache[formatDate(y)];
-    lastCacheInvalidation = today;
-    console.log(`[Cache] New day: invalidated today + yesterday. ${Object.keys(dailyCache).length} days in cache.`);
-  }
-}
+// Daily metrics cache — backed by cache.js (SQLite + RAM)
+// Refresh policy:
+//   - today + yesterday (Europe/Paris): refetch if >10 min stale OR absent
+//   - J-2 and older: read-only if cached (frozen); fetch only if missing
+const FRESH_DAY_STALE_MS = 10 * 60 * 1000;
 
 async function ensureCached(startStr, endStr) {
-  invalidateFreshDays();
+  const fresh = new Set(cache.getFreshDays()); // [today, yesterday] in Europe/Paris
+  const now = Date.now();
 
   const uncached = [];
   const d = new Date(startStr + 'T12:00:00');
@@ -730,9 +720,13 @@ async function ensureCached(startStr, endStr) {
 
   while (d <= end) {
     const day = formatDate(d);
-    if (!dailyCache[day]) {
+    const row = cache.getDailyRow(day);
+    if (!row) {
+      uncached.push(day);
+    } else if (fresh.has(day) && (now - (row._fetchedAt || 0) > FRESH_DAY_STALE_MS)) {
       uncached.push(day);
     }
+    // J-2 and older with row in cache → SKIP (frozen, refresh only via manual purge)
     d.setDate(d.getDate() + 1);
   }
 
@@ -761,7 +755,8 @@ async function ensureCached(startStr, endStr) {
   const googleAgg = aggregateGoogleData(googleRaw);
   const tiktokAgg = aggregateTikTokData(tiktokRaw);
 
-  uncached.forEach(day => {
+  // Build per-day rows then bulk-upsert (one transaction in SQLite)
+  const rowsToUpsert = uncached.map(day => {
     const dayOrders = shopifyByDay[day] || [];
     const valid = dayOrders.filter(o => o.financial_status !== 'voided');
     const countable = valid.filter(o => o.financial_status !== 'refunded');
@@ -799,7 +794,8 @@ async function ensureCached(startStr, endStr) {
       }
     });
 
-    dailyCache[day] = {
+    return {
+      day,
       shopify: {
         netSales: valid.reduce((s, o) => s + orderNetSalesHT(o), 0),
         shippingHT: valid.reduce((s, o) => s + orderShippingHT(o), 0),
@@ -816,7 +812,8 @@ async function ensureCached(startStr, endStr) {
     };
   });
 
-  console.log(`[Cache] Done. ${Object.keys(dailyCache).length} days cached.`);
+  cache.upsertDailyRowsBulk(rowsToUpsert);
+  console.log(`[Cache] Done. ${cache.stats().daysInRam} days cached.`);
 }
 
 function aggregateFromCache(startStr, endStr) {
@@ -840,7 +837,7 @@ function aggregateFromCache(startStr, endStr) {
   const metaDaily = {}, googleDaily = {}, tiktokDaily = {}, shopifyDaily = {};
 
   allDates.forEach(day => {
-    const c = dailyCache[day];
+    const c = cache.getDailyRow(day);
     if (!c) return;
 
     netSales += c.shopify.netSales;
@@ -912,15 +909,10 @@ app.post('/api/cache/purge', (req, res) => {
   if (!dates || !Array.isArray(dates) || dates.length === 0) {
     return res.status(400).json({ error: 'Provide a "dates" array of YYYY-MM-DD strings' });
   }
-  const purged = [];
-  dates.forEach(day => {
-    if (dailyCache[day]) {
-      delete dailyCache[day];
-      purged.push(day);
-    }
-  });
+  const purged = dates.filter(d => cache.hasDailyRow(d));
+  cache.deleteDailyRows(purged);
   console.log(`[Cache] Purged ${purged.length} days: ${purged.join(', ')}`);
-  res.json({ purged, remaining: Object.keys(dailyCache).length });
+  res.json({ purged, remaining: cache.stats().daysInRam });
 });
 
 // GET version: /api/cache/purge?dates=2026-04-15,2026-04-16
@@ -930,23 +922,32 @@ app.get('/api/cache/purge', (req, res) => {
     return res.status(400).json({ error: 'Provide ?dates=YYYY-MM-DD,YYYY-MM-DD,...' });
   }
   const dates = datesParam.split(',').map(d => d.trim());
-  const purged = [];
-  dates.forEach(day => {
-    if (dailyCache[day]) {
-      delete dailyCache[day];
-      purged.push(day);
-    }
-  });
+  const purged = dates.filter(d => cache.hasDailyRow(d));
+  cache.deleteDailyRows(purged);
   console.log(`[Cache] Purged ${purged.length} days: ${purged.join(', ')}`);
-  res.json({ purged, remaining: Object.keys(dailyCache).length });
+  res.json({ purged, remaining: cache.stats().daysInRam });
+});
+
+// Purge a date range (used by the dashboard refresh button)
+app.get('/api/cache/purge-range', (req, res) => {
+  const { start, end } = req.query;
+  if (!start || !end) return res.status(400).json({ error: 'Provide ?start=YYYY-MM-DD&end=YYYY-MM-DD' });
+  const days = [];
+  const d = new Date(start + 'T12:00:00');
+  const e = new Date(end + 'T12:00:00');
+  while (d <= e) { days.push(formatDate(d)); d.setDate(d.getDate() + 1); }
+  const purged = days.filter(x => cache.hasDailyRow(x));
+  cache.deleteDailyRows(purged);
+  console.log(`[Cache] Purged range ${start} → ${end}: ${purged.length} days`);
+  res.json({ purged, remaining: cache.stats().daysInRam });
 });
 
 // Purge ALL cached days
 app.get('/api/cache/purge-all', (req, res) => {
-  const count = Object.keys(dailyCache).length;
-  Object.keys(dailyCache).forEach(k => delete dailyCache[k]);
-  console.log(`[Cache] Purged ALL ${count} days`);
-  res.json({ purged: count });
+  const all = cache.listAllDays();
+  cache.deleteDailyRows(all);
+  console.log(`[Cache] Purged ALL ${all.length} days`);
+  res.json({ purged: all.length });
 });
 
 // SQLite cache status (PR1 — observability before refactor)
@@ -1092,7 +1093,7 @@ app.get('/api/dashboard', async (req, res) => {
     });
 
     const dailySales = allDates.map(day => {
-      const c = dailyCache[day];
+      const c = cache.getDailyRow(day);
       const sales = (c?.shopify?.netSales || 0) + (c?.shopify?.shippingHT || 0);
       return { date: day, sales, orders: shopifyDaily[day]?.orders || 0 };
     });
@@ -1102,7 +1103,7 @@ app.get('/api/dashboard', async (req, res) => {
       return { date: day, total: (meta.daily[day]?.spend || 0) + (google.daily[day]?.spend || 0) + (tiktok.daily[day]?.spend || 0) + dailyFreelance };
     });
     const dailyPercentMarketing = allDates.map(day => {
-      const c = dailyCache[day];
+      const c = cache.getDailyRow(day);
       const sales = (c?.shopify?.netSales || 0) + (c?.shopify?.shippingHT || 0);
       const daysInMonth = new Date(new Date(day).getFullYear(), new Date(day).getMonth() + 1, 0).getDate();
       const dailyFreelance = FREELANCE_MONTHLY_COST / daysInMonth;
