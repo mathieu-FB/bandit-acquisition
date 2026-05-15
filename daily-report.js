@@ -113,14 +113,31 @@ async function fetchShopifyOrders(start, end) {
   return orders;
 }
 
+// Helpers — kept identical to server.js so the email report matches
+// the live dashboard exactly. See server.js:307-358 for the source of truth.
+function getRefundLineItemSubtotal(rli) {
+  if (rli.subtotal_set && rli.subtotal_set.shop_money) {
+    return parseFloat(rli.subtotal_set.shop_money.amount || 0);
+  }
+  return parseFloat(rli.subtotal || 0);
+}
+
 function orderNetSalesHT(order) {
-  const grossHT = parseFloat(order.subtotal_price || 0);
+  // In tax-inclusive stores (France), subtotal_price INCLUDES tax.
+  // True HT = subtotal_price - total_tax
+  const subtotalTTC = parseFloat(order.subtotal_price || 0);
+  const tax = parseFloat(order.total_tax || 0);
+  const grossHT = subtotalTTC - tax;
+
+  // Fully refunded orders contribute 0 to net sales
+  if (order.financial_status === 'refunded') return 0;
+
   let refundedHT = 0;
   if (order.refunds && order.refunds.length > 0) {
     order.refunds.forEach(refund => {
       if (refund.refund_line_items) {
         refund.refund_line_items.forEach(rli => {
-          refundedHT += parseFloat(rli.subtotal || 0);
+          refundedHT += getRefundLineItemSubtotal(rli);
         });
       }
     });
@@ -129,8 +146,12 @@ function orderNetSalesHT(order) {
 }
 
 function orderShippingHT(order) {
-  const shippingTTC = parseFloat(order.total_shipping_price_set?.shop_money?.amount || 0);
-  return shippingTTC / 1.20; // 20% TVA
+  if (order.financial_status === 'refunded' || order.financial_status === 'voided') return 0;
+  // shipping_TTC = total_price - subtotal_price (both TTC in tax-inclusive stores)
+  const totalTTC = parseFloat(order.total_price || 0);
+  const subtotalTTC = parseFloat(order.subtotal_price || 0);
+  const shippingTTC = Math.max(0, totalTTC - subtotalTTC);
+  return shippingTTC / 1.20;
 }
 
 function computeShopifyStats(orders) {
