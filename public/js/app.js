@@ -603,6 +603,23 @@ async function loadDashboard() {
 
     const { kpis, channels, charts } = data;
 
+    // Notoriety adjustment banner
+    const banner = document.getElementById('notorietyBanner');
+    const bannerDetail = document.getElementById('notorietyBannerDetail');
+    if (banner && bannerDetail) {
+      if (data.notorietyAdjustment && data.notorietyAdjustment.days > 0) {
+        const adj = data.notorietyAdjustment;
+        const fmtDateFR = (s) => { const [y, m, d] = s.split('-'); return `${d}/${m}`; };
+        const lines = adj.campaigns.map(c =>
+          `${c.label} du ${fmtDateFR(c.overlapStart)} au ${fmtDateFR(c.overlapEnd)} (${c.days} jour${c.days > 1 ? 's' : ''}) — Meta −${fmtCurrency(c.meta)}, Google −${fmtCurrency(c.google)}`
+        );
+        bannerDetail.innerHTML = lines.join('<br>');
+        banner.style.display = 'flex';
+      } else {
+        banner.style.display = 'none';
+      }
+    }
+
     // Render KPIs
     renderKPI('netSales', kpis.netSales.current, kpis.netSales.previous, fmtCurrency, false);
     renderKPI('marketingCosts', kpis.marketingCosts.current, kpis.marketingCosts.previous, fmtCurrency, true);

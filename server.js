@@ -197,6 +197,60 @@ function getFreelanceCostForRange(startStr, endStr) {
   return Math.round(total * 100) / 100;
 }
 
+// ============================================================
+// NOTORIETY CAMPAIGNS — exclude from acquisition ROAS / spend
+// ============================================================
+// Brand/notoriety campaigns inflate top-of-funnel spend without direct
+// attribution. We deduct a flat daily amount from the matching channel
+// for every day the campaign overlaps the dashboard range.
+const NOTORIETY_CAMPAIGNS = [
+  {
+    label: 'Campagne notoriété',
+    start: '2026-05-22',
+    end: '2026-06-22',
+    dailyMeta: 3370,
+    dailyGoogle: 2000,
+  },
+];
+
+// Returns { metaTotal, googleTotal, days, campaigns: [...] } for the range
+function getNotorietyAdjustment(startStr, endStr) {
+  let metaTotal = 0, googleTotal = 0, days = 0;
+  const campaigns = [];
+  NOTORIETY_CAMPAIGNS.forEach(c => {
+    const overlapStart = startStr > c.start ? startStr : c.start;
+    const overlapEnd = endStr < c.end ? endStr : c.end;
+    if (overlapStart > overlapEnd) return;
+    const overlapDays = Math.round(
+      (new Date(overlapEnd + 'T12:00:00') - new Date(overlapStart + 'T12:00:00')) / 86400000
+    ) + 1;
+    const meta = c.dailyMeta * overlapDays;
+    const google = c.dailyGoogle * overlapDays;
+    metaTotal += meta;
+    googleTotal += google;
+    days += overlapDays;
+    campaigns.push({
+      label: c.label, start: c.start, end: c.end,
+      overlapStart, overlapEnd, days: overlapDays,
+      dailyMeta: c.dailyMeta, dailyGoogle: c.dailyGoogle,
+      meta, google,
+    });
+  });
+  return { metaTotal, googleTotal, days, campaigns };
+}
+
+// Returns { meta, google } daily deduction for a single day
+function getNotorietyDailyDeduction(day) {
+  let meta = 0, google = 0;
+  NOTORIETY_CAMPAIGNS.forEach(c => {
+    if (day >= c.start && day <= c.end) {
+      meta += c.dailyMeta;
+      google += c.dailyGoogle;
+    }
+  });
+  return { meta, google };
+}
+
 function buildDateRange(query) {
   const now = new Date();
   let start, end, compStart, compEnd;
@@ -1053,6 +1107,40 @@ app.get('/api/dashboard', async (req, res) => {
     const { shopify, meta, google, tiktok, shopifyDaily, allDates } = current;
     const shopifyPrev = comp.shopify;
 
+    // ===== Notoriety campaign deduction =====
+    // Subtract the configured flat daily amount from Meta + Google for any
+    // day the dashboard range overlaps a notoriety campaign. Daily series
+    // are also reduced so charts and per-channel KPIs reflect acquisition
+    // spend only. Derived metrics (ROAS, CPM) are recomputed below.
+    const notoriety = getNotorietyAdjustment(dates.start, dates.end);
+    const notorietyPrev = getNotorietyAdjustment(dates.compStart, dates.compEnd);
+
+    if (notoriety.days > 0) {
+      meta.spend = Math.max(0, meta.spend - notoriety.metaTotal);
+      google.spend = Math.max(0, google.spend - notoriety.googleTotal);
+      meta.roas = meta.spend > 0 ? meta.revenue / meta.spend : 0;
+      google.roas = google.spend > 0 ? google.revenue / google.spend : 0;
+      meta.cpm = meta.impressions > 0 ? (meta.spend / meta.impressions) * 1000 : 0;
+      google.cpm = google.impressions > 0 ? (google.spend / google.impressions) * 1000 : 0;
+
+      allDates.forEach(day => {
+        const ded = getNotorietyDailyDeduction(day);
+        if (ded.meta > 0 && meta.daily[day]) {
+          meta.daily[day] = { ...meta.daily[day], spend: Math.max(0, meta.daily[day].spend - ded.meta) };
+        }
+        if (ded.google > 0 && google.daily[day]) {
+          google.daily[day] = { ...google.daily[day], spend: Math.max(0, google.daily[day].spend - ded.google) };
+        }
+      });
+    }
+
+    if (notorietyPrev.days > 0) {
+      comp.meta.spend = Math.max(0, comp.meta.spend - notorietyPrev.metaTotal);
+      comp.google.spend = Math.max(0, comp.google.spend - notorietyPrev.googleTotal);
+      comp.meta.roas = comp.meta.spend > 0 ? comp.meta.revenue / comp.meta.spend : 0;
+      comp.google.roas = comp.google.spend > 0 ? comp.google.revenue / comp.google.spend : 0;
+    }
+
     const freelanceCost = getFreelanceCostForRange(dates.start, dates.end);
     const freelanceCostPrev = getFreelanceCostForRange(dates.compStart, dates.compEnd);
     const totalSpend = meta.spend + google.spend + tiktok.spend + freelanceCost;
@@ -1133,6 +1221,7 @@ app.get('/api/dashboard', async (req, res) => {
       },
       ordersByCountry: shopify.countries || {},
       charts: { dailySpendByChannel, dailyRoasByChannel, dailyCpmByChannel, dailySales, dailyMarketingCosts, dailyPercentMarketing },
+      notorietyAdjustment: notoriety.days > 0 ? notoriety : null,
     });
   } catch (err) {
     console.error('Dashboard error:', err);

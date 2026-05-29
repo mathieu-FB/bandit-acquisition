@@ -519,6 +519,45 @@ body {
 }
 
 /* ============================================================
+   NOTORIETY ADJUSTMENT BANNER
+   ============================================================ */
+
+.notoriety-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  max-width: 1400px;
+  margin: 16px auto;
+  padding: 12px 16px;
+  background: #fdf6e7;
+  border-left: 3px solid #d69e2e;
+  border-radius: 6px;
+  color: #5d4710;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.notoriety-banner-icon {
+  flex: 0 0 auto;
+  font-size: 16px;
+  color: #d69e2e;
+  margin-top: 1px;
+}
+
+.notoriety-banner-body { flex: 1 1 auto; min-width: 0; }
+
+.notoriety-banner-title {
+  font-weight: 600;
+  margin-bottom: 2px;
+  color: #4a3905;
+}
+
+.notoriety-banner-detail {
+  color: #6b5615;
+  font-size: 12.5px;
+}
+
+/* ============================================================
    OBJECTIVES SECTION
    ============================================================ */
 
