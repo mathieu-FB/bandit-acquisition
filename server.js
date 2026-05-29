@@ -1681,11 +1681,18 @@ app.get('/api/objectives', async (req, res) => {
 
     // Helper: total CA HT = netSales + shippingHT
     const getCA = (agg) => agg.shopify.netSales + (agg.shopify.shippingHT || 0);
+    // Helper: Meta+Google+TikTok spend with notoriety deduction applied
+    const adjustedAdSpend = (agg, startStr, endStr) => {
+      const adj = getNotorietyAdjustment(startStr, endStr);
+      return Math.max(0, agg.meta.spend - adj.metaTotal)
+           + Math.max(0, agg.google.spend - adj.googleTotal)
+           + agg.tiktok.spend;
+    };
 
     // Daily stats (today)
     const dayData = aggregateFromCache(todayStr, todayStr);
     const dayFreelance = FREELANCE_MONTHLY_COST / daysInMonth;
-    const daySpend = dayData.meta.spend + dayData.google.spend + dayData.tiktok.spend + dayFreelance;
+    const daySpend = adjustedAdSpend(dayData, todayStr, todayStr) + dayFreelance;
     const dayCA = getCA(dayData);
     const dayRatio = dayCA > 0 ? (daySpend / dayCA) * 100 : 0;
     const dailyCATarget = obj.monthObj.ca / daysInMonth;
@@ -1694,7 +1701,7 @@ app.get('/api/objectives', async (req, res) => {
     const mtd = aggregateFromCache(monthStart, todayStr);
     const mtdCA = getCA(mtd);
     const freelanceMTD = getFreelanceCostForRange(monthStart, todayStr);
-    const spendMTD = mtd.meta.spend + mtd.google.spend + mtd.tiktok.spend + freelanceMTD;
+    const spendMTD = adjustedAdSpend(mtd, monthStart, todayStr) + freelanceMTD;
     const ratioMTD = mtdCA > 0 ? (spendMTD / mtdCA) * 100 : 0;
     const projectedCA_month = daysElapsedMonth > 0 ? (mtdCA / daysElapsedMonth) * daysInMonth : 0;
     const projectedSpend_month = daysElapsedMonth > 0 ? (spendMTD / daysElapsedMonth) * daysInMonth : 0;
@@ -1703,7 +1710,7 @@ app.get('/api/objectives', async (req, res) => {
     const qtd = aggregateFromCache(quarterStart, todayStr);
     const qtdCA = getCA(qtd);
     const freelanceQTD = getFreelanceCostForRange(quarterStart, todayStr);
-    const spendQTD = qtd.meta.spend + qtd.google.spend + qtd.tiktok.spend + freelanceQTD;
+    const spendQTD = adjustedAdSpend(qtd, quarterStart, todayStr) + freelanceQTD;
     const ratioQTD = qtdCA > 0 ? (spendQTD / qtdCA) * 100 : 0;
     const projectedCA_quarter = daysElapsedQuarter > 0 ? (qtdCA / daysElapsedQuarter) * totalDaysQuarter : 0;
     const projectedSpend_quarter = daysElapsedQuarter > 0 ? (spendQTD / daysElapsedQuarter) * totalDaysQuarter : 0;
