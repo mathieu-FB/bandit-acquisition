@@ -6,6 +6,32 @@ const fetch = require('node-fetch');
 const sgMail = require('@sendgrid/mail');
 const Anthropic = require('@anthropic-ai/sdk').default;
 const zlib = require('zlib');
+const { getNotorietyAdjustment } = require('./notoriety');
+
+// Apply notoriety deduction in place to a (meta, google) pair for a given range.
+// Returns the adjustment summary (days, metaTotal, googleTotal, campaigns).
+function applyNotorietyToPair(metaObj, googleObj, startStr, endStr) {
+  const adj = getNotorietyAdjustment(startStr, endStr);
+  if (adj.days === 0) return adj;
+
+  metaObj.spend = Math.max(0, (metaObj.spend || 0) - adj.metaTotal);
+  if (metaObj.revenue !== undefined) {
+    metaObj.roas = metaObj.spend > 0 ? metaObj.revenue / metaObj.spend : 0;
+  }
+  if (metaObj.impressions !== undefined) {
+    metaObj.cpm = metaObj.impressions > 0 ? (metaObj.spend / metaObj.impressions) * 1000 : 0;
+  }
+
+  googleObj.spend = Math.max(0, (googleObj.spend || 0) - adj.googleTotal);
+  if (googleObj.revenue !== undefined) {
+    googleObj.roas = googleObj.spend > 0 ? googleObj.revenue / googleObj.spend : 0;
+  }
+  if (googleObj.impressions !== undefined) {
+    googleObj.cpm = googleObj.impressions > 0 ? (googleObj.spend / googleObj.impressions) * 1000 : 0;
+  }
+
+  return adj;
+}
 
 // ============================================================
 // CONFIG
@@ -682,6 +708,16 @@ async function collectReportData() {
     mtd: amazonMTD || defAmz,
   };
 
+  // Notoriety campaign deduction — must come BEFORE totalSpend calculations
+  // so derived Meta/Google ROAS and blended ROAS reflect acquisition spend
+  // only (brand/notoriety spend stripped out per the shared config).
+  const notorietyAdj = {
+    yesterday: applyNotorietyToPair(meta.yesterday, google.yesterday, yStr, yStr),
+    dayBefore: applyNotorietyToPair(meta.dayBefore, google.dayBefore, dbStr, dbStr),
+    lastWeek:  applyNotorietyToPair(meta.lastWeek,  google.lastWeek,  lwStr, lwStr),
+    mtd:       applyNotorietyToPair(meta.mtd,       google.mtd,       mtdStart, yStr),
+  };
+
   // E-commerce totals (Shopify spend = Meta + Google + TikTok + freelance)
   const freelanceY = getFreelanceDailyCost(yStr);
   const totalSpendY = meta.yesterday.spend + google.yesterday.spend + tiktok.yesterday.spend + freelanceY;
@@ -777,6 +813,7 @@ async function collectReportData() {
     amzAdSpendMTD,
     bestAd,
     bestTiktokAd,
+    notoriety: notorietyAdj,
   };
 }
 
@@ -801,6 +838,12 @@ ${d.objectives.monthly.onTrack ? '→ ON TRACK' : '→ EN RETARD'}` : '';
 - Target mois : ${d.amazonObjectives.monthly.target.toFixed(0)}€ | Réalisé MTD : ${d.amazonObjectives.monthly.current.toFixed(0)}€ | Progression : ${d.amazonObjectives.monthly.progress.toFixed(1)}% (rythme attendu : ${d.amazonObjectives.monthly.expectedPace.toFixed(1)}%)
 ${d.amazonObjectives.monthly.onTrack ? '→ ON TRACK' : '→ EN RETARD'}` : '';
 
+  const notorietySection = (d.notoriety && (d.notoriety.yesterday.days > 0 || d.notoriety.mtd.days > 0)) ? `
+## Note : ajustement campagne notoriété
+Les chiffres Meta/Google ci-dessus EXCLUENT déjà la dépense de la campagne notoriété (déduite pour reporter la perf d'acquisition pure).
+${d.notoriety.yesterday.days > 0 ? `- Hier : −${d.notoriety.yesterday.metaTotal.toFixed(0)}€ Meta, −${d.notoriety.yesterday.googleTotal.toFixed(0)}€ Google` : ''}
+${d.notoriety.mtd.days > 0 ? `- MTD (${d.notoriety.mtd.days} j) : −${d.notoriety.mtd.metaTotal.toFixed(0)}€ Meta, −${d.notoriety.mtd.googleTotal.toFixed(0)}€ Google` : ''}` : '';
+
   const prompt = `Tu es un expert senior en acquisition e-commerce / performance marketing. Tu rédiges un brief quotidien pour le CEO d'une marque DTC (French Bandit, accessoires pour chiens et chats). La marque vend sur son site Shopify (e-commerce) et sur Amazon (marketplace).
 
 Voici les données de la veille (${d.dayName}) comparées à J-1 et J-7 :
@@ -821,6 +864,7 @@ ${objSection}
 - CA MTD : ${d.amazon.mtd.ca.toFixed(0)}€
 - TACOS MTD : ${d.amazonTacosMTD.toFixed(1)}% (Spend Ads MTD : ${d.amzAdSpendMTD.toFixed(0)}€)
 ${amzObjSection}
+${notorietySection}
 
 ## DÉTAIL PAR CANAL (pub e-commerce)
 - Meta : Spend ${d.meta.yesterday.spend.toFixed(0)}€ | ROAS ${d.meta.yesterday.roas.toFixed(2)}x | CPM ${d.meta.yesterday.cpm.toFixed(0)}€ | Achats ${d.meta.yesterday.purchases}
@@ -957,6 +1001,14 @@ function buildEmailHTML(data, analysis) {
       <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#1a1a1a;font-weight:700;margin-bottom:10px;">Analyse du jour</div>
       <div style="font-size:14px;line-height:1.6;color:#1a1d26;">${analysis.replace(/\n/g, '<br>')}</div>
     </div>
+
+    <!-- NOTORIETY ADJUSTMENT BANNER -->
+    ${(d.notoriety && (d.notoriety.yesterday.days > 0 || d.notoriety.mtd.days > 0)) ? `
+    <div style="background:#fdf6e7;border-left:3px solid #d69e2e;border-radius:6px;padding:12px 16px;margin-bottom:20px;font-size:13px;color:#5d4710;line-height:1.5;">
+      <div style="font-weight:600;color:#4a3905;margin-bottom:4px;">ⓘ Campagne notoriété déduite</div>
+      ${d.notoriety.yesterday.days > 0 ? `<div>Hier : Meta −${fmtEur(d.notoriety.yesterday.metaTotal)}, Google −${fmtEur(d.notoriety.yesterday.googleTotal)}</div>` : ''}
+      ${d.notoriety.mtd.days > 0 ? `<div>MTD (${d.notoriety.mtd.days} j) : Meta −${fmtEur(d.notoriety.mtd.metaTotal)}, Google −${fmtEur(d.notoriety.mtd.googleTotal)}</div>` : ''}
+    </div>` : ''}
 
     <!-- OBJECTIVES -->
     ${d.objectives || d.amazonObjectives ? `

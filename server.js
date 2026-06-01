@@ -197,59 +197,8 @@ function getFreelanceCostForRange(startStr, endStr) {
   return Math.round(total * 100) / 100;
 }
 
-// ============================================================
-// NOTORIETY CAMPAIGNS — exclude from acquisition ROAS / spend
-// ============================================================
-// Brand/notoriety campaigns inflate top-of-funnel spend without direct
-// attribution. We deduct a flat daily amount from the matching channel
-// for every day the campaign overlaps the dashboard range.
-const NOTORIETY_CAMPAIGNS = [
-  {
-    label: 'Campagne notoriété',
-    start: '2026-05-22',
-    end: '2026-06-22',
-    dailyMeta: 3370,
-    dailyGoogle: 2000,
-  },
-];
-
-// Returns { metaTotal, googleTotal, days, campaigns: [...] } for the range
-function getNotorietyAdjustment(startStr, endStr) {
-  let metaTotal = 0, googleTotal = 0, days = 0;
-  const campaigns = [];
-  NOTORIETY_CAMPAIGNS.forEach(c => {
-    const overlapStart = startStr > c.start ? startStr : c.start;
-    const overlapEnd = endStr < c.end ? endStr : c.end;
-    if (overlapStart > overlapEnd) return;
-    const overlapDays = Math.round(
-      (new Date(overlapEnd + 'T12:00:00') - new Date(overlapStart + 'T12:00:00')) / 86400000
-    ) + 1;
-    const meta = c.dailyMeta * overlapDays;
-    const google = c.dailyGoogle * overlapDays;
-    metaTotal += meta;
-    googleTotal += google;
-    days += overlapDays;
-    campaigns.push({
-      label: c.label, start: c.start, end: c.end,
-      overlapStart, overlapEnd, days: overlapDays,
-      dailyMeta: c.dailyMeta, dailyGoogle: c.dailyGoogle,
-      meta, google,
-    });
-  });
-  return { metaTotal, googleTotal, days, campaigns };
-}
-
-// Returns { meta, google } daily deduction for a single day
-function getNotorietyDailyDeduction(day) {
-  let meta = 0, google = 0;
-  NOTORIETY_CAMPAIGNS.forEach(c => {
-    if (day >= c.start && day <= c.end) {
-      meta += c.dailyMeta;
-      google += c.dailyGoogle;
-    }
-  });
-  return { meta, google };
-}
+// Notoriety campaigns config + helpers shared with daily-report.js
+const { getNotorietyAdjustment, getNotorietyDailyDeduction } = require('./notoriety');
 
 function buildDateRange(query) {
   const now = new Date();
