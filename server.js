@@ -1186,20 +1186,20 @@ const OBJECTIVES = {
   2026: {
     Q2: {
       ca: 424000,
-      ratio: 30,
+      ratio: 29,
       months: {
-        4: { ca: 128000, ratio: 30 },
-        5: { ca: 144000, ratio: 30 },
-        6: { ca: 152000, ratio: 30 },
+        4: { ca: 128000, ratio: 29 },
+        5: { ca: 144000, ratio: 29 },
+        6: { ca: 152000, ratio: 29 },
       },
     },
     Q3: {
       ca: 275000,
-      ratio: 30,
+      ratio: 29,
       months: {
-        7: { ca: 100000, ratio: 30 },
-        8: { ca: 80000, ratio: 30 },
-        9: { ca: 95000, ratio: 30 },
+        7: { ca: 100000, ratio: 29 },
+        8: { ca: 80000, ratio: 29 },
+        9: { ca: 95000, ratio: 29 },
       },
     },
   },
