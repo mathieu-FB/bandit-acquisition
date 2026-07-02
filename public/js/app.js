@@ -910,6 +910,135 @@ function renderProductTypesTable() {
   `;
 }
 
+// ============================================================
+// FOCUS COLLECTION — compare a focus tag vs a control tag
+// ============================================================
+let _shopifyIndexLoaded = false;
+
+async function loadShopifyProductIndex() {
+  if (_shopifyIndexLoaded) return;
+  try {
+    const res = await fetch('/api/shopify/product-index');
+    const data = await res.json();
+    if (!data.configured) return;
+    const tagsList = document.getElementById('shopifyTagsList');
+    const typesList = document.getElementById('shopifyProductTypesList');
+    if (tagsList) tagsList.innerHTML = (data.tags || []).map(t => `<option value="${t.replace(/"/g, '&quot;')}">`).join('');
+    if (typesList) typesList.innerHTML = (data.productTypes || []).map(t => `<option value="${t.replace(/"/g, '&quot;')}">`).join('');
+    _shopifyIndexLoaded = true;
+  } catch (err) {
+    console.error('[FocusCollection] Failed to load Shopify index:', err);
+  }
+}
+
+function fmtDeltaPct(v) {
+  if (v === null || v === undefined || !Number.isFinite(v)) return { text: '—', cls: 'delta-neutral' };
+  const sign = v >= 0 ? '+' : '';
+  const cls = v > 2 ? 'delta-up' : v < -2 ? 'delta-down' : 'delta-neutral';
+  return { text: `${sign}${v.toFixed(0)}%`, cls };
+}
+
+function renderFocusTopList(products) {
+  if (!products || products.length === 0) return '<div class="focus-top-empty">Aucune vente sur la période.</div>';
+  return products.map((p, i) => `
+    <div class="focus-top-row">
+      <span class="focus-top-rank">${i + 1}</span>
+      <span class="focus-top-name">${p.title || p.productId}</span>
+      <span class="focus-top-metric">${fmtCurrency(p.ca)}</span>
+      <span class="focus-top-metric focus-top-metric-units">${p.units} u.</span>
+    </div>
+  `).join('');
+}
+
+async function runFocusComparison() {
+  const focusTag = document.getElementById('focusTagInput').value.trim();
+  const controlTag = document.getElementById('controlTagInput').value.trim();
+  const scope = document.getElementById('focusScopeInput').value.trim();
+  const results = document.getElementById('focusCollectionResults');
+  const empty = document.getElementById('focusCollectionEmpty');
+  const btn = document.getElementById('focusCompareBtn');
+
+  if (!focusTag || !controlTag) {
+    alert('Renseigne un tag Focus et un tag Témoin.');
+    return;
+  }
+
+  const origLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳ Chargement...';
+  results.style.display = 'none';
+  empty.style.display = 'none';
+
+  try {
+    // Same period as the Data Produits tab
+    const qs = new URLSearchParams();
+    qs.set('focus', focusTag);
+    qs.set('control', controlTag);
+    if (scope) qs.set('scope', scope);
+    if (productDateRange) {
+      qs.set('start', productDateRange.start);
+      qs.set('end', productDateRange.end);
+    } else {
+      qs.set('period', productPeriod);
+    }
+
+    const res = await fetch('/api/collection-comparison?' + qs.toString());
+    const data = await res.json();
+
+    if (data.error) { alert('Erreur : ' + data.error); return; }
+    if (data.empty) { empty.style.display = 'block'; return; }
+
+    // Card labels
+    document.getElementById('focusCardTagLabel').textContent = data.focus.tag;
+    document.getElementById('controlCardTagLabel').textContent = data.control.tag + ' (témoin)';
+    document.getElementById('focusCardMeta').textContent = `${data.focus.productCount} produits (${data.focus.soldProductCount} vendus)`;
+    document.getElementById('controlCardMeta').textContent = `${data.control.productCount} produits (${data.control.soldProductCount} vendus)`;
+
+    // Primary metrics
+    const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+    setText('focusCardCA', fmtCurrency(data.focus.ca));
+    setText('focusCardUnits', fmtNumber(data.focus.units));
+    setText('focusCardAOV', fmtCurrency(data.focus.aov));
+    setText('controlCardCA', fmtCurrency(data.control.ca));
+    setText('controlCardUnits', fmtNumber(data.control.units));
+    setText('controlCardAOV', fmtCurrency(data.control.aov));
+
+    // Normalized metrics
+    setText('focusCardCAPerProduct', fmtCurrency(data.focus.caPerProduct));
+    setText('focusCardUnitsPerProduct', data.focus.unitsPerProduct.toFixed(1));
+    setText('focusCardPctScope', data.focus.pctOfScope !== null ? data.focus.pctOfScope.toFixed(1) + '%' : '—');
+    setText('controlCardCAPerProduct', fmtCurrency(data.control.caPerProduct));
+    setText('controlCardUnitsPerProduct', data.control.unitsPerProduct.toFixed(1));
+    setText('controlCardPctScope', data.control.pctOfScope !== null ? data.control.pctOfScope.toFixed(1) + '%' : '—');
+
+    // Relative deltas
+    const applyDelta = (id, delta) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const fmt = fmtDeltaPct(delta);
+      el.textContent = fmt.text;
+      el.className = 'focus-relative-val ' + fmt.cls;
+    };
+    applyDelta('focusRelCAPerProduct', data.relative.caPerProduct);
+    applyDelta('focusRelUnitsPerProduct', data.relative.unitsPerProduct);
+    applyDelta('focusRelAOV', data.relative.aov);
+
+    // Top products
+    document.getElementById('focusTopTitle').textContent = `Top 5 produits — ${data.focus.tag}`;
+    document.getElementById('controlTopTitle').textContent = `Top 5 produits — ${data.control.tag}`;
+    document.getElementById('focusTopList').innerHTML = renderFocusTopList(data.focus.topProducts);
+    document.getElementById('controlTopList').innerHTML = renderFocusTopList(data.control.topProducts);
+
+    results.style.display = 'block';
+  } catch (err) {
+    console.error('[FocusCollection] Comparison failed:', err);
+    alert('Erreur lors de la comparaison.');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = origLabel;
+  }
+}
+
 async function loadProductBreakdown(period) {
   if (period) { productPeriod = period; productDateRange = null; }
 
@@ -2484,7 +2613,7 @@ function switchSubTab(subtabId) {
   document.querySelector(`.subtab-btn[data-subtab="${subtabId}"]`).classList.add('active');
   document.getElementById(`subtab-${subtabId}`).classList.add('active');
 
-  if (subtabId === 'data-produits') loadProductBreakdown();
+  if (subtabId === 'data-produits') { loadProductBreakdown(); loadShopifyProductIndex(); }
   if (subtabId === 'acquisition') loadMetaAnalysis();
 
   updateToolbarVisibility();
@@ -2710,6 +2839,16 @@ document.addEventListener('DOMContentLoaded', async () => {
       _productSelectedCategory = null;
       document.querySelectorAll('#productCategoriesList .product-cat-card').forEach(c => c.classList.remove('active'));
       renderProductTypesTable();
+    });
+  }
+
+  // Focus collection: click "Comparer" or press Enter in any field
+  const focusCompareBtn = document.getElementById('focusCompareBtn');
+  if (focusCompareBtn) {
+    focusCompareBtn.addEventListener('click', runFocusComparison);
+    ['focusTagInput', 'controlTagInput', 'focusScopeInput'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); runFocusComparison(); } });
     });
   }
 

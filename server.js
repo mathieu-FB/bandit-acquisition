@@ -1348,6 +1348,274 @@ async function getFontaineSKUs() {
   return skuSet;
 }
 
+// ============================================================
+// SHOPIFY PRODUCT INDEX — tags + product_types for collection comparison
+// ============================================================
+// Fetches all products in one paginated pass and builds:
+//   - allTags:        Set<string>   (unique tag names, for autocomplete)
+//   - allProductTypes:Set<string>   (unique product_type names, for autocomplete)
+//   - productsByTag:  Map<tag, Set<productId>>
+//   - productsByType: Map<type, Set<productId>>
+//   - productMeta:    Map<productId, { title, product_type, tags: Set<string> }>
+// Cached 1h in RAM (small dataset, no need for SQLite persistence).
+
+let _shopifyProductIndex = null;
+let _shopifyProductIndexExpiry = 0;
+const PRODUCT_INDEX_TTL = 60 * 60 * 1000; // 1h
+
+async function getShopifyProductIndex() {
+  if (_shopifyProductIndex && Date.now() < _shopifyProductIndexExpiry) return _shopifyProductIndex;
+
+  const allTags = new Set();
+  const allProductTypes = new Set();
+  const productsByTag = new Map();
+  const productsByType = new Map();
+  const productMeta = new Map();
+
+  let url = `https://${process.env.SHOPIFY_STORE_URL}/admin/api/2024-01/products.json?` +
+    new URLSearchParams({ limit: '250', fields: 'id,title,product_type,tags' }).toString();
+  const token = process.env.SHOPIFY_ACCESS_TOKEN;
+
+  while (url) {
+    const res = await fetch(url, {
+      headers: { 'X-Shopify-Access-Token': token, 'Content-Type': 'application/json' },
+    });
+    if (!res.ok) break;
+    const data = await res.json();
+    (data.products || []).forEach(p => {
+      const pid = String(p.id);
+      const type = (p.product_type || '').trim();
+      const tags = (p.tags || '').split(',').map(t => t.trim()).filter(Boolean);
+
+      productMeta.set(pid, { title: p.title || '', product_type: type, tags: new Set(tags) });
+
+      if (type) {
+        allProductTypes.add(type);
+        if (!productsByType.has(type)) productsByType.set(type, new Set());
+        productsByType.get(type).add(pid);
+      }
+      tags.forEach(t => {
+        allTags.add(t);
+        if (!productsByTag.has(t)) productsByTag.set(t, new Set());
+        productsByTag.get(t).add(pid);
+      });
+    });
+
+    const link = res.headers.get('link');
+    if (link && link.includes('rel="next"')) {
+      const match = link.match(/<([^>]+)>;\s*rel="next"/);
+      url = match ? match[1] : null;
+    } else {
+      url = null;
+    }
+  }
+
+  _shopifyProductIndex = { allTags, allProductTypes, productsByTag, productsByType, productMeta };
+  _shopifyProductIndexExpiry = Date.now() + PRODUCT_INDEX_TTL;
+  console.log(`[ShopifyProductIndex] ${productMeta.size} products, ${allTags.size} tags, ${allProductTypes.size} types`);
+  return _shopifyProductIndex;
+}
+
+// Lightweight endpoint feeding the autocomplete inputs
+app.get('/api/shopify/product-index', async (req, res) => {
+  try {
+    if (!process.env.SHOPIFY_STORE_URL || !process.env.SHOPIFY_ACCESS_TOKEN) {
+      return res.json({ configured: false });
+    }
+    const idx = await getShopifyProductIndex();
+    res.json({
+      configured: true,
+      tags: [...idx.allTags].sort((a, b) => a.localeCompare(b)),
+      productTypes: [...idx.allProductTypes].sort((a, b) => a.localeCompare(b)),
+      productCount: idx.productMeta.size,
+    });
+  } catch (err) {
+    console.error('[ProductIndex] Error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// COLLECTION COMPARISON — focus tag vs control tag
+// ============================================================
+// Compares two tag-defined product groups (focus vs control), optionally
+// scoped to a product_type. Returns totals, normalized per-product metrics,
+// relative deltas, and top-5 products for each group.
+
+app.get('/api/collection-comparison', async (req, res) => {
+  try {
+    if (!process.env.SHOPIFY_STORE_URL || !process.env.SHOPIFY_ACCESS_TOKEN) {
+      return res.json({ configured: false });
+    }
+    const focusTag = (req.query.focus || '').trim();
+    const controlTag = (req.query.control || '').trim();
+    const scopeType = (req.query.scope || '').trim(); // optional product_type filter
+    if (!focusTag || !controlTag) {
+      return res.status(400).json({ error: 'focus et control sont requis' });
+    }
+
+    // Resolve period (same shape as /api/product-breakdown)
+    const period = req.query.period || 'mtd';
+    let periodStart, periodEnd;
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth() + 1;
+    if (req.query.start && req.query.end) {
+      periodStart = req.query.start; periodEnd = req.query.end;
+    } else if (period === 'ytd') {
+      periodStart = `${year}-01-01`; periodEnd = formatDate(now);
+    } else if (period === 'qtd') {
+      const qStart = Math.floor((month - 1) / 3) * 3 + 1;
+      periodStart = `${year}-${String(qStart).padStart(2, '0')}-01`; periodEnd = formatDate(now);
+    } else {
+      periodStart = `${year}-${String(month).padStart(2, '0')}-01`; periodEnd = formatDate(now);
+    }
+    const daysTotal = Math.round((new Date(periodEnd + 'T12:00:00') - new Date(periodStart + 'T12:00:00')) / 86400000) + 1;
+
+    // Build the two product sets (focus + control), optionally intersected with scope
+    const idx = await getShopifyProductIndex();
+    const focusSet = new Set(idx.productsByTag.get(focusTag) || []);
+    const controlSet = new Set(idx.productsByTag.get(controlTag) || []);
+
+    if (scopeType) {
+      const scopeSet = idx.productsByType.get(scopeType) || new Set();
+      focusSet.forEach(pid => { if (!scopeSet.has(pid)) focusSet.delete(pid); });
+      controlSet.forEach(pid => { if (!scopeSet.has(pid)) controlSet.delete(pid); });
+    }
+
+    if (focusSet.size === 0 && controlSet.size === 0) {
+      return res.json({
+        configured: true,
+        period: { start: periodStart, end: periodEnd, daysTotal, label: periodStart === periodEnd ? periodStart : `${periodStart} → ${periodEnd}` },
+        filters: { focus: focusTag, control: controlTag, scope: scopeType || null },
+        empty: true,
+      });
+    }
+
+    // Fetch orders with line items on the period
+    const orders = await fetchOrdersWithLineItems(periodStart, periodEnd);
+
+    // Build refund map so we subtract refunded qty like everywhere else
+    const refundMap = {};
+    orders.forEach(order => {
+      (order.refunds || []).forEach(refund => {
+        (refund.refund_line_items || []).forEach(rli => {
+          refundMap[rli.line_item_id] = (refundMap[rli.line_item_id] || 0) + rli.quantity;
+        });
+      });
+    });
+
+    // Aggregate per-product totals within each group
+    // We also track order-level participation for AOV (order counts where at least one focus/control product appears)
+    const focusProducts = new Map(); // productId -> { title, units, ca }
+    const controlProducts = new Map();
+    let focusRevenue = 0, controlRevenue = 0;
+    let focusUnits = 0, controlUnits = 0;
+    const focusOrderIds = new Set();
+    const controlOrderIds = new Set();
+
+    orders.forEach(order => {
+      if (order.financial_status === 'voided') return;
+      (order.line_items || []).forEach(li => {
+        if (!li.product_id) return;
+        const pid = String(li.product_id);
+        const refunded = refundMap[li.id] || 0;
+        const netQty = li.quantity - refunded;
+        if (netQty <= 0) return;
+
+        // CA HT — divide by 1.20 (French VAT), matching the export logic
+        const ca = (parseFloat(li.price || 0) / 1.20) * netQty;
+
+        if (focusSet.has(pid)) {
+          if (!focusProducts.has(pid)) focusProducts.set(pid, { productId: pid, title: idx.productMeta.get(pid)?.title || li.title, units: 0, ca: 0 });
+          const row = focusProducts.get(pid);
+          row.units += netQty;
+          row.ca += ca;
+          focusRevenue += ca;
+          focusUnits += netQty;
+          focusOrderIds.add(order.id);
+        }
+        if (controlSet.has(pid)) {
+          if (!controlProducts.has(pid)) controlProducts.set(pid, { productId: pid, title: idx.productMeta.get(pid)?.title || li.title, units: 0, ca: 0 });
+          const row = controlProducts.get(pid);
+          row.units += netQty;
+          row.ca += ca;
+          controlRevenue += ca;
+          controlUnits += netQty;
+          controlOrderIds.add(order.id);
+        }
+      });
+    });
+
+    // Also compute the parent scope revenue for % context (same period, same scope)
+    let scopeRevenue = 0;
+    if (scopeType) {
+      const scopeSet = idx.productsByType.get(scopeType) || new Set();
+      orders.forEach(order => {
+        if (order.financial_status === 'voided') return;
+        (order.line_items || []).forEach(li => {
+          if (!li.product_id) return;
+          const pid = String(li.product_id);
+          if (!scopeSet.has(pid)) return;
+          const refunded = refundMap[li.id] || 0;
+          const netQty = li.quantity - refunded;
+          if (netQty <= 0) return;
+          const ca = (parseFloat(li.price || 0) / 1.20) * netQty;
+          scopeRevenue += ca;
+        });
+      });
+    }
+
+    // Helper: compute the summary block for one group
+    const summarize = (products, revenue, units, orderIds, productCount) => {
+      const soldCount = products.size;
+      const orderCount = orderIds.size;
+      return {
+        productCount,          // number of products defined in the tag ∩ scope
+        soldProductCount: soldCount, // number that actually had at least one sale
+        ca: revenue,
+        units,
+        orders: orderCount,
+        aov: orderCount > 0 ? revenue / orderCount : 0,
+        caPerProduct: productCount > 0 ? revenue / productCount : 0,
+        unitsPerProduct: productCount > 0 ? units / productCount : 0,
+        caPerProductPerDay: (productCount > 0 && daysTotal > 0) ? revenue / productCount / daysTotal : 0,
+        pctOfScope: scopeType && scopeRevenue > 0 ? (revenue / scopeRevenue) * 100 : null,
+      };
+    };
+
+    const focus = summarize(focusProducts, focusRevenue, focusUnits, focusOrderIds, focusSet.size);
+    const control = summarize(controlProducts, controlRevenue, controlUnits, controlOrderIds, controlSet.size);
+
+    // Relative deltas (focus vs control), only the 3 normalized ones that matter
+    const relDelta = (a, b) => (b > 0 ? ((a - b) / b) * 100 : null);
+    const relative = {
+      caPerProduct: relDelta(focus.caPerProduct, control.caPerProduct),
+      unitsPerProduct: relDelta(focus.unitsPerProduct, control.unitsPerProduct),
+      aov: relDelta(focus.aov, control.aov),
+    };
+
+    // Top 5 products per group by CA (with fallback title from Shopify order line item)
+    const top = (products) => [...products.values()]
+      .sort((a, b) => b.ca - a.ca)
+      .slice(0, 5)
+      .map(p => ({ ...p, ca: Math.round(p.ca * 100) / 100 }));
+
+    res.json({
+      configured: true,
+      period: { start: periodStart, end: periodEnd, daysTotal, label: periodStart === periodEnd ? periodStart : `${periodStart} → ${periodEnd}` },
+      filters: { focus: focusTag, control: controlTag, scope: scopeType || null },
+      focus: { tag: focusTag, ...focus, topProducts: top(focusProducts) },
+      control: { tag: controlTag, ...control, topProducts: top(controlProducts) },
+      scope: scopeType ? { type: scopeType, revenue: scopeRevenue } : null,
+      relative,
+    });
+  } catch (err) {
+    console.error('[CollectionComparison] Error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 async function fetchOrdersWithLineItems(start, end) {
   const orders = [];
   const startOffset = getParisOffset(new Date(`${start}T00:00:00`));

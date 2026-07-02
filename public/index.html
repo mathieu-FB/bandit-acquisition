@@ -476,6 +476,95 @@
           <div class="product-categories-list" id="productCategoriesList"></div>
         </div>
 
+        <!-- Focus collection: compare a tag vs a control tag -->
+        <div class="focus-collection-wrap">
+          <div class="focus-collection-header">
+            <h3 class="focus-collection-title">Focus collection</h3>
+            <span class="focus-collection-hint">Compare un tag "focus" à un tag "témoin" — les métriques sont normalisées par produit.</span>
+          </div>
+          <div class="focus-collection-filters">
+            <label class="focus-filter">
+              <span>Focus</span>
+              <input type="text" id="focusTagInput" list="shopifyTagsList" placeholder="ex : summer26" autocomplete="off">
+            </label>
+            <label class="focus-filter">
+              <span>Témoin</span>
+              <input type="text" id="controlTagInput" list="shopifyTagsList" placeholder="ex : Permanent" autocomplete="off">
+            </label>
+            <label class="focus-filter">
+              <span>Scope catégorie</span>
+              <input type="text" id="focusScopeInput" list="shopifyProductTypesList" placeholder="(optionnel) ex : Collier pour chien" autocomplete="off">
+            </label>
+            <button class="btn btn-primary btn-sm" id="focusCompareBtn">Comparer</button>
+          </div>
+          <datalist id="shopifyTagsList"></datalist>
+          <datalist id="shopifyProductTypesList"></datalist>
+
+          <div id="focusCollectionResults" style="display:none;">
+            <div class="focus-cards">
+              <div class="focus-card focus-card-focus">
+                <div class="focus-card-tag" id="focusCardTagLabel">—</div>
+                <div class="focus-card-meta" id="focusCardMeta">— produits</div>
+                <div class="focus-card-metrics">
+                  <div class="focus-metric"><span class="focus-metric-label">CA</span><span class="focus-metric-val" id="focusCardCA">—</span></div>
+                  <div class="focus-metric"><span class="focus-metric-label">Unités</span><span class="focus-metric-val" id="focusCardUnits">—</span></div>
+                  <div class="focus-metric"><span class="focus-metric-label">AOV</span><span class="focus-metric-val" id="focusCardAOV">—</span></div>
+                </div>
+                <div class="focus-card-metrics focus-card-metrics-secondary">
+                  <div class="focus-metric"><span class="focus-metric-label">CA / produit</span><span class="focus-metric-val" id="focusCardCAPerProduct">—</span></div>
+                  <div class="focus-metric"><span class="focus-metric-label">Unités / produit</span><span class="focus-metric-val" id="focusCardUnitsPerProduct">—</span></div>
+                  <div class="focus-metric"><span class="focus-metric-label">% de la catégorie</span><span class="focus-metric-val" id="focusCardPctScope">—</span></div>
+                </div>
+              </div>
+
+              <div class="focus-card focus-card-control">
+                <div class="focus-card-tag" id="controlCardTagLabel">—</div>
+                <div class="focus-card-meta" id="controlCardMeta">— produits</div>
+                <div class="focus-card-metrics">
+                  <div class="focus-metric"><span class="focus-metric-label">CA</span><span class="focus-metric-val" id="controlCardCA">—</span></div>
+                  <div class="focus-metric"><span class="focus-metric-label">Unités</span><span class="focus-metric-val" id="controlCardUnits">—</span></div>
+                  <div class="focus-metric"><span class="focus-metric-label">AOV</span><span class="focus-metric-val" id="controlCardAOV">—</span></div>
+                </div>
+                <div class="focus-card-metrics focus-card-metrics-secondary">
+                  <div class="focus-metric"><span class="focus-metric-label">CA / produit</span><span class="focus-metric-val" id="controlCardCAPerProduct">—</span></div>
+                  <div class="focus-metric"><span class="focus-metric-label">Unités / produit</span><span class="focus-metric-val" id="controlCardUnitsPerProduct">—</span></div>
+                  <div class="focus-metric"><span class="focus-metric-label">% de la catégorie</span><span class="focus-metric-val" id="controlCardPctScope">—</span></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="focus-relative-perf">
+              <h4>Performance relative — Focus vs Témoin</h4>
+              <div class="focus-relative-grid">
+                <div class="focus-relative-item">
+                  <span class="focus-relative-label">CA / produit</span>
+                  <span class="focus-relative-val" id="focusRelCAPerProduct">—</span>
+                </div>
+                <div class="focus-relative-item">
+                  <span class="focus-relative-label">Unités / produit</span>
+                  <span class="focus-relative-val" id="focusRelUnitsPerProduct">—</span>
+                </div>
+                <div class="focus-relative-item">
+                  <span class="focus-relative-label">AOV</span>
+                  <span class="focus-relative-val" id="focusRelAOV">—</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="focus-tops">
+              <div class="focus-top-block">
+                <h4 id="focusTopTitle">Top 5 produits — Focus</h4>
+                <div class="focus-top-list" id="focusTopList"></div>
+              </div>
+              <div class="focus-top-block">
+                <h4 id="controlTopTitle">Top 5 produits — Témoin</h4>
+                <div class="focus-top-list" id="controlTopList"></div>
+              </div>
+            </div>
+          </div>
+          <div id="focusCollectionEmpty" class="focus-empty" style="display:none;">Aucun produit ne correspond à ces tags sur cette période.</div>
+        </div>
+
         <!-- Detailed type table -->
         <div class="product-types-table-wrap">
           <div class="product-table-header">
