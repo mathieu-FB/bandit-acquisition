@@ -2077,8 +2077,9 @@ app.get('/api/product-breakdown', async (req, res) => {
       }
     });
 
-    // Aggregate by product type
-    const typeAgg = {}; // { product_type: { units, ca } }
+    // Aggregate by product type + also by SKU inside each type (for the
+    // click-to-expand SKU detail view in the frontend table).
+    const typeAgg = {}; // { product_type: { units, ca, variants: { sku: {sku,title,variantTitle,units,ca} } } }
     let totalUnits = 0, totalCA = 0;
 
     orders.forEach(order => {
@@ -2092,9 +2093,24 @@ app.get('/api/product-breakdown', async (req, res) => {
         // CA HT = price × qty (price is already after discount per item)
         const ca = parseFloat(li.price || 0) * netQty;
 
-        if (!typeAgg[productType]) typeAgg[productType] = { units: 0, ca: 0 };
+        if (!typeAgg[productType]) typeAgg[productType] = { units: 0, ca: 0, variants: {} };
         typeAgg[productType].units += netQty;
         typeAgg[productType].ca += ca;
+
+        // Per-SKU rollup inside the type
+        const sku = (li.sku || '').trim() || `PID-${li.product_id}`;
+        const vs = typeAgg[productType].variants;
+        if (!vs[sku]) {
+          vs[sku] = {
+            sku,
+            title: li.title || '',
+            variantTitle: li.variant_title || '',
+            units: 0,
+            ca: 0,
+          };
+        }
+        vs[sku].units += netQty;
+        vs[sku].ca += ca;
         totalUnits += netQty;
         totalCA += ca;
       });
@@ -2162,14 +2178,28 @@ app.get('/api/product-breakdown', async (req, res) => {
       });
     }
 
-    // All product types for the detailed breakdown
+    // All product types for the detailed breakdown (with SKU-level rows
+    // so the UI can expand a row to reveal its variants).
     const allTypes = Object.entries(typeAgg)
-      .map(([type, data]) => ({
-        type,
-        units: data.units,
-        ca: data.ca,
-        pctOfTotal: totalCA > 0 ? (data.ca / totalCA) * 100 : 0,
-      }))
+      .map(([type, data]) => {
+        const variants = Object.values(data.variants || {})
+          .sort((a, b) => b.ca - a.ca)
+          .map(v => ({
+            sku: v.sku,
+            title: v.title,
+            variantTitle: v.variantTitle,
+            units: v.units,
+            ca: Math.round(v.ca * 100) / 100,
+            pctOfType: data.ca > 0 ? (v.ca / data.ca) * 100 : 0,
+          }));
+        return {
+          type,
+          units: data.units,
+          ca: data.ca,
+          pctOfTotal: totalCA > 0 ? (data.ca / totalCA) * 100 : 0,
+          variants,
+        };
+      })
       .sort((a, b) => b.ca - a.ca);
 
     res.json({

@@ -861,6 +861,14 @@ let productDateRange = null; // { start, end } for custom range
 let _productData = null;             // last product-breakdown response (categories + allTypes)
 let _productSelectedCategory = null; // name of category filtering the detailed table, or null
 
+let _productExpandedTypes = new Set(); // type names currently expanded in the detail table
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 function renderProductTypesTable() {
   const tableEl = document.getElementById('productTypesTable');
   const titleEl = document.getElementById('productTableTitle');
@@ -884,6 +892,42 @@ function renderProductTypesTable() {
   }
   if (resetBtn) resetBtn.style.display = _productSelectedCategory ? '' : 'none';
 
+  const renderRow = (t) => {
+    const isExpanded = _productExpandedTypes.has(t.type);
+    const variants = t.variants || [];
+    const chevron = isExpanded ? '▾' : '▸';
+    const typeAttr = escapeHtml(t.type || '');
+    const mainRow = `
+      <tr class="product-type-row ${isExpanded ? 'expanded' : ''}" data-type="${typeAttr}" role="button" tabindex="0">
+        <td class="product-name">
+          <span class="product-type-chevron">${chevron}</span>
+          ${escapeHtml(t.type || 'Non défini')}
+          <span class="product-type-variants-count">${variants.length} SKU${variants.length > 1 ? 's' : ''}</span>
+        </td>
+        <td>${fmtNumber(t.units)}</td>
+        <td>${fmtCurrency(t.ca)}</td>
+        <td>${t.pctOfTotal.toFixed(1)}%</td>
+      </tr>
+    `;
+    if (!isExpanded) return mainRow;
+
+    const subRows = variants.length === 0
+      ? `<tr class="product-type-variant-row"><td colspan="4" style="padding:10px 16px 10px 40px;color:var(--text-muted);font-style:italic;">Aucun SKU trouvé.</td></tr>`
+      : variants.map(v => `
+        <tr class="product-type-variant-row">
+          <td class="product-variant-name">
+            <span class="product-variant-sku">${escapeHtml(v.sku || '—')}</span>
+            <span class="product-variant-title">${escapeHtml(v.title)}${v.variantTitle ? ` <span class="product-variant-title-mod">— ${escapeHtml(v.variantTitle)}</span>` : ''}</span>
+          </td>
+          <td>${fmtNumber(v.units)}</td>
+          <td>${fmtCurrency(v.ca)}</td>
+          <td>${v.pctOfType.toFixed(1)}% du type</td>
+        </tr>
+      `).join('');
+
+    return mainRow + subRows;
+  };
+
   tableEl.innerHTML = `
     <table>
       <thead>
@@ -897,17 +941,22 @@ function renderProductTypesTable() {
       <tbody>
         ${rows.length === 0 ? `
           <tr><td colspan="4" style="text-align:center;padding:20px;color:var(--text-muted);">Aucun produit vendu pour cette catégorie sur la période.</td></tr>
-        ` : rows.map(t => `
-          <tr>
-            <td class="product-name">${t.type || 'Non défini'}</td>
-            <td>${fmtNumber(t.units)}</td>
-            <td>${fmtCurrency(t.ca)}</td>
-            <td>${t.pctOfTotal.toFixed(1)}%</td>
-          </tr>
-        `).join('')}
+        ` : rows.map(renderRow).join('')}
       </tbody>
     </table>
   `;
+
+  // Row click → toggle expansion
+  tableEl.querySelectorAll('.product-type-row').forEach(row => {
+    const toggle = () => {
+      const type = row.getAttribute('data-type');
+      if (_productExpandedTypes.has(type)) _productExpandedTypes.delete(type);
+      else _productExpandedTypes.add(type);
+      renderProductTypesTable();
+    };
+    row.addEventListener('click', toggle);
+    row.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+  });
 }
 
 // ============================================================
@@ -1122,6 +1171,7 @@ async function loadProductBreakdown(period) {
     // Store data + filter state for click-to-filter interaction
     _productData = data;
     _productSelectedCategory = null;
+    _productExpandedTypes = new Set();
 
     // Category cards with objectives
     const listEl = document.getElementById('productCategoriesList');
