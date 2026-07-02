@@ -2882,9 +2882,10 @@ app.get('/api/meta/analysis', async (req, res) => {
       };
     }).filter(a => a.spend >= 5);
 
-    // Sort by ROAS — take top 36 to allow frontend filtering (12 per type)
+    // Sort by ROAS — take top 75 to leave headroom for frontend filtering
+    // (type: video/static/acquisition/retargeting + min spend). UI shows 50 max.
     const sortedAds = [...allAds].sort((a, b) => b.roas - a.roas);
-    const topAds = sortedAds.slice(0, 36);
+    const topAds = sortedAds.slice(0, 75);
 
     // Fetch creatives for top ads (with higher quality images)
     const creatives = await Promise.all(topAds.map(ad => fetchAdCreative(ad.id)));

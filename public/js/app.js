@@ -1158,7 +1158,7 @@ function filterMetaAds(type) {
   else if (_metaCurrentAdFilter === 'acquisition') filtered = filtered.filter(a => a.campaignType === 'acquisition');
   else if (_metaCurrentAdFilter === 'retargeting') filtered = filtered.filter(a => a.campaignType === 'retargeting');
   if (_metaMinSpend > 0) filtered = filtered.filter(a => (a.spend || 0) >= _metaMinSpend);
-  document.getElementById('metaTopAds').innerHTML = renderMetaAdCards(filtered.slice(0, 24));
+  document.getElementById('metaTopAds').innerHTML = renderMetaAdCards(filtered.slice(0, 50));
 }
 
 async function loadMetaAnalysis(forceDays, forceRefresh) {
