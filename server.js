@@ -1864,16 +1864,19 @@ app.get('/api/product-breakdown', async (req, res) => {
         objectiveCA,
         progressCA,
         projectedCA,
+        types: cat.types.slice(), // exposed so the UI can filter the detailed table on category click
       };
     });
 
     // "Autres" — everything not in a category
     const categorizedTypes = new Set(PRODUCT_CATEGORIES.flatMap(c => c.types));
     let autresUnits = 0, autresCA = 0;
+    const autresTypes = [];
     Object.entries(typeAgg).forEach(([type, data]) => {
       if (!categorizedTypes.has(type)) {
         autresUnits += data.units;
         autresCA += data.ca;
+        autresTypes.push(type);
       }
     });
     if (autresCA > 0) {
@@ -1887,6 +1890,7 @@ app.get('/api/product-breakdown', async (req, res) => {
         objectiveCA: 0,
         progressCA: 0,
         projectedCA: 0,
+        types: autresTypes,
       });
     }
 

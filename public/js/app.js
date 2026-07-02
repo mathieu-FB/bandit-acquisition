@@ -858,6 +858,57 @@ function renderRechargeByCategoryChart(byCategory) {
 
 let productPeriod = 'mtd';
 let productDateRange = null; // { start, end } for custom range
+let _productData = null;             // last product-breakdown response (categories + allTypes)
+let _productSelectedCategory = null; // name of category filtering the detailed table, or null
+
+function renderProductTypesTable() {
+  const tableEl = document.getElementById('productTypesTable');
+  const titleEl = document.getElementById('productTableTitle');
+  const resetBtn = document.getElementById('productTableResetBtn');
+  if (!tableEl || !_productData) return;
+
+  // Build the list of allowed types based on selected category
+  let rows = _productData.allTypes;
+  if (_productSelectedCategory) {
+    const cat = _productData.categories.find(c => c.name === _productSelectedCategory);
+    if (cat && Array.isArray(cat.types)) {
+      const allowed = new Set(cat.types);
+      rows = _productData.allTypes.filter(t => allowed.has(t.type));
+    }
+  }
+
+  if (titleEl) {
+    titleEl.textContent = _productSelectedCategory
+      ? `Détail — ${_productSelectedCategory}`
+      : 'Détail par type de produit';
+  }
+  if (resetBtn) resetBtn.style.display = _productSelectedCategory ? '' : 'none';
+
+  tableEl.innerHTML = `
+    <table>
+      <thead>
+        <tr>
+          <th>Type de produit</th>
+          <th>Unités</th>
+          <th>CA</th>
+          <th>% du total</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.length === 0 ? `
+          <tr><td colspan="4" style="text-align:center;padding:20px;color:var(--text-muted);">Aucun produit vendu pour cette catégorie sur la période.</td></tr>
+        ` : rows.map(t => `
+          <tr>
+            <td class="product-name">${t.type || 'Non défini'}</td>
+            <td>${fmtNumber(t.units)}</td>
+            <td>${fmtCurrency(t.ca)}</td>
+            <td>${t.pctOfTotal.toFixed(1)}%</td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+  `;
+}
 
 async function loadProductBreakdown(period) {
   if (period) { productPeriod = period; productDateRange = null; }
@@ -939,6 +990,10 @@ async function loadProductBreakdown(period) {
       </div>
     `).join('');
 
+    // Store data + filter state for click-to-filter interaction
+    _productData = data;
+    _productSelectedCategory = null;
+
     // Category cards with objectives
     const listEl = document.getElementById('productCategoriesList');
     listEl.innerHTML = data.categories.map(c => {
@@ -949,7 +1004,7 @@ async function loadProductBreakdown(period) {
       const projPct = hasObj ? Math.min((c.projectedCA / c.objectiveCA) * 100, 100) : 0;
 
       return `
-        <div class="product-cat-card">
+        <div class="product-cat-card" data-cat-name="${c.name}" role="button" tabindex="0">
           <div class="product-cat-header">
             <div class="product-cat-dot" style="background:${c.color}"></div>
             <h4>${c.name}</h4>
@@ -988,30 +1043,22 @@ async function loadProductBreakdown(period) {
       `;
     }).join('');
 
-    // Detailed types table
-    const tableEl = document.getElementById('productTypesTable');
-    tableEl.innerHTML = `
-      <table>
-        <thead>
-          <tr>
-            <th>Type de produit</th>
-            <th>Unités</th>
-            <th>CA</th>
-            <th>% du total</th>
-          </tr>
-        </thead>
-        <tbody>
-          ${data.allTypes.map(t => `
-            <tr>
-              <td class="product-name">${t.type || 'Non défini'}</td>
-              <td>${fmtNumber(t.units)}</td>
-              <td>${fmtCurrency(t.ca)}</td>
-              <td>${t.pctOfTotal.toFixed(1)}%</td>
-            </tr>
-          `).join('')}
-        </tbody>
-      </table>
-    `;
+    // Detailed types table (initial render: all types, no filter)
+    renderProductTypesTable();
+
+    // Category card click → filter the detailed table on that category
+    document.querySelectorAll('#productCategoriesList .product-cat-card').forEach(card => {
+      const handler = () => {
+        const name = card.getAttribute('data-cat-name');
+        // Toggle: re-clicking the active one clears the filter
+        _productSelectedCategory = (_productSelectedCategory === name) ? null : name;
+        document.querySelectorAll('#productCategoriesList .product-cat-card').forEach(c => c.classList.remove('active'));
+        if (_productSelectedCategory) card.classList.add('active');
+        renderProductTypesTable();
+      };
+      card.addEventListener('click', handler);
+      card.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handler(); } });
+    });
 
   } catch (err) {
     console.error('Product breakdown error:', err);
@@ -2655,6 +2702,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     clearProductPeriodBtns();
     loadProductBreakdown();
   });
+
+  // Product detail table reset button (clears the category filter)
+  const productTableResetBtn = document.getElementById('productTableResetBtn');
+  if (productTableResetBtn) {
+    productTableResetBtn.addEventListener('click', () => {
+      _productSelectedCategory = null;
+      document.querySelectorAll('#productCategoriesList .product-cat-card').forEach(c => c.classList.remove('active'));
+      renderProductTypesTable();
+    });
+  }
 
   // Export Fontaines & Distributeurs — builds CSV from /api/export/product-variants
   async function exportProductVariants(source, dateRange, period, btn) {

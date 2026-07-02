@@ -1854,11 +1854,32 @@ body {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  transition: box-shadow 0.2s;
+  transition: box-shadow 0.2s, border-color 0.2s, transform 0.1s;
+  cursor: pointer;
+  outline: none;
 }
 
 .product-cat-card:hover {
   box-shadow: var(--shadow-hover);
+}
+
+.product-cat-card:focus-visible {
+  border-color: #3b82f6;
+}
+
+.product-cat-card.active {
+  border-color: #3b82f6;
+  border-width: 2px;
+  padding: 15px 17px; /* compensate the +1px border so layout doesn't jump */
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15), var(--shadow-hover);
+}
+
+.product-table-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
 }
 
 .product-cat-header {
