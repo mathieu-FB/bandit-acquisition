@@ -1147,12 +1147,17 @@ function renderMetaAdCards(ads) {
   `).join('');
 }
 
+let _metaCurrentAdFilter = 'all';
+let _metaMinSpend = parseFloat(localStorage.getItem('metaMinSpend') || '0') || 0;
+
 function filterMetaAds(type) {
+  if (type) _metaCurrentAdFilter = type;
   let filtered = _metaAllTopAds;
-  if (type === 'video') filtered = _metaAllTopAds.filter(a => a.isVideo);
-  else if (type === 'static') filtered = _metaAllTopAds.filter(a => !a.isVideo);
-  else if (type === 'acquisition') filtered = _metaAllTopAds.filter(a => a.campaignType === 'acquisition');
-  else if (type === 'retargeting') filtered = _metaAllTopAds.filter(a => a.campaignType === 'retargeting');
+  if (_metaCurrentAdFilter === 'video') filtered = filtered.filter(a => a.isVideo);
+  else if (_metaCurrentAdFilter === 'static') filtered = filtered.filter(a => !a.isVideo);
+  else if (_metaCurrentAdFilter === 'acquisition') filtered = filtered.filter(a => a.campaignType === 'acquisition');
+  else if (_metaCurrentAdFilter === 'retargeting') filtered = filtered.filter(a => a.campaignType === 'retargeting');
+  if (_metaMinSpend > 0) filtered = filtered.filter(a => (a.spend || 0) >= _metaMinSpend);
   document.getElementById('metaTopAds').innerHTML = renderMetaAdCards(filtered.slice(0, 24));
 }
 
@@ -2836,7 +2841,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadMetaAnalysis(null, true);
   });
 
-  // Meta ad filter buttons (Tout / Videos / Static)
+  // Meta ad filter buttons (Tout / Videos / Static / Acquisition / Retargeting)
   document.querySelectorAll('[data-ad-filter]').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('[data-ad-filter]').forEach(b => b.classList.remove('active'));
@@ -2844,6 +2849,23 @@ document.addEventListener('DOMContentLoaded', async () => {
       filterMetaAds(btn.dataset.adFilter);
     });
   });
+
+  // Meta min spend filter — combines with the active type filter
+  const metaMinSpendInput = document.getElementById('metaMinSpend');
+  if (metaMinSpendInput) {
+    // Restore last saved value
+    if (_metaMinSpend > 0) metaMinSpendInput.value = String(_metaMinSpend);
+    let debounceTimer = null;
+    metaMinSpendInput.addEventListener('input', () => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        const v = parseFloat(metaMinSpendInput.value);
+        _metaMinSpend = Number.isFinite(v) && v > 0 ? v : 0;
+        localStorage.setItem('metaMinSpend', String(_metaMinSpend));
+        filterMetaAds();
+      }, 250);
+    });
+  }
 
   // TikTok period buttons (15j / 30j)
   document.querySelectorAll('[data-tiktok-days]').forEach(btn => {
