@@ -1193,6 +1193,15 @@ const OBJECTIVES = {
         6: { ca: 152000, ratio: 30 },
       },
     },
+    Q3: {
+      ca: 275000,
+      ratio: 30,
+      months: {
+        7: { ca: 100000, ratio: 30 },
+        8: { ca: 80000, ratio: 30 },
+        9: { ca: 95000, ratio: 30 },
+      },
+    },
   },
 };
 
@@ -1205,6 +1214,15 @@ const AMAZON_OBJECTIVES = {
         4: { ca: 40000, tacos: 20 },
         5: { ca: 40000, tacos: 20 },
         6: { ca: 40000, tacos: 20 },
+      },
+    },
+    Q3: {
+      ca: 110000,
+      tacos: 20,
+      months: {
+        7: { ca: 40000, tacos: 20 },
+        8: { ca: 30000, tacos: 20 },
+        9: { ca: 40000, tacos: 20 },
       },
     },
   },
