@@ -85,7 +85,22 @@
     </div>
 
     <div class="card">
-      <h2>5 · Diagnostics</h2>
+      <h2>5 · Notifications email (crons)</h2>
+      <p>Cron auto : <strong>daily 8h Europe/Paris lun-sam</strong> (envoie seulement les aggravations depuis la dernière exécution) · <strong>weekly lundi 7h30</strong> (récap complet). Le destinataire est <code>alerte_email_destinataire</code> dans Paramètres globaux. Dépend de <code>SENDGRID_API_KEY</code> + <code>REPORT_EMAIL_FROM</code>.</p>
+      <div class="row">
+        <button class="secondary" data-action="/api/stock/notifications/daily">Daily — Prévisualiser JSON</button>
+        <button class="secondary" data-action="/api/stock/notifications/daily?preview=html">Daily — Prévisualiser HTML</button>
+        <button data-action="/api/stock/notifications/daily?send=1">Daily — ENVOYER</button>
+      </div>
+      <div class="row" style="margin-top:8px;">
+        <button class="secondary" data-action="/api/stock/notifications/weekly">Weekly — Prévisualiser JSON</button>
+        <button class="secondary" data-action="/api/stock/notifications/weekly?preview=html">Weekly — Prévisualiser HTML</button>
+        <button data-action="/api/stock/notifications/weekly?send=1">Weekly — ENVOYER</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>6 · Diagnostics</h2>
       <div class="row">
         <button class="secondary" data-action="/api/stock/stats">Stats</button>
         <button class="secondary" data-action="/api/stock/completude">Complétude</button>
@@ -154,6 +169,15 @@
     document.querySelectorAll('button[data-action]').forEach(btn => {
       btn.addEventListener('click', async () => {
         const url = btn.getAttribute('data-action');
+        // Preview HTML → open in new tab (SendGrid email previews)
+        if (url.includes('preview=html')) {
+          window.open(url, '_blank');
+          return;
+        }
+        // Send=1 → confirmation avant l'envoi de vrais emails
+        if (url.includes('send=1')) {
+          if (!confirm('Envoyer l\'email pour de vrai au destinataire configuré ?')) return;
+        }
         const { payload } = await callEndpoint(url) || {};
         // If it was the stats endpoint, also render a compact grid on top
         if (payload && url.endsWith('/api/stock/stats')) {

@@ -14,6 +14,7 @@ const stockSeed = require('./stock/seed-matrice');
 const stockSync = require('./stock/sync-shopify');
 const stockCompletude = require('./stock/completude');
 const stockMoteur = require('./stock/moteur');
+const stockNotifications = require('./stock/notifications');
 
 const crypto = require('crypto');
 
@@ -4387,6 +4388,42 @@ cron.schedule('1 0 * * *', async () => {
 }, { timezone: 'Europe/Paris' });
 
 // ============================================================
+// CRON — Stock & Réappro alerts
+// Daily 8h Europe/Paris lun-sam : envoie uniquement les aggravations
+//   depuis la dernière exécution (pas d'email si rien de nouveau).
+// Weekly 7h30 lundi Europe/Paris : récap complet (synthèse familles +
+//   top 30 SKU actionnables).
+// ============================================================
+
+cron.schedule('0 8 * * 1-6', async () => {
+  console.log('[Cron] Triggering stock daily alerts...');
+  try {
+    const result = await stockNotifications.runDailyAlerts({ dryRun: false });
+    if (result.sent) {
+      console.log(`[Cron] Stock daily alerts email sent (${result.diffsCount} aggravations).`);
+    } else {
+      console.log(`[Cron] Stock daily alerts: ${result.reason || 'skipped'}`);
+    }
+  } catch (err) {
+    console.error('[Cron] Stock daily alerts failed:', err.message);
+  }
+}, { timezone: 'Europe/Paris' });
+
+cron.schedule('30 7 * * 1', async () => {
+  console.log('[Cron] Triggering stock weekly recap...');
+  try {
+    const result = await stockNotifications.runWeeklyRecap({ dryRun: false });
+    if (result.sent) {
+      console.log(`[Cron] Stock weekly recap sent (${result.actionableCount} actionable SKUs).`);
+    } else {
+      console.log(`[Cron] Stock weekly recap: ${result.reason || 'skipped'}`);
+    }
+  } catch (err) {
+    console.error('[Cron] Stock weekly recap failed:', err.message);
+  }
+}, { timezone: 'Europe/Paris' });
+
+// ============================================================
 // PIPEDRIVE — B2B Reporting
 // ============================================================
 
@@ -5687,6 +5724,48 @@ app.get('/api/stock/debug/sources-check', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// Notifications — daily / weekly (dry-run par défaut, ?send=1 pour envoyer l'email pour de vrai)
+async function handleNotifDaily(req, res) {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const dryRun = req.query.send !== '1';
+    const result = await stockNotifications.runDailyAlerts({ dryRun });
+    if (dryRun) {
+      // Retourne le HTML brut pour prévisualiser dans le navigateur
+      if (req.query.preview === 'html' && result.html) {
+        res.setHeader('Content-Type', 'text/html');
+        return res.send(result.html);
+      }
+    }
+    res.json(result);
+  } catch (err) {
+    console.error('[Stock] daily notification error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+}
+app.post('/api/stock/notifications/daily', handleNotifDaily);
+app.get('/api/stock/notifications/daily', handleNotifDaily);
+
+async function handleNotifWeekly(req, res) {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const dryRun = req.query.send !== '1';
+    const result = await stockNotifications.runWeeklyRecap({ dryRun });
+    if (dryRun) {
+      if (req.query.preview === 'html' && result.html) {
+        res.setHeader('Content-Type', 'text/html');
+        return res.send(result.html);
+      }
+    }
+    res.json(result);
+  } catch (err) {
+    console.error('[Stock] weekly notification error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+}
+app.post('/api/stock/notifications/weekly', handleNotifWeekly);
+app.get('/api/stock/notifications/weekly', handleNotifWeekly);
 
 // Alertes — liste
 app.get('/api/stock/alertes', (req, res) => {
