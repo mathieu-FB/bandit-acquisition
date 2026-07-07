@@ -5671,6 +5671,114 @@ app.get('/api/stock/alertes', (req, res) => {
   }
 });
 
+// Alertes enrichies — moteur.runAll + join ref + fournisseur, groupé par fournisseur.
+// Utilisé par la vue Alertes UI (/stock.html).
+// ?includeOk=1 pour inclure les SKU OK (par défaut exclus).
+// ?niveaux=RUPTURE,CRITIQUE pour filtrer.
+app.get('/api/stock/alertes/enriched', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const report = stockMoteur.runAll({ dryRun: true });
+    const includeOk = req.query.includeOk === '1';
+    const niveauxFilter = req.query.niveaux
+      ? new Set(String(req.query.niveaux).split(',').map(s => s.trim()).filter(Boolean))
+      : null;
+
+    // Enrichit chaque detail avec ref data + fournisseur
+    const fournisseursById = {};
+    for (const f of stockDb.listFournisseurs()) fournisseursById[f.id] = f;
+
+    const enriched = [];
+    for (const d of report.details) {
+      if (!includeOk && d.niveau === 'OK') continue;
+      if (niveauxFilter && !niveauxFilter.has(d.niveau)) continue;
+      const ref = stockDb.getReferentielSku(d.sku);
+      if (!ref) continue;
+      const fournisseur = ref.fournisseur_defaut_id ? (fournisseursById[ref.fournisseur_defaut_id] || null) : null;
+      enriched.push({
+        sku: d.sku,
+        nom_court: ref.nom_court,
+        nom_long: ref.nom_long,
+        famille: d.famille,
+        animal: d.animal,
+        ean_13: ref.ean_13,
+        image_url: ref.image_url,
+        url_produit: ref.url_produit,
+        pa_vs: ref.pa_vs,
+        moq: ref.moq,
+        colisage: ref.colisage,
+        stockActuel: d.stockActuel,
+        leadTimeJours: d.leadTimeJours,
+        couvertureViseeJours: d.couvertureViseeJours,
+        niveau: d.niveau,
+        dateRuptureEstimee: d.dateRuptureEstimee,
+        proposition_qte: d.proposition_qte,
+        proposition_montant: d.proposition_montant,
+        matrice_bg_ref: ref.matrice_bg_ref,
+        matrice_bh_ref: ref.matrice_bh_ref,
+        fournisseur_id: ref.fournisseur_defaut_id,
+        fournisseur_nom: fournisseur ? fournisseur.nom : null,
+      });
+    }
+
+    // Group by fournisseur
+    const groups = {};
+    for (const item of enriched) {
+      const key = item.fournisseur_id ? `f_${item.fournisseur_id}` : 'unassigned';
+      if (!groups[key]) {
+        groups[key] = {
+          fournisseur_id: item.fournisseur_id,
+          fournisseur_nom: item.fournisseur_nom || '— Sans fournisseur —',
+          items: [],
+          totalSkus: 0,
+          totalQte: 0,
+          totalMontant: 0,
+        };
+      }
+      groups[key].items.push(item);
+      groups[key].totalSkus += 1;
+      groups[key].totalQte += item.proposition_qte || 0;
+      groups[key].totalMontant += item.proposition_montant || 0;
+    }
+    // Sort groups: assigned first (alpha), unassigned last
+    const grouped = Object.values(groups).sort((a, b) => {
+      if (!a.fournisseur_id && b.fournisseur_id) return 1;
+      if (a.fournisseur_id && !b.fournisseur_id) return -1;
+      return (a.fournisseur_nom || '').localeCompare(b.fournisseur_nom || '');
+    });
+    // Sort items within each group by niveau severity then by rupture date asc
+    const NIVEAU_ORDER = { RUPTURE: 0, CRITIQUE: 1, URGENT: 2, A_COMMANDER: 3, DONNEE_MANQUANTE: 4, OK: 5 };
+    for (const g of grouped) {
+      g.items.sort((a, b) => {
+        const na = NIVEAU_ORDER[a.niveau] ?? 99;
+        const nb = NIVEAU_ORDER[b.niveau] ?? 99;
+        if (na !== nb) return na - nb;
+        const da = a.dateRuptureEstimee ? new Date(a.dateRuptureEstimee).getTime() : Infinity;
+        const db = b.dateRuptureEstimee ? new Date(b.dateRuptureEstimee).getTime() : Infinity;
+        return da - db;
+      });
+      g.totalMontant = Number(g.totalMontant.toFixed(2));
+    }
+
+    // Familles + fournisseurs pour les dropdowns filtres
+    const familles = Array.from(new Set(enriched.map(x => x.famille).filter(Boolean))).sort();
+    const fournisseurs = Array.from(new Set(grouped.map(g => g.fournisseur_nom))).sort();
+
+    res.json({
+      today: report.today,
+      byNiveau: report.byNiveau,
+      totalActionable: enriched.length,
+      totalMontant: Number(enriched.reduce((s, x) => s + (x.proposition_montant || 0), 0).toFixed(2)),
+      grouped,
+      familles,
+      fournisseurs,
+    });
+  } catch (err) {
+    console.error('[Stock] alertes enriched error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ============================================================
 // START
 // ============================================================

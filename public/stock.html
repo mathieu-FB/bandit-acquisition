@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bandit — Stock &amp; Réappro</title>
+  <style>
+    * { box-sizing: border-box; }
+    :root {
+      --bg: #f6f7f9;
+      --card-bg: #fff;
+      --border: #e5e7eb;
+      --text: #1a1a1a;
+      --muted: #6b7280;
+      --primary: #0f172a;
+      --primary-hover: #1e293b;
+      --secondary: #e5e7eb;
+      --secondary-hover: #d1d5db;
+      --rupture: #991b1b;
+      --rupture-bg: #fee2e2;
+      --critique: #b45309;
+      --critique-bg: #fef3c7;
+      --urgent: #b91c1c;
+      --urgent-bg: #fecaca;
+      --acmd: #1e40af;
+      --acmd-bg: #dbeafe;
+      --dm: #6b7280;
+      --dm-bg: #e5e7eb;
+      --ok: #065f46;
+      --ok-bg: #d1fae5;
+    }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; background: var(--bg); color: var(--text); font-size: 14px; }
+    header { background: var(--primary); color: #fff; padding: 14px 24px; display: flex; align-items: center; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
+    header .brand { font-size: 15px; font-weight: 600; }
+    header .brand a { color: rgba(255,255,255,0.7); text-decoration: none; margin-right: 8px; }
+    header .brand a:hover { color: #fff; }
+    nav.tabs { display: flex; gap: 4px; }
+    nav.tabs button, nav.tabs a { background: transparent; border: none; color: rgba(255,255,255,0.7); padding: 8px 14px; font-size: 13px; cursor: pointer; border-radius: 6px; text-decoration: none; }
+    nav.tabs button.active { background: rgba(255,255,255,0.15); color: #fff; }
+    nav.tabs button:hover, nav.tabs a:hover { color: #fff; background: rgba(255,255,255,0.08); }
+    main { padding: 20px 24px; max-width: 1400px; margin: 0 auto; }
+    .kpi-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; margin-bottom: 20px; }
+    .kpi { background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; padding: 14px; cursor: pointer; transition: transform 0.15s; }
+    .kpi:hover { transform: translateY(-2px); }
+    .kpi.active { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(15,23,42,0.1); }
+    .kpi .label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 600; }
+    .kpi .value { font-size: 26px; font-weight: 700; margin-top: 4px; }
+    .kpi.rupture .value { color: var(--rupture); }
+    .kpi.critique .value { color: var(--critique); }
+    .kpi.urgent .value { color: var(--urgent); }
+    .kpi.acmd .value { color: var(--acmd); }
+    .kpi.dm .value { color: var(--dm); }
+    .kpi.ok .value { color: var(--ok); }
+    .kpi .sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .filters { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; margin-bottom: 16px; }
+    .filters input, .filters select { padding: 7px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; background: #fff; min-width: 140px; }
+    .filters input[type="search"] { min-width: 220px; flex: 1; max-width: 340px; }
+    .filters .filter-label { font-size: 12px; color: var(--muted); font-weight: 500; margin-right: 4px; }
+    .filters .reset-btn { background: var(--secondary); border: none; padding: 7px 12px; border-radius: 6px; font-size: 13px; cursor: pointer; color: var(--text); }
+    .filters .reset-btn:hover { background: var(--secondary-hover); }
+    .group { background: var(--card-bg); border: 1px solid var(--border); border-radius: 10px; margin-bottom: 16px; overflow: hidden; }
+    .group-header { padding: 14px 18px; background: #fafbfc; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+    .group-header .name { font-weight: 600; font-size: 14px; }
+    .group-header .stats { font-size: 12px; color: var(--muted); }
+    .group-header .stats strong { color: var(--text); font-size: 13px; }
+    .group-header button { background: var(--primary); color: #fff; border: none; padding: 7px 12px; border-radius: 6px; font-size: 12px; cursor: pointer; }
+    .group-header button:hover { background: var(--primary-hover); }
+    .group-header button:disabled { opacity: 0.5; cursor: not-allowed; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    table th { text-align: left; padding: 10px 14px; background: #fafbfc; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); font-weight: 600; border-bottom: 1px solid var(--border); }
+    table td { padding: 12px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    table tr:last-child td { border-bottom: none; }
+    table tr:hover { background: #fafbfc; }
+    .thumb { width: 42px; height: 42px; border-radius: 6px; background: #f3f4f6; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+    .thumb img { max-width: 100%; max-height: 100%; }
+    .thumb.empty { color: var(--muted); font-size: 10px; }
+    .sku-cell { min-width: 180px; }
+    .sku-cell .sku-code { font-family: "SF Mono", Menlo, monospace; font-size: 12px; color: var(--muted); }
+    .sku-cell .sku-name { font-weight: 500; margin-top: 2px; line-height: 1.3; }
+    .badge { display: inline-block; padding: 3px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
+    .badge.rupture { background: var(--rupture-bg); color: var(--rupture); }
+    .badge.critique { background: var(--critique-bg); color: var(--critique); }
+    .badge.urgent { background: var(--urgent-bg); color: var(--urgent); }
+    .badge.acmd { background: var(--acmd-bg); color: var(--acmd); }
+    .badge.dm { background: var(--dm-bg); color: var(--dm); }
+    .badge.ok { background: var(--ok-bg); color: var(--ok); }
+    .rupture-cell { min-width: 130px; }
+    .rupture-cell .date { font-weight: 500; }
+    .rupture-cell .days { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .qty-cell { text-align: right; font-variant-numeric: tabular-nums; }
+    .qty-cell .qte { font-weight: 600; }
+    .qty-cell .montant { font-size: 11px; color: var(--muted); margin-top: 2px; }
+    .empty-state { padding: 40px; text-align: center; color: var(--muted); background: var(--card-bg); border: 1px dashed var(--border); border-radius: 10px; }
+    .loading { padding: 30px; text-align: center; color: var(--muted); }
+    .action-btn { background: transparent; border: 1px solid var(--border); color: var(--text); padding: 5px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; }
+    .action-btn:hover { background: var(--secondary); }
+    .placeholder-section { background: var(--card-bg); border: 1px dashed var(--border); border-radius: 10px; padding: 40px; text-align: center; color: var(--muted); }
+    .placeholder-section h2 { margin: 0 0 8px; color: var(--text); font-size: 16px; }
+    /* Modal */
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 100; padding: 24px; }
+    .modal-overlay.active { display: flex; }
+    .modal { background: var(--card-bg); border-radius: 12px; max-width: 900px; width: 100%; max-height: 90vh; overflow: auto; }
+    .modal-header { padding: 16px 20px; border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; background: var(--card-bg); z-index: 1; }
+    .modal-header h3 { margin: 0; font-size: 15px; font-weight: 600; }
+    .modal-close { background: none; border: none; font-size: 22px; color: var(--muted); cursor: pointer; line-height: 1; }
+    .modal-body { padding: 20px; }
+    .modal-body pre { background: #0f172a; color: #a5f3fc; font-family: "SF Mono", Menlo, monospace; font-size: 11px; padding: 14px; border-radius: 8px; overflow: auto; max-height: 400px; }
+    .modal-body .metrics { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; margin-bottom: 16px; }
+    .modal-body .metric { background: #f9fafb; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
+    .modal-body .metric .lbl { font-size: 10px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); font-weight: 600; }
+    .modal-body .metric .val { font-size: 16px; font-weight: 600; margin-top: 2px; }
+    .modal-body h4 { margin: 16px 0 8px; font-size: 13px; }
+    .forecast-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 12px; }
+    .forecast-table th, .forecast-table td { padding: 6px 8px; text-align: right; border-bottom: 1px solid var(--border); }
+    .forecast-table th:first-child, .forecast-table td:first-child { text-align: left; }
+    .forecast-table th { background: #fafbfc; font-size: 10px; text-transform: uppercase; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand"><a href="/">← Dashboard</a> · Stock &amp; Réappro</div>
+    <nav class="tabs">
+      <button data-tab="alertes" class="active">Alertes</button>
+      <button data-tab="previsionnel">Prévisionnel</button>
+      <button data-tab="bdc">Commandes fournisseur</button>
+      <button data-tab="parametres">Paramètres</button>
+      <a href="/stock-admin.html">Admin</a>
+    </nav>
+  </header>
+
+  <main>
+    <!-- Alertes tab -->
+    <section id="tab-alertes">
+      <div id="kpiRow" class="kpi-row"></div>
+
+      <div class="filters">
+        <input type="search" id="searchInput" placeholder="Rechercher SKU, nom, EAN…">
+        <span class="filter-label">Fournisseur</span>
+        <select id="fournisseurFilter"><option value="">Tous</option></select>
+        <span class="filter-label">Famille</span>
+        <select id="familleFilter"><option value="">Toutes</option></select>
+        <span class="filter-label">Niveau</span>
+        <select id="niveauFilter">
+          <option value="">Actionnables (hors OK)</option>
+          <option value="RUPTURE,CRITIQUE,URGENT">Priorité haute</option>
+          <option value="RUPTURE">Rupture seule</option>
+          <option value="all">Tous (inclut OK)</option>
+        </select>
+        <button class="reset-btn" id="resetBtn">Reset</button>
+      </div>
+
+      <div id="alertesContent" class="loading">Chargement du moteur…</div>
+    </section>
+
+    <!-- Placeholders for future steps -->
+    <section id="tab-previsionnel" hidden>
+      <div class="placeholder-section">
+        <h2>Prévisionnel</h2>
+        <p>Vue à venir en étape 5 : projection stock 12 mois par SKU, courbe de couverture, saisonnalité famille.</p>
+      </div>
+    </section>
+    <section id="tab-bdc" hidden>
+      <div class="placeholder-section">
+        <h2>Commandes fournisseur</h2>
+        <p>Module à venir en étape 4 : création BDC (tableau éditable + upload xlsx + export xlsx propositions), cycle de statuts, réception.</p>
+      </div>
+    </section>
+    <section id="tab-parametres" hidden>
+      <div class="placeholder-section">
+        <h2>Paramètres</h2>
+        <p>Écran à venir en étape 5 : gestion fournisseurs, paramètres famille (couverture, coeff sécurité/tendance/saisonnalité), adresse livraison, seuils d'alerte.</p>
+      </div>
+    </section>
+  </main>
+
+  <!-- Modal détail SKU -->
+  <div id="modal" class="modal-overlay">
+    <div class="modal">
+      <div class="modal-header">
+        <h3 id="modalTitle">Détail SKU</h3>
+        <button class="modal-close" id="modalClose">×</button>
+      </div>
+      <div id="modalBody" class="modal-body">Chargement…</div>
+    </div>
+  </div>
+
+  <script>
+    // Tabs
+    document.querySelectorAll('nav.tabs button').forEach(b => {
+      b.addEventListener('click', () => {
+        document.querySelectorAll('nav.tabs button').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+        const tab = b.dataset.tab;
+        ['alertes', 'previsionnel', 'bdc', 'parametres'].forEach(t => {
+          document.getElementById(`tab-${t}`).hidden = (t !== tab);
+        });
+      });
+    });
+
+    // Formatters
+    const fmtInt = v => v == null ? '—' : new Intl.NumberFormat('fr-FR').format(Math.round(v));
+    const fmtEur = v => v == null ? '—' : new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(v);
+    const fmtDate = iso => iso ? new Date(iso).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: '2-digit' }) : '—';
+    const daysUntil = iso => {
+      if (!iso) return null;
+      const d = new Date(iso); d.setUTCHours(0,0,0,0);
+      const today = new Date(); today.setUTCHours(0,0,0,0);
+      return Math.round((d - today) / 86400000);
+    };
+    const niveauCls = n => ({ RUPTURE: 'rupture', CRITIQUE: 'critique', URGENT: 'urgent', A_COMMANDER: 'acmd', DONNEE_MANQUANTE: 'dm', OK: 'ok' })[n] || 'dm';
+    const niveauLbl = n => ({ RUPTURE: 'Rupture', CRITIQUE: 'Critique', URGENT: 'Urgent', A_COMMANDER: 'À commander', DONNEE_MANQUANTE: 'Data ⚠', OK: 'OK' })[n] || n;
+
+    let CURRENT_DATA = null;
+
+    async function loadAlertes() {
+      const content = document.getElementById('alertesContent');
+      content.innerHTML = '<div class="loading">Chargement…</div>';
+      try {
+        const niv = document.getElementById('niveauFilter').value;
+        const params = new URLSearchParams();
+        if (niv === 'all') params.set('includeOk', '1');
+        else if (niv) params.set('niveaux', niv);
+        const res = await fetch(`/api/stock/alertes/enriched?${params}`, { credentials: 'same-origin' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        CURRENT_DATA = await res.json();
+        renderKpis();
+        renderFilters();
+        renderGroups();
+      } catch (err) {
+        content.innerHTML = `<div class="empty-state">Erreur : ${err.message}</div>`;
+      }
+    }
+
+    function renderKpis() {
+      const b = CURRENT_DATA.byNiveau;
+      const cards = [
+        { key: 'RUPTURE', cls: 'rupture', label: 'Rupture' },
+        { key: 'CRITIQUE', cls: 'critique', label: 'Critique' },
+        { key: 'URGENT', cls: 'urgent', label: 'Urgent' },
+        { key: 'A_COMMANDER', cls: 'acmd', label: 'À commander' },
+        { key: 'DONNEE_MANQUANTE', cls: 'dm', label: 'Data ⚠' },
+        { key: 'OK', cls: 'ok', label: 'OK' },
+      ];
+      const total = CURRENT_DATA.totalActionable;
+      const totalM = CURRENT_DATA.totalMontant;
+      document.getElementById('kpiRow').innerHTML =
+        `<div class="kpi"><div class="label">Total à commander</div><div class="value">${fmtInt(total)}</div><div class="sub">${fmtEur(totalM)}</div></div>` +
+        cards.map(c => `<div class="kpi ${c.cls}"><div class="label">${c.label}</div><div class="value">${b[c.key] || 0}</div></div>`).join('');
+    }
+
+    function renderFilters() {
+      // Fournisseur
+      const foSel = document.getElementById('fournisseurFilter');
+      const currentFo = foSel.value;
+      foSel.innerHTML = '<option value="">Tous</option>' + CURRENT_DATA.fournisseurs.map(f => `<option value="${escapeAttr(f)}">${escapeHtml(f)}</option>`).join('');
+      foSel.value = currentFo;
+      // Famille
+      const faSel = document.getElementById('familleFilter');
+      const currentFa = faSel.value;
+      faSel.innerHTML = '<option value="">Toutes</option>' + CURRENT_DATA.familles.map(f => `<option value="${escapeAttr(f)}">${escapeHtml(f)}</option>`).join('');
+      faSel.value = currentFa;
+    }
+
+    function renderGroups() {
+      const q = document.getElementById('searchInput').value.trim().toLowerCase();
+      const fo = document.getElementById('fournisseurFilter').value;
+      const fa = document.getElementById('familleFilter').value;
+
+      const container = document.getElementById('alertesContent');
+      const filtered = CURRENT_DATA.grouped.map(g => ({
+        ...g,
+        items: g.items.filter(i =>
+          (!q || (i.sku || '').toLowerCase().includes(q) || (i.nom_court || '').toLowerCase().includes(q) || (i.nom_long || '').toLowerCase().includes(q) || (i.ean_13 || '').includes(q)) &&
+          (!fa || i.famille === fa)
+        ),
+      })).filter(g => (!fo || g.fournisseur_nom === fo) && g.items.length > 0);
+
+      if (filtered.length === 0) {
+        container.innerHTML = `<div class="empty-state">Aucune alerte ne correspond aux filtres. Ajuste ou "Reset".</div>`;
+        return;
+      }
+
+      container.innerHTML = filtered.map(g => {
+        const canCreateBdc = !!g.fournisseur_id && g.items.some(i => (i.proposition_qte || 0) > 0);
+        const rows = g.items.map(i => renderRow(i)).join('');
+        return `
+          <div class="group">
+            <div class="group-header">
+              <div>
+                <div class="name">${escapeHtml(g.fournisseur_nom)}</div>
+                <div class="stats"><strong>${g.totalSkus}</strong> SKU · <strong>${fmtInt(g.totalQte)}</strong> unités · <strong>${fmtEur(g.totalMontant)}</strong></div>
+              </div>
+              <div>
+                <button disabled title="Module BDC arrive en étape 4">Créer commande fournisseur</button>
+              </div>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th></th>
+                  <th class="sku-cell">SKU / Nom</th>
+                  <th>Famille</th>
+                  <th>Niveau</th>
+                  <th style="text-align:right;">Stock</th>
+                  <th class="rupture-cell">Rupture</th>
+                  <th style="text-align:right;">Lead / Couv</th>
+                  <th style="text-align:right;">Proposition</th>
+                  <th style="text-align:right;">vs Matrice</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>`;
+      }).join('');
+    }
+
+    function renderRow(i) {
+      const dj = daysUntil(i.dateRuptureEstimee);
+      const djClass = dj != null && dj <= 0 ? 'style="color:var(--rupture);font-weight:600;"' : '';
+      const matriceQte = i.matrice_bg_ref || 0;
+      const moteurQte = i.proposition_qte || 0;
+      let vsMatrice = '';
+      if (matriceQte > 0) {
+        const ecart = moteurQte - matriceQte;
+        const pct = ((ecart / matriceQte) * 100).toFixed(0);
+        const clr = Math.abs(pct) < 20 ? 'var(--muted)' : (ecart > 0 ? 'var(--critique)' : 'var(--acmd)');
+        vsMatrice = `<div style="color:${clr};font-size:11px;">M: ${fmtInt(matriceQte)} · ${ecart >= 0 ? '+' : ''}${pct}%</div>`;
+      } else {
+        vsMatrice = '<div style="color:var(--muted);font-size:11px;">M: —</div>';
+      }
+      return `
+        <tr>
+          <td><div class="thumb ${i.image_url ? '' : 'empty'}">${i.image_url ? `<img src="${escapeAttr(i.image_url)}" loading="lazy">` : ''}</div></td>
+          <td class="sku-cell">
+            <div class="sku-code">${escapeHtml(i.sku)}</div>
+            <div class="sku-name">${escapeHtml(i.nom_court || '—')}</div>
+          </td>
+          <td>${escapeHtml(i.famille || '—')} <span style="color:var(--muted);font-size:11px;">/ ${escapeHtml(i.animal || '—')}</span></td>
+          <td><span class="badge ${niveauCls(i.niveau)}">${niveauLbl(i.niveau)}</span></td>
+          <td style="text-align:right;">${fmtInt(i.stockActuel)}</td>
+          <td class="rupture-cell">
+            ${i.dateRuptureEstimee
+              ? `<div class="date" ${djClass}>${fmtDate(i.dateRuptureEstimee)}</div><div class="days" ${djClass}>${dj != null ? (dj <= 0 ? 'aujourd\'hui' : `dans ${dj} j`) : ''}</div>`
+              : '<div style="color:var(--muted);">—</div>'
+            }
+          </td>
+          <td style="text-align:right;font-size:11px;color:var(--muted);">${i.leadTimeJours} j / ${i.couvertureViseeJours} j</td>
+          <td class="qty-cell">
+            <div class="qte">${fmtInt(moteurQte)}</div>
+            <div class="montant">${fmtEur(i.proposition_montant)}</div>
+          </td>
+          <td style="text-align:right;">${vsMatrice}</td>
+          <td><button class="action-btn" onclick="openDetail('${escapeAttr(i.sku)}')">Détail</button></td>
+        </tr>`;
+    }
+
+    async function openDetail(sku) {
+      const modal = document.getElementById('modal');
+      const body = document.getElementById('modalBody');
+      document.getElementById('modalTitle').textContent = `Détail — ${sku}`;
+      body.innerHTML = '<div class="loading">Chargement…</div>';
+      modal.classList.add('active');
+      try {
+        const res = await fetch(`/api/stock/moteur/preview/${encodeURIComponent(sku)}`, { credentials: 'same-origin' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const d = await res.json();
+        body.innerHTML = renderDetail(d);
+      } catch (err) {
+        body.innerHTML = `<div class="empty-state">Erreur : ${err.message}</div>`;
+      }
+    }
+
+    function renderDetail(d) {
+      const p = d.proposition || {};
+      const metrics = [
+        { l: 'Niveau', v: `<span class="badge ${niveauCls(d.niveau)}">${niveauLbl(d.niveau)}</span>` },
+        { l: 'Stock actuel', v: fmtInt(d.stockActuel) },
+        { l: 'Lead time', v: `${d.leadTimeJours} j` },
+        { l: 'Couverture visée', v: `${d.couvertureViseeJours} j (${d.couvertureViseeSource || '—'})` },
+        { l: 'Rupture prévue', v: d.dateRuptureEstimeeStr || '—' },
+        { l: 'Tendance', v: `${d.tendance.coeff} <span style="color:var(--muted);font-size:11px;">(${d.tendance.source})</span>` },
+        { l: 'Sécurité', v: d.coeffSecurite },
+        { l: 'Proposition', v: `${fmtInt(p.qte)} u · ${fmtEur(p.montant)}` },
+      ];
+      const forecastRows = (d.monthlyForecast || []).map(m => `
+        <tr>
+          <td>${m.ym}</td>
+          <td>${fmtInt(m.base_n_1)}</td>
+          <td>${m.coeff_sais.toFixed(2)}</td>
+          <td>${m.coeff_tend.toFixed(2)}</td>
+          <td>${m.coeff_sec.toFixed(2)}</td>
+          <td><strong>${fmtInt(m.demande)}</strong></td>
+        </tr>`).join('');
+      return `
+        <div class="metrics">${metrics.map(m => `<div class="metric"><div class="lbl">${m.l}</div><div class="val">${m.v}</div></div>`).join('')}</div>
+        <h4>Prévision mensuelle (12 mois)</h4>
+        <table class="forecast-table">
+          <thead><tr><th>Mois</th><th>Base N-1</th><th>Sais</th><th>Tend</th><th>Séc</th><th>Demande</th></tr></thead>
+          <tbody>${forecastRows}</tbody>
+        </table>
+        ${p.qte > 0 ? `
+          <h4>Détail proposition</h4>
+          <table class="forecast-table">
+            <tbody>
+              <tr><td>Demande sur fenêtre ${p.horizonJours} j</td><td><strong>${fmtInt(p.demandeFenetre)} u</strong></td></tr>
+              <tr><td>Stock actuel</td><td>-${fmtInt(p.stockActuel)} u</td></tr>
+              <tr><td>En-cours utiles (BDC)</td><td>-${fmtInt(p.enCoursUtiles)} u</td></tr>
+              <tr><td>Brut à commander</td><td>${fmtInt(p.brut)} u</td></tr>
+              <tr><td>Arrondi (MOQ ${p.moq}, colisage ${p.colisage})</td><td><strong>${fmtInt(p.qte)} u</strong></td></tr>
+              <tr><td>Montant (PA ${fmtEur(p.pa_unitaire)})</td><td><strong>${fmtEur(p.montant)}</strong></td></tr>
+            </tbody>
+          </table>` : ''}
+        ${d.ref.matrice_bg_ref ? `
+          <h4>Comparaison avec la Matrice xlsx</h4>
+          <table class="forecast-table">
+            <tbody>
+              <tr><td>Matrice propose</td><td>${fmtInt(d.ref.matrice_bg_ref)} u · ${fmtEur(d.ref.matrice_bh_ref)}</td></tr>
+              <tr><td>Moteur propose</td><td>${fmtInt(p.qte)} u · ${fmtEur(p.montant)}</td></tr>
+              <tr><td>Écart</td><td>${p.qte - d.ref.matrice_bg_ref >= 0 ? '+' : ''}${fmtInt((p.qte || 0) - d.ref.matrice_bg_ref)} u (${(((p.qte || 0) - d.ref.matrice_bg_ref) / d.ref.matrice_bg_ref * 100).toFixed(0)}%)</td></tr>
+            </tbody>
+          </table>` : ''}`;
+    }
+
+    function escapeHtml(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+    function escapeAttr(s) { return escapeHtml(s).replace(/"/g, '&quot;'); }
+
+    // Wire up
+    document.getElementById('searchInput').addEventListener('input', () => renderGroups());
+    document.getElementById('fournisseurFilter').addEventListener('change', renderGroups);
+    document.getElementById('familleFilter').addEventListener('change', renderGroups);
+    document.getElementById('niveauFilter').addEventListener('change', loadAlertes);
+    document.getElementById('resetBtn').addEventListener('click', () => {
+      document.getElementById('searchInput').value = '';
+      document.getElementById('fournisseurFilter').value = '';
+      document.getElementById('familleFilter').value = '';
+      document.getElementById('niveauFilter').value = '';
+      loadAlertes();
+    });
+    document.getElementById('modalClose').addEventListener('click', () => document.getElementById('modal').classList.remove('active'));
+    document.getElementById('modal').addEventListener('click', e => { if (e.target.id === 'modal') e.target.classList.remove('active'); });
+
+    // Initial load
+    loadAlertes();
+  </script>
+</body>
+</html>
