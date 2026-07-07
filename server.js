@@ -13,6 +13,7 @@ const stockDb = require('./stock/db');
 const stockSeed = require('./stock/seed-matrice');
 const stockSync = require('./stock/sync-shopify');
 const stockCompletude = require('./stock/completude');
+const stockMoteur = require('./stock/moteur');
 
 const crypto = require('crypto');
 
@@ -5458,6 +5459,119 @@ app.put('/api/stock/parametres-globaux/:key', (req, res) => {
     if (value == null) return res.status(400).json({ error: 'Corps requis: { value: "..." }' });
     stockDb.setParametreGlobal(key, value);
     res.json({ key, value });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Moteur — preview d'un SKU (audit trail complet)
+app.get('/api/stock/moteur/preview/:sku', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const result = stockMoteur.previewSku(req.params.sku);
+    if (result.error) return res.status(404).json(result);
+    res.json(result);
+  } catch (err) {
+    console.error('[Stock] moteur preview error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Moteur — run global (GET alias for browser)
+function handleMoteurRun(req, res) {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const dryRun = req.query.dryRun !== '0';
+    const truncate = req.query.truncate !== '0';
+    const report = stockMoteur.runAll({ dryRun });
+    // Client-side default: truncate the details array to 100 entries to keep the response small.
+    if (truncate && report.details.length > 100) {
+      report.detailsTruncated = report.details.length;
+      report.details = report.details.slice(0, 100);
+    }
+    res.json(report);
+  } catch (err) {
+    console.error('[Stock] moteur run error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+}
+app.post('/api/stock/moteur/run', handleMoteurRun);
+app.get('/api/stock/moteur/run', handleMoteurRun);
+
+// Moteur — comparatif propositions vs colonnes Matrice BG/BH (étape 2.5).
+// Retourne les N SKU représentatifs (par défaut Top 10 par matrice_bh_ref).
+app.get('/api/stock/moteur/comparatif', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const n = Math.max(1, Math.min(100, parseInt(req.query.n || '10', 10)));
+    const report = stockMoteur.runAll({ dryRun: true });
+    // Filtre : SKU avec matrice_bg_ref > 0 ou matrice_bh_ref > 0 (matrice a proposé quelque chose)
+    const withMatrice = report.details.filter(d => (d.matrice_bg_ref || 0) > 0 || (d.matrice_bh_ref || 0) > 0);
+    withMatrice.sort((a, b) => (b.matrice_bh_ref || 0) - (a.matrice_bh_ref || 0));
+    const sample = withMatrice.slice(0, n).map(d => {
+      const bg = d.matrice_bg_ref || 0;
+      const bh = d.matrice_bh_ref || 0;
+      const qteMoteur = d.proposition_qte || 0;
+      const montMoteur = d.proposition_montant || 0;
+      const ecartQte = qteMoteur - bg;
+      const ecartPct = bg > 0 ? ((qteMoteur - bg) / bg) * 100 : null;
+      return {
+        sku: d.sku,
+        famille: d.famille,
+        animal: d.animal,
+        niveau_moteur: d.niveau,
+        dateRuptureEstimee: d.dateRuptureEstimee,
+        stockActuel: d.stockActuel,
+        leadTimeJours: d.leadTimeJours,
+        couvertureViseeJours: d.couvertureViseeJours,
+        matrice_qte: bg,
+        matrice_montant: Number(bh.toFixed(2)),
+        moteur_qte: qteMoteur,
+        moteur_montant: Number(montMoteur.toFixed(2)),
+        ecart_qte: ecartQte,
+        ecart_pct: ecartPct != null ? Number(ecartPct.toFixed(1)) : null,
+      };
+    });
+    // Récap agrégé — total matrice vs total moteur sur tous les SKU (pas juste le sample)
+    const totals = {
+      totalSkuAnalyses: report.totalSkus,
+      totalSkuAvecMatriceBG: withMatrice.length,
+      total_matrice_qte: withMatrice.reduce((s, d) => s + (d.matrice_bg_ref || 0), 0),
+      total_matrice_montant: Number(withMatrice.reduce((s, d) => s + (d.matrice_bh_ref || 0), 0).toFixed(2)),
+      total_moteur_qte: withMatrice.reduce((s, d) => s + (d.proposition_qte || 0), 0),
+      total_moteur_montant: Number(withMatrice.reduce((s, d) => s + (d.proposition_montant || 0), 0).toFixed(2)),
+    };
+    totals.ecart_qte = totals.total_moteur_qte - totals.total_matrice_qte;
+    totals.ecart_montant = Number((totals.total_moteur_montant - totals.total_matrice_montant).toFixed(2));
+    totals.ecart_pct = totals.total_matrice_qte > 0
+      ? Number((((totals.total_moteur_qte - totals.total_matrice_qte) / totals.total_matrice_qte) * 100).toFixed(1))
+      : null;
+    res.json({
+      today: report.today,
+      byNiveau: report.byNiveau,
+      totals,
+      sample,
+      notes: [
+        'Comparatif : moteur (calcul dynamique jour) vs Matrice (colonne BG/BH figée dans le xlsx).',
+        'Un écart important n\'est pas nécessairement une erreur : le moteur intègre les BDC en-cours, la saisonnalité récente, la tendance 3 mois, et la couverture visée en jours ; la matrice est un snapshot à la date du xlsx.',
+        'Les SKU avec niveau DONNEE_MANQUANTE ne génèrent PAS de proposition côté moteur (0), même si la matrice affiche une valeur.',
+      ],
+    });
+  } catch (err) {
+    console.error('[Stock] comparatif error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Alertes — liste
+app.get('/api/stock/alertes', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const niveaux = req.query.niveau
+      ? String(req.query.niveau).split(',').map(s => s.trim()).filter(Boolean)
+      : null;
+    const items = niveaux ? stockDb.listAlertesByNiveau(niveaux) : stockDb.listAllAlertes();
+    res.json({ total: items.length, items });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

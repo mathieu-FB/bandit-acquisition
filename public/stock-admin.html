@@ -72,10 +72,25 @@
     </div>
 
     <div class="card">
-      <h2>4 · Diagnostics</h2>
+      <h2>4 · Moteur de prévision</h2>
+      <p>Calcule niveau d'alerte + proposition de qté pour chaque SKU. Le <strong>preview par SKU</strong> retourne tout l'audit trail (saisonnalité, tendance, forecast 12 mois, projection 90 j). Le <strong>comparatif</strong> confronte les propositions moteur aux colonnes BG/BH du xlsx (top 10 par montant).</p>
+      <div class="row">
+        <button class="secondary" data-action="/api/stock/moteur/run?dryRun=1">Run dry-run</button>
+        <button data-action="/api/stock/moteur/run?dryRun=0">Run + persister alertes</button>
+        <button class="secondary" data-action="/api/stock/moteur/comparatif?n=10">Comparatif top 10 vs Matrice</button>
+      </div>
+      <form id="previewForm" class="row" style="margin-top: 12px;">
+        <input type="text" id="previewSku" placeholder="SKU pour preview (ex: J-BT-0)" style="flex: 1; min-width: 200px;">
+        <button type="submit" class="secondary">Preview SKU</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>5 · Diagnostics</h2>
       <div class="row">
         <button class="secondary" data-action="/api/stock/stats">Stats</button>
         <button class="secondary" data-action="/api/stock/completude">Complétude</button>
+        <button class="secondary" data-action="/api/stock/alertes">Alertes actuelles</button>
         <button class="secondary" data-action="/api/stock/sync-log?limit=20">Sync log (20 derniers)</button>
         <button class="secondary" data-action="/api/stock/sync-log?type=shopify_sales&limit=5">Sync log ventes</button>
         <button class="secondary" data-action="/api/stock/parametres-globaux">Paramètres globaux</button>
@@ -166,6 +181,13 @@
         btn.disabled = false;
         btn.textContent = 'Uploader';
       }
+    });
+
+    document.getElementById('previewForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const sku = document.getElementById('previewSku').value.trim();
+      if (!sku) return;
+      await callEndpoint(`/api/stock/moteur/preview/${encodeURIComponent(sku)}`);
     });
   </script>
 </body>
