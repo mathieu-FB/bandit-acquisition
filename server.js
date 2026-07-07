@@ -5671,6 +5671,484 @@ app.get('/api/stock/alertes', (req, res) => {
   }
 });
 
+// ============================================================
+// Fournisseurs — CRUD
+// ============================================================
+
+app.get('/api/stock/fournisseurs', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    res.json({ items: stockDb.listFournisseurs() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/stock/fournisseurs/:id', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const f = stockDb.getFournisseurById(Number(req.params.id));
+    if (!f) return res.status(404).json({ error: 'Fournisseur introuvable' });
+    res.json(f);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/stock/fournisseurs', express.json(), (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const body = req.body || {};
+    if (!body.nom || !String(body.nom).trim()) {
+      return res.status(400).json({ error: 'Le nom du fournisseur est requis' });
+    }
+    const id = stockDb.upsertFournisseur({
+      nom: String(body.nom).trim(),
+      email: body.email || null,
+      adresse: body.adresse || null,
+      contact: body.contact || null,
+      devise: body.devise || 'EUR',
+      incoterm: body.incoterm || 'EXW',
+      conditions_paiement: body.conditions_paiement || null,
+      notes: body.notes || null,
+      actif: body.actif != null ? (body.actif ? 1 : 0) : 1,
+    });
+    res.json({ ok: true, id, fournisseur: stockDb.getFournisseurById(id) });
+  } catch (err) {
+    console.error('[Stock] fournisseur upsert error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/stock/fournisseurs/:id', express.json(), (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const id = Number(req.params.id);
+    const existing = stockDb.getFournisseurById(id);
+    if (!existing) return res.status(404).json({ error: 'Fournisseur introuvable' });
+    const body = req.body || {};
+    stockDb.upsertFournisseur({
+      nom: body.nom ? String(body.nom).trim() : existing.nom,
+      email: body.email !== undefined ? body.email : existing.email,
+      adresse: body.adresse !== undefined ? body.adresse : existing.adresse,
+      contact: body.contact !== undefined ? body.contact : existing.contact,
+      devise: body.devise || existing.devise,
+      incoterm: body.incoterm || existing.incoterm,
+      conditions_paiement: body.conditions_paiement !== undefined ? body.conditions_paiement : existing.conditions_paiement,
+      notes: body.notes !== undefined ? body.notes : existing.notes,
+      actif: body.actif != null ? (body.actif ? 1 : 0) : existing.actif,
+    });
+    res.json({ ok: true, fournisseur: stockDb.getFournisseurById(id) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// BDC — CRUD + réception + annulation
+// ============================================================
+
+// Enrichit un BDC avec ses lignes + les infos ref/fournisseur (pour l'UI).
+function enrichBdc(bdc) {
+  if (!bdc) return null;
+  const fournisseur = stockDb.getFournisseurById(bdc.fournisseur_id) || null;
+  const lignes = stockDb.getBdcLignes(bdc.id).map(l => {
+    const ref = stockDb.getReferentielSku(l.sku);
+    return {
+      ...l,
+      nom_court: ref ? ref.nom_court : null,
+      nom_long: ref ? ref.nom_long : null,
+      ean_13: ref ? ref.ean_13 : null,
+      shopify_variant_title: ref ? ref.shopify_variant_title : null,
+      image_url: ref ? ref.image_url : null,
+      moq: ref ? ref.moq : null,
+      colisage: ref ? ref.colisage : null,
+    };
+  });
+  return {
+    ...bdc,
+    fournisseur,
+    lignes,
+    nb_lignes: lignes.length,
+    total_qte_commandee: lignes.reduce((s, l) => s + (l.qte_commandee || 0), 0),
+    total_qte_recue: lignes.reduce((s, l) => s + (l.qte_recue || 0), 0),
+  };
+}
+
+// Liste des BDC — filtres par statuts (CSV) et/ou fournisseur_id
+app.get('/api/stock/bdc', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const statuts = req.query.statuts
+      ? String(req.query.statuts).split(',').map(s => s.trim()).filter(Boolean)
+      : null;
+    const fournisseurId = req.query.fournisseur_id ? Number(req.query.fournisseur_id) : null;
+    let items = statuts ? stockDb.listBdcByStatut(statuts) : stockDb.listBdc();
+    if (fournisseurId) items = items.filter(b => b.fournisseur_id === fournisseurId);
+    // Enrichit avec fournisseur nom + nb lignes + total qte (sans charger toutes les lignes)
+    const enriched = items.map(b => {
+      const f = stockDb.getFournisseurById(b.fournisseur_id);
+      const lignes = stockDb.getBdcLignes(b.id);
+      return {
+        ...b,
+        fournisseur_nom: f ? f.nom : null,
+        nb_lignes: lignes.length,
+        total_qte_commandee: lignes.reduce((s, l) => s + (l.qte_commandee || 0), 0),
+        total_qte_recue: lignes.reduce((s, l) => s + (l.qte_recue || 0), 0),
+      };
+    });
+    res.json({ total: enriched.length, items: enriched });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/stock/bdc/:id', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const bdc = stockDb.getBdc(Number(req.params.id));
+    if (!bdc) return res.status(404).json({ error: 'BDC introuvable' });
+    res.json(enrichBdc(bdc));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Création — { fournisseur_id, statut?, date_eta?, notes?, lignes: [{sku, qte_commandee, pa_unitaire?, devise?}] }
+app.post('/api/stock/bdc', express.json(), (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const body = req.body || {};
+    if (!body.fournisseur_id) return res.status(400).json({ error: 'fournisseur_id requis' });
+    const fournisseur = stockDb.getFournisseurById(Number(body.fournisseur_id));
+    if (!fournisseur) return res.status(400).json({ error: 'Fournisseur introuvable' });
+    if (!Array.isArray(body.lignes) || body.lignes.length === 0) {
+      return res.status(400).json({ error: 'Au moins une ligne est requise' });
+    }
+    // Validation des lignes : SKU doit exister dans le référentiel
+    const lignes = [];
+    for (const l of body.lignes) {
+      const sku = l.sku ? String(l.sku).trim() : null;
+      if (!sku) return res.status(400).json({ error: 'Ligne sans SKU' });
+      const ref = stockDb.getReferentielSku(sku);
+      if (!ref) return res.status(400).json({ error: `SKU inconnu: ${sku}` });
+      const qte = Number(l.qte_commandee);
+      if (!Number.isFinite(qte) || qte <= 0) return res.status(400).json({ error: `Qté invalide pour ${sku}` });
+      lignes.push({
+        sku,
+        qte_commandee: qte,
+        qte_recue: 0,
+        pa_unitaire: l.pa_unitaire != null ? Number(l.pa_unitaire) : (ref.pa_vs != null ? ref.pa_vs : null),
+        devise: l.devise || body.devise || fournisseur.devise || 'EUR',
+      });
+    }
+    const created = stockDb.createBdc({
+      fournisseur_id: fournisseur.id,
+      statut: body.statut || 'brouillon',
+      date_envoi: body.date_envoi ? new Date(body.date_envoi).getTime() : null,
+      date_eta: body.date_eta ? new Date(body.date_eta).getTime() : null,
+      date_reception_prevue: body.date_reception_prevue ? new Date(body.date_reception_prevue).getTime() : null,
+      notes: body.notes || null,
+      devise: body.devise || fournisseur.devise || 'EUR',
+      lignes,
+    });
+    res.json({ ok: true, ...created, bdc: enrichBdc(stockDb.getBdc(created.id)) });
+  } catch (err) {
+    console.error('[Stock] BDC create error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Mise à jour meta (statut, dates, notes)
+app.put('/api/stock/bdc/:id', express.json(), (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const id = Number(req.params.id);
+    const existing = stockDb.getBdc(id);
+    if (!existing) return res.status(404).json({ error: 'BDC introuvable' });
+    const body = req.body || {};
+    const validStatuts = new Set(stockDb.BDC_STATUTS);
+    if (body.statut && !validStatuts.has(body.statut)) {
+      return res.status(400).json({ error: `Statut invalide: ${body.statut}` });
+    }
+    stockDb.updateBdcMeta(id, {
+      statut: body.statut ?? existing.statut,
+      date_envoi: body.date_envoi != null ? (body.date_envoi ? new Date(body.date_envoi).getTime() : null) : existing.date_envoi,
+      date_eta: body.date_eta != null ? (body.date_eta ? new Date(body.date_eta).getTime() : null) : existing.date_eta,
+      date_reception_prevue: body.date_reception_prevue != null ? (body.date_reception_prevue ? new Date(body.date_reception_prevue).getTime() : null) : existing.date_reception_prevue,
+      notes: body.notes !== undefined ? body.notes : existing.notes,
+    });
+    res.json({ ok: true, bdc: enrichBdc(stockDb.getBdc(id)) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Remplacer entièrement les lignes d'un BDC (uniquement possible tant que statut brouillon ou envoye)
+app.put('/api/stock/bdc/:id/lignes', express.json(), (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const id = Number(req.params.id);
+    const existing = stockDb.getBdc(id);
+    if (!existing) return res.status(404).json({ error: 'BDC introuvable' });
+    if (!['brouillon', 'envoye', 'confirme'].includes(existing.statut)) {
+      return res.status(400).json({ error: `Impossible d'éditer les lignes d'un BDC en statut "${existing.statut}"` });
+    }
+    const lignes = req.body && Array.isArray(req.body.lignes) ? req.body.lignes : null;
+    if (!lignes) return res.status(400).json({ error: 'Corps requis: { lignes: [...] }' });
+    const cleaned = [];
+    for (const l of lignes) {
+      const sku = l.sku ? String(l.sku).trim() : null;
+      if (!sku) return res.status(400).json({ error: 'Ligne sans SKU' });
+      const ref = stockDb.getReferentielSku(sku);
+      if (!ref) return res.status(400).json({ error: `SKU inconnu: ${sku}` });
+      const qte = Number(l.qte_commandee);
+      if (!Number.isFinite(qte) || qte <= 0) return res.status(400).json({ error: `Qté invalide pour ${sku}` });
+      cleaned.push({
+        sku,
+        qte_commandee: qte,
+        qte_recue: Number(l.qte_recue) || 0,
+        pa_unitaire: l.pa_unitaire != null ? Number(l.pa_unitaire) : (ref.pa_vs != null ? ref.pa_vs : null),
+        devise: l.devise || existing.devise || 'EUR',
+      });
+    }
+    stockDb.replaceBdcLignes(id, cleaned);
+    res.json({ ok: true, bdc: enrichBdc(stockDb.getBdc(id)) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Réception — { lignes: [{ligne_id, qte_recue}], date_reception_reelle? }
+app.post('/api/stock/bdc/:id/receptionner', express.json(), (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const id = Number(req.params.id);
+    const existing = stockDb.getBdc(id);
+    if (!existing) return res.status(404).json({ error: 'BDC introuvable' });
+    if (['receptionne', 'annule'].includes(existing.statut)) {
+      return res.status(400).json({ error: `Le BDC est déjà ${existing.statut}` });
+    }
+    const body = req.body || {};
+    const lignesInput = Array.isArray(body.lignes) ? body.lignes : [];
+    const lignesById = new Map(stockDb.getBdcLignes(id).map(l => [l.id, l]));
+    // Reçoit chaque ligne : par défaut qte_recue = qte_commandee, sauf spécifié
+    const receivedLignes = [];
+    for (const l of lignesById.values()) {
+      const override = lignesInput.find(x => Number(x.ligne_id) === l.id);
+      const qteRecue = override && Number.isFinite(Number(override.qte_recue))
+        ? Math.max(0, Number(override.qte_recue))
+        : l.qte_commandee;
+      receivedLignes.push({
+        sku: l.sku,
+        qte_commandee: l.qte_commandee,
+        qte_recue: qteRecue,
+        pa_unitaire: l.pa_unitaire,
+        devise: l.devise,
+      });
+    }
+    stockDb.replaceBdcLignes(id, receivedLignes);
+    stockDb.updateBdcMeta(id, {
+      statut: 'receptionne',
+      date_reception_reelle: body.date_reception_reelle ? new Date(body.date_reception_reelle).getTime() : Date.now(),
+    });
+    res.json({ ok: true, bdc: enrichBdc(stockDb.getBdc(id)) });
+  } catch (err) {
+    console.error('[Stock] BDC receptionner error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// BDC — Export / Import xlsx
+// ============================================================
+
+const stockXlsxIo = require('./stock/xlsx-io');
+
+const BDC_XLSX_HEADERS = [
+  { key: 'sku', label: 'SKU' },
+  { key: 'ean_13', label: 'EAN 13' },
+  { key: 'nom_court', label: 'Nom du produit' },
+  { key: 'shopify_variant_title', label: 'Nom de la variante' },
+  { key: 'qte_commandee', label: 'Qté à commander' },
+  { key: 'pa_unitaire', label: 'PA unitaire (€)' },
+];
+
+// Template vide (colonnes uniquement + une ligne d'exemple commentée en gris ?)
+app.get('/api/stock/bdc/template-xlsx', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const buffer = stockXlsxIo.rowsToBuffer('Commande fournisseur', BDC_XLSX_HEADERS, []);
+    const filename = `bandit-commande-template-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
+  } catch (err) {
+    console.error('[Stock] template xlsx error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Propositions moteur exportées en xlsx — soit toutes (unassigned), soit pour un fournisseur
+// ?fournisseur_id=X pour filtrer, ?niveaux=RUPTURE,CRITIQUE pour restreindre
+app.get('/api/stock/bdc/propositions-xlsx', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const fournisseurId = req.query.fournisseur_id ? Number(req.query.fournisseur_id) : null;
+    const niveauxFilter = req.query.niveaux
+      ? new Set(String(req.query.niveaux).split(',').map(s => s.trim()).filter(Boolean))
+      : new Set(['RUPTURE', 'CRITIQUE', 'URGENT', 'A_COMMANDER']);
+    const report = stockMoteur.runAll({ dryRun: true });
+    const rows = [];
+    for (const d of report.details) {
+      if (!niveauxFilter.has(d.niveau)) continue;
+      if (!(d.proposition_qte > 0)) continue;
+      const ref = stockDb.getReferentielSku(d.sku);
+      if (!ref) continue;
+      if (fournisseurId != null && ref.fournisseur_defaut_id !== fournisseurId) continue;
+      if (fournisseurId == null && ref.fournisseur_defaut_id != null) continue; // "sans fournisseur" seul
+      rows.push({
+        sku: d.sku,
+        ean_13: ref.ean_13,
+        nom_court: ref.nom_court,
+        shopify_variant_title: ref.shopify_variant_title,
+        qte_commandee: d.proposition_qte,
+        pa_unitaire: ref.pa_vs != null ? ref.pa_vs : ref.pa_dernier,
+      });
+    }
+    const suffix = fournisseurId
+      ? `fournisseur-${fournisseurId}`
+      : 'sans-fournisseur';
+    const filename = `bandit-propositions-${suffix}-${new Date().toISOString().slice(0, 10)}.xlsx`;
+    const buffer = stockXlsxIo.rowsToBuffer('Propositions moteur', BDC_XLSX_HEADERS, rows);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
+  } catch (err) {
+    console.error('[Stock] propositions xlsx error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Export xlsx d'un BDC existant (pour envoi manuel au fournisseur)
+app.get('/api/stock/bdc/:id/export-xlsx', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const id = Number(req.params.id);
+    const bdc = stockDb.getBdc(id);
+    if (!bdc) return res.status(404).json({ error: 'BDC introuvable' });
+    const enriched = enrichBdc(bdc);
+    const rows = enriched.lignes.map(l => ({
+      sku: l.sku,
+      ean_13: l.ean_13,
+      nom_court: l.nom_court,
+      shopify_variant_title: l.shopify_variant_title,
+      qte_commandee: l.qte_commandee,
+      pa_unitaire: l.pa_unitaire,
+    }));
+    const buffer = stockXlsxIo.rowsToBuffer(bdc.numero, BDC_XLSX_HEADERS, rows);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${bdc.numero}.xlsx"`);
+    res.send(buffer);
+  } catch (err) {
+    console.error('[Stock] BDC export xlsx error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Parse un xlsx uploadé et retourne les lignes détectées (aperçu avant création de BDC)
+// Multipart: field 'xlsx'. Retourne { rows: [{sku, qte, pa, ...}], warnings: [...] }
+app.post('/api/stock/bdc/parse-xlsx', stockUpload.single('xlsx'), (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Fichier xlsx manquant (champ multipart: xlsx)' });
+    const parsed = stockXlsxIo.readBufferSheetRaw(req.file.buffer);
+    const rawRows = parsed.rows || [];
+    if (rawRows.length < 2) return res.status(400).json({ error: 'Fichier vide ou sans données' });
+
+    // Détecte les colonnes par nom (header row = rawRows[0]) — cherche des matches insensibles à la casse.
+    const header = rawRows[0].map(h => (h == null ? '' : String(h).trim().toLowerCase()));
+    const findCol = (patterns) => {
+      for (let i = 0; i < header.length; i++) {
+        if (patterns.some(p => header[i].includes(p))) return i;
+      }
+      return -1;
+    };
+    const colSku = findCol(['sku', 'code']);
+    const colEan = findCol(['ean']);
+    const colNom = findCol(['nom du produit', 'nom produit', 'désignation', 'designation']);
+    const colVariante = findCol(['variante']);
+    const colQte = findCol(['qté', 'qte', 'quantité', 'quantite']);
+    const colPa = findCol(['pa unitaire', 'pa', 'prix']);
+
+    if (colSku === -1) {
+      return res.status(400).json({
+        error: 'Colonne SKU introuvable dans le xlsx. Assure-toi que la première ligne contient les en-têtes: SKU, EAN, Nom, Variante, Qté, PA.',
+        availableSheets: parsed.availableSheets,
+        detectedHeader: header,
+      });
+    }
+    if (colQte === -1) {
+      return res.status(400).json({
+        error: 'Colonne "Qté à commander" introuvable dans le xlsx.',
+        detectedHeader: header,
+      });
+    }
+
+    const rows = [];
+    const warnings = [];
+    for (let i = 1; i < rawRows.length; i++) {
+      const r = rawRows[i];
+      if (!r) continue;
+      const sku = stockXlsxIo.toStr(r[colSku]);
+      if (!sku) continue;
+      const qte = stockXlsxIo.toInt(r[colQte]);
+      if (qte == null || qte <= 0) {
+        warnings.push(`Ligne ${i + 1} SKU ${sku}: qté invalide ou nulle, ignorée`);
+        continue;
+      }
+      const ref = stockDb.getReferentielSku(sku);
+      const pa = colPa >= 0 ? stockXlsxIo.toNumber(r[colPa]) : null;
+      rows.push({
+        sku,
+        qte_commandee: qte,
+        pa_unitaire: pa != null ? pa : (ref ? (ref.pa_vs != null ? ref.pa_vs : ref.pa_dernier) : null),
+        ean_13: colEan >= 0 ? stockXlsxIo.toStr(r[colEan]) : (ref ? ref.ean_13 : null),
+        nom_court: colNom >= 0 ? stockXlsxIo.toStr(r[colNom]) : (ref ? ref.nom_court : null),
+        shopify_variant_title: colVariante >= 0 ? stockXlsxIo.toStr(r[colVariante]) : (ref ? ref.shopify_variant_title : null),
+        in_referentiel: !!ref,
+      });
+      if (!ref) warnings.push(`Ligne ${i + 1} SKU ${sku}: SKU inconnu du référentiel, sera rejeté à la création du BDC`);
+    }
+
+    res.json({
+      sheetName: parsed.sheetName,
+      availableSheets: parsed.availableSheets,
+      rowsCount: rows.length,
+      warnings,
+      rows,
+    });
+  } catch (err) {
+    console.error('[Stock] BDC parse xlsx error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Annulation
+app.post('/api/stock/bdc/:id/annuler', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const id = Number(req.params.id);
+    const existing = stockDb.getBdc(id);
+    if (!existing) return res.status(404).json({ error: 'BDC introuvable' });
+    if (existing.statut === 'receptionne') return res.status(400).json({ error: 'Impossible d\'annuler un BDC déjà réceptionné' });
+    stockDb.updateBdcMeta(id, { statut: 'annule' });
+    res.json({ ok: true, bdc: enrichBdc(stockDb.getBdc(id)) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Alertes enrichies — moteur.runAll + join ref + fournisseur, groupé par fournisseur.
 // Utilisé par la vue Alertes UI (/stock.html).
 // ?includeOk=1 pour inclure les SKU OK (par défaut exclus).
