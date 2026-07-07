@@ -9,6 +9,10 @@ const multer = require('multer');
 const { GoogleAdsApi, fromMicros } = require('google-ads-api');
 const { sendReport } = require('./daily-report');
 const cache = require('./cache');
+const stockDb = require('./stock/db');
+const stockSeed = require('./stock/seed-matrice');
+const stockSync = require('./stock/sync-shopify');
+const stockCompletude = require('./stock/completude');
 
 const crypto = require('crypto');
 
@@ -18,6 +22,7 @@ const PORT = process.env.PORT || 3001;
 // Initialize SQLite-backed cache early (before any endpoint registration)
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, 'data');
 cache.init({ dataDir: DATA_DIR });
+stockDb.init();
 
 app.set('trust proxy', true);
 app.use(express.json());
@@ -5251,6 +5256,178 @@ Règles :
     res.json({ post: refined });
   } catch (err) {
     console.error('[LinkedIn] Refine error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// STOCK & RÉAPPRO — endpoints
+// All routes are admin-only (share tokens have no business here).
+// ============================================================
+
+function requireAdmin(req, res) {
+  if (req.userRole !== 'admin') {
+    res.status(403).json({ error: 'Accès admin requis' });
+    return false;
+  }
+  return true;
+}
+
+// Stats globales
+app.get('/api/stock/stats', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    res.json(stockDb.stats());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Référentiel — liste paginée + search
+app.get('/api/stock/referentiel', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const search = (req.query.search || '').toString().trim().toLowerCase();
+    const limit = Math.max(1, Math.min(500, parseInt(req.query.limit || '100', 10)));
+    const offset = Math.max(0, parseInt(req.query.offset || '0', 10));
+    const onlyActif = req.query.actif !== '0';
+    let rows = onlyActif ? stockDb.listReferentielActif() : stockDb.listReferentielAll();
+    if (search) {
+      rows = rows.filter(r =>
+        (r.sku || '').toLowerCase().includes(search) ||
+        (r.nom_court || '').toLowerCase().includes(search) ||
+        (r.nom_long || '').toLowerCase().includes(search) ||
+        (r.cip || '').toLowerCase().includes(search) ||
+        (r.ean_13 || '').toLowerCase().includes(search)
+      );
+    }
+    const total = rows.length;
+    const items = rows.slice(offset, offset + limit);
+    res.json({ total, offset, limit, items });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Référentiel — détail d'un SKU (avec stock, prévisions récentes, en-cours)
+app.get('/api/stock/referentiel/:sku', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const sku = req.params.sku;
+    const ref = stockDb.getReferentielSku(sku);
+    if (!ref) return res.status(404).json({ error: 'SKU introuvable' });
+    const stockActuel = stockDb.getStockActuel(sku);
+    const previsions = stockDb.getPrevisionsForSku(sku);
+    const enCours = stockDb.getEnCoursForSku(sku);
+    const fournisseur = ref.fournisseur_defaut_id ? stockDb.getFournisseurById(ref.fournisseur_defaut_id) : null;
+    res.json({ referentiel: ref, stockActuel, previsions, enCours, fournisseur });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Seed matrice xlsx
+app.post('/api/stock/seed-matrice', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const dryRun = req.query.dryRun !== '0';
+    const xlsxPath = req.query.xlsxPath ? String(req.query.xlsxPath) : null;
+    const report = stockSeed.runSeed({ dryRun, xlsxPath });
+    res.json(report);
+  } catch (err) {
+    console.error('[Stock] seed error:', err.message);
+    res.status(500).json({ error: err.message, report: err.report || null });
+  }
+});
+
+// Sync Shopify — types: 'variants' | 'stock' | 'sales'
+app.post('/api/stock/sync-shopify', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  const type = String(req.query.type || '').toLowerCase();
+  try {
+    if (type === 'variants') {
+      const stats = await stockSync.syncShopifyVariants();
+      return res.json({ type, ...stats });
+    }
+    if (type === 'stock') {
+      const stats = await stockSync.syncShopifyStock();
+      return res.json({ type, ...stats });
+    }
+    if (type === 'sales') {
+      const fromYearMonth = String(req.query.fromYM || '');
+      const toYearMonth = String(req.query.toYM || '');
+      if (!fromYearMonth || !toYearMonth) {
+        return res.status(400).json({ error: 'fromYM et toYM requis (format YYYY-MM)' });
+      }
+      // Long-running: fire-and-forget, client polls /api/stock/sync-log
+      setImmediate(async () => {
+        try {
+          await stockSync.syncShopifyMonthlySales({ fromYearMonth, toYearMonth });
+        } catch (err) {
+          console.error('[Stock] sales sync error:', err.message);
+        }
+      });
+      return res.status(202).json({
+        accepted: true,
+        message: `Sync ventes ${fromYearMonth} → ${toYearMonth} démarré en arrière-plan. Poll /api/stock/sync-log?type=shopify_sales pour l\'avancement.`,
+      });
+    }
+    return res.status(400).json({ error: 'type invalide (attendu: variants | stock | sales)' });
+  } catch (err) {
+    console.error(`[Stock] sync ${type} error:`, err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// File complétude
+app.get('/api/stock/completude', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const level = req.query.severite ? String(req.query.severite) : null;
+    const report = stockCompletude.run();
+    if (level) {
+      report.findings = report.findings.filter(f => f.severite === level);
+    }
+    res.json(report);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Sync log — historique récent
+app.get('/api/stock/sync-log', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const type = req.query.type ? String(req.query.type) : null;
+    const limit = Math.max(1, Math.min(500, parseInt(req.query.limit || '50', 10)));
+    const items = type
+      ? stockDb.listRecentSyncLogByType(type, limit)
+      : stockDb.listRecentSyncLog(limit);
+    res.json({ total: items.length, items });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Paramètres globaux (adresse livraison, contact, location, etc.)
+app.get('/api/stock/parametres-globaux', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    res.json({ items: stockDb.listParametresGlobaux() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/stock/parametres-globaux/:key', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const key = req.params.key;
+    const value = req.body && req.body.value != null ? String(req.body.value) : null;
+    if (value == null) return res.status(400).json({ error: 'Corps requis: { value: "..." }' });
+    stockDb.setParametreGlobal(key, value);
+    res.json({ key, value });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });

@@ -454,6 +454,18 @@ function close() {
   }
 }
 
+// Shared DB handle + data dir for sibling modules (e.g. stock/*).
+// Must be called only AFTER init().
+function getDb() {
+  if (!db) throw new Error('[Cache] getDb() called before init()');
+  return db;
+}
+
+function getDataDir() {
+  if (!dataDir) throw new Error('[Cache] getDataDir() called before init()');
+  return dataDir;
+}
+
 // ------------------------------------------------------------
 // Daily metrics API
 // ------------------------------------------------------------
@@ -799,6 +811,9 @@ module.exports = {
   init,
   preload,
   close,
+  // shared DB handle for sibling modules (stock/*, etc.)
+  getDb,
+  getDataDir,
   // daily
   getDailyRow,
   hasDailyRow,
