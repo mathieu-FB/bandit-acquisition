@@ -305,7 +305,6 @@
                   <th class="rupture-cell">Rupture</th>
                   <th style="text-align:right;">Lead / Couv</th>
                   <th style="text-align:right;">Proposition</th>
-                  <th style="text-align:right;">vs Matrice</th>
                   <th></th>
                 </tr>
               </thead>
@@ -318,17 +317,6 @@
     function renderRow(i) {
       const dj = daysUntil(i.dateRuptureEstimee);
       const djClass = dj != null && dj <= 0 ? 'style="color:var(--rupture);font-weight:600;"' : '';
-      const matriceQte = i.matrice_bg_ref || 0;
-      const moteurQte = i.proposition_qte || 0;
-      let vsMatrice = '';
-      if (matriceQte > 0) {
-        const ecart = moteurQte - matriceQte;
-        const pct = ((ecart / matriceQte) * 100).toFixed(0);
-        const clr = Math.abs(pct) < 20 ? 'var(--muted)' : (ecart > 0 ? 'var(--critique)' : 'var(--acmd)');
-        vsMatrice = `<div style="color:${clr};font-size:11px;">M: ${fmtInt(matriceQte)} · ${ecart >= 0 ? '+' : ''}${pct}%</div>`;
-      } else {
-        vsMatrice = '<div style="color:var(--muted);font-size:11px;">M: —</div>';
-      }
       return `
         <tr>
           <td><div class="thumb ${i.image_url ? '' : 'empty'}">${i.image_url ? `<img src="${escapeAttr(i.image_url)}" loading="lazy">` : ''}</div></td>
@@ -347,10 +335,9 @@
           </td>
           <td style="text-align:right;font-size:11px;color:var(--muted);">${i.leadTimeJours} j / ${i.couvertureViseeJours} j</td>
           <td class="qty-cell">
-            <div class="qte">${fmtInt(moteurQte)}</div>
+            <div class="qte">${fmtInt(i.proposition_qte || 0)}</div>
             <div class="montant">${fmtEur(i.proposition_montant)}</div>
           </td>
-          <td style="text-align:right;">${vsMatrice}</td>
           <td><button class="action-btn" onclick="openDetail('${escapeAttr(i.sku)}')">Détail</button></td>
         </tr>`;
     }
@@ -411,15 +398,7 @@
               <tr><td>Montant (PA ${fmtEur(p.pa_unitaire)})</td><td><strong>${fmtEur(p.montant)}</strong></td></tr>
             </tbody>
           </table>` : ''}
-        ${d.ref.matrice_bg_ref ? `
-          <h4>Comparaison avec la Matrice xlsx</h4>
-          <table class="forecast-table">
-            <tbody>
-              <tr><td>Matrice propose</td><td>${fmtInt(d.ref.matrice_bg_ref)} u · ${fmtEur(d.ref.matrice_bh_ref)}</td></tr>
-              <tr><td>Moteur propose</td><td>${fmtInt(p.qte)} u · ${fmtEur(p.montant)}</td></tr>
-              <tr><td>Écart</td><td>${p.qte - d.ref.matrice_bg_ref >= 0 ? '+' : ''}${fmtInt((p.qte || 0) - d.ref.matrice_bg_ref)} u (${(((p.qte || 0) - d.ref.matrice_bg_ref) / d.ref.matrice_bg_ref * 100).toFixed(0)}%)</td></tr>
-            </tbody>
-          </table>` : ''}`;
+      `;
     }
 
     function escapeHtml(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }

@@ -73,11 +73,10 @@
 
     <div class="card">
       <h2>4 · Moteur de prévision</h2>
-      <p>Calcule niveau d'alerte + proposition de qté pour chaque SKU. Le <strong>preview par SKU</strong> retourne tout l'audit trail (saisonnalité, tendance, forecast 12 mois, projection 90 j). Le <strong>comparatif</strong> confronte les propositions moteur aux colonnes BG/BH du xlsx (top 10 par montant).</p>
+      <p>Calcule niveau d'alerte + proposition de qté pour chaque SKU. Le <strong>preview par SKU</strong> retourne tout l'audit trail (saisonnalité, tendance, forecast 12 mois, projection 90 j).</p>
       <div class="row">
         <button class="secondary" data-action="/api/stock/moteur/run?dryRun=1">Run dry-run</button>
         <button data-action="/api/stock/moteur/run?dryRun=0">Run + persister alertes</button>
-        <button class="secondary" data-action="/api/stock/moteur/comparatif?n=10">Comparatif top 10 vs Matrice</button>
       </div>
       <form id="previewForm" class="row" style="margin-top: 12px;">
         <input type="text" id="previewSku" placeholder="SKU pour preview (ex: J-BT-0)" style="flex: 1; min-width: 200px;">
