@@ -184,9 +184,36 @@
 
     <!-- Placeholders for future steps -->
     <section id="tab-previsionnel" hidden>
-      <div class="placeholder-section">
-        <h2>Prévisionnel</h2>
-        <p>Vue à venir en étape 5 : projection stock 12 mois par SKU, courbe de couverture, saisonnalité famille.</p>
+      <div class="group">
+        <div class="group-header">
+          <div>
+            <div class="name">Synthèse par famille</div>
+            <div class="stats">Vue agrégée : stock, ventes récentes, alertes, propositions.</div>
+          </div>
+          <div>
+            <button class="action-btn" id="btnReloadSynthese">Actualiser</button>
+          </div>
+        </div>
+        <div id="syntheseContent" style="padding:0;">
+          <div class="loading">Chargement de la synthèse…</div>
+        </div>
+      </div>
+
+      <div class="group">
+        <div class="group-header">
+          <div>
+            <div class="name">Projection stock 365 jours</div>
+            <div class="stats">Sélectionne un SKU pour visualiser sa projection jour par jour, avec arrivées BDC et rupture estimée.</div>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <input type="text" id="projSkuInput" placeholder="SKU (ex: J-BT-0)" list="projSkuList" style="padding:7px 10px;border:1px solid var(--border);border-radius:6px;font-size:13px;min-width:200px;">
+            <datalist id="projSkuList"></datalist>
+            <button class="action-btn" id="btnLoadProjection">Charger</button>
+          </div>
+        </div>
+        <div id="projectionContent" style="padding:20px;">
+          <div class="empty-state">Sélectionne un SKU pour voir sa projection.</div>
+        </div>
       </div>
     </section>
     <section id="tab-bdc" hidden>
@@ -348,9 +375,80 @@
       </section>
     </section>
     <section id="tab-parametres" hidden>
-      <div class="placeholder-section">
-        <h2>Paramètres</h2>
-        <p>Écran à venir en étape 5 : gestion fournisseurs, paramètres famille (couverture, coeff sécurité/tendance/saisonnalité), adresse livraison, seuils d'alerte.</p>
+      <!-- 1. Adresse + contact + email -->
+      <div class="group">
+        <div class="group-header">
+          <div>
+            <div class="name">1. Adresse de livraison &amp; contact</div>
+            <div class="stats">Info utilisée dans les BDC (pas encore inclue dans le xlsx, le sera si tu passes en génération PDF v1.5).</div>
+          </div>
+        </div>
+        <div style="padding:16px 18px;">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <label>Raison sociale destinataire <input type="text" data-param="adresse_livraison_nom"></label>
+            <label>Adresse ligne 1 <input type="text" data-param="adresse_livraison_ligne1"></label>
+            <label>Code postal <input type="text" data-param="adresse_livraison_cp"></label>
+            <label>Ville <input type="text" data-param="adresse_livraison_ville"></label>
+            <label>Pays <input type="text" data-param="adresse_livraison_pays"></label>
+            <label>Location Shopify (ID) <input type="text" data-param="shopify_location_id"></label>
+            <label>Contact (nom) <input type="text" data-param="contact_livraison_nom"></label>
+            <label>Téléphone <input type="text" data-param="contact_livraison_tel"></label>
+            <label style="grid-column:span 2;">Email destinataire des alertes (crons) <input type="email" data-param="alerte_email_destinataire"></label>
+            <label>Préfixe numéros BDC <input type="text" data-param="bdc_prefixe_numero"></label>
+          </div>
+          <div style="margin-top:12px;display:flex;gap:8px;align-items:center;">
+            <button id="btnSaveParamsGlobaux">Sauvegarder</button>
+            <span id="paramsGlobauxMessage" style="color:var(--muted);font-size:12px;"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. Fournisseurs -->
+      <div class="group">
+        <div class="group-header">
+          <div>
+            <div class="name">2. Fournisseurs</div>
+            <div class="stats">Liste et édition. Créer un nouveau fournisseur se fait depuis l'onglet Nouvelle commande.</div>
+          </div>
+          <div>
+            <button class="action-btn" id="btnReloadFournisseurs">Actualiser</button>
+          </div>
+        </div>
+        <div id="fournisseursContent" style="padding:0;">
+          <div class="loading">Chargement…</div>
+        </div>
+      </div>
+
+      <!-- 3. Paramètres famille -->
+      <div class="group">
+        <div class="group-header">
+          <div>
+            <div class="name">3. Paramètres famille</div>
+            <div class="stats">Override par famille de la couverture visée, coeff de sécurité, coeff de tendance. Prime sur les valeurs du xlsx.</div>
+          </div>
+          <div>
+            <button class="action-btn" id="btnReloadFamilles">Actualiser</button>
+          </div>
+        </div>
+        <div id="familleParamContent" style="padding:0;">
+          <div class="loading">Chargement…</div>
+        </div>
+      </div>
+
+      <!-- 4. Data admin -->
+      <div class="group">
+        <div class="group-header">
+          <div>
+            <div class="name">4. Data admin (avancé)</div>
+            <div class="stats">Upload matrice, sync Shopify manuels, diagnostics, logs.</div>
+          </div>
+          <div>
+            <a href="/stock-admin.html" class="action-btn" style="text-decoration:none;">Ouvrir la page admin →</a>
+          </div>
+        </div>
+        <div style="padding:16px 18px;color:var(--muted);font-size:13px;">
+          Regroupe : upload de la matrice xlsx, sync Shopify (variants / stock / sales), seed manuel, complétude, sync logs, diagnostics par SKU.
+        </div>
       </div>
     </section>
   </main>
@@ -1367,6 +1465,432 @@
       document.getElementById('assignFournisseurFilter').value = '';
       renderAssignTable();
     });
+
+    // ============================================================
+    // Prévisionnel — synthèse familles + projection SKU
+    // ============================================================
+
+    // Hook into main tabs (loads on demand)
+    document.querySelectorAll('nav.tabs button').forEach(b => {
+      if (b.dataset.tab === 'previsionnel') {
+        b.addEventListener('click', () => {
+          loadSyntheseFamilles();
+          loadProjSkuList();
+        });
+      }
+      if (b.dataset.tab === 'parametres') {
+        b.addEventListener('click', () => {
+          loadParamsGlobaux();
+          loadFournisseursParametres();
+          loadFamilleParametres();
+        });
+      }
+    });
+
+    async function loadSyntheseFamilles() {
+      const content = document.getElementById('syntheseContent');
+      content.innerHTML = '<div class="loading">Chargement…</div>';
+      try {
+        const res = await fetch('/api/stock/synthese-familles', { credentials: 'same-origin' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const rows = data.familles.map(f => {
+          const nivBadges = ['RUPTURE', 'CRITIQUE', 'URGENT', 'A_COMMANDER']
+            .filter(k => f.alertes[k] > 0)
+            .map(k => `<span class="badge ${niveauCls(k)}" style="margin-right:2px;">${f.alertes[k]}</span>`)
+            .join('');
+          const paramLabel = f.param
+            ? `${f.param.couverture_visee_jours} j / ${f.param.coeff_securite}`
+            : `<span style="color:var(--muted);">défaut global</span>`;
+          return `
+            <tr>
+              <td><strong>${escapeHtml(f.famille)}</strong></td>
+              <td>${escapeHtml(f.animal)}</td>
+              <td style="text-align:right;">${f.nb_sku}</td>
+              <td style="text-align:right;">${fmtInt(f.stock_total)}</td>
+              <td style="text-align:right;">${fmtEur(f.stock_valeur)}</td>
+              <td style="text-align:right;">${fmtInt(f.ventes_mensuelles_moyennes)}</td>
+              <td>${nivBadges || '<span style="color:var(--muted);">—</span>'}</td>
+              <td style="text-align:right;font-weight:600;">${fmtInt(f.proposition_qte)}</td>
+              <td style="text-align:right;font-weight:600;">${fmtEur(f.proposition_montant)}</td>
+              <td style="font-size:11px;color:var(--muted);">${paramLabel}</td>
+            </tr>`;
+        }).join('');
+        content.innerHTML = `
+          <table>
+            <thead>
+              <tr>
+                <th>Famille</th>
+                <th>Animal</th>
+                <th style="text-align:right;">Nb SKU</th>
+                <th style="text-align:right;">Stock (u)</th>
+                <th style="text-align:right;">Valeur stock</th>
+                <th style="text-align:right;">Ventes / mois (3M)</th>
+                <th>Alertes</th>
+                <th style="text-align:right;">Proposition</th>
+                <th style="text-align:right;">Montant</th>
+                <th style="font-size:11px;">Param (couv/séc)</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>`;
+      } catch (err) {
+        content.innerHTML = `<div class="empty-state">Erreur : ${err.message}</div>`;
+      }
+    }
+    document.getElementById('btnReloadSynthese').addEventListener('click', loadSyntheseFamilles);
+
+    async function loadProjSkuList() {
+      try {
+        const res = await fetch('/api/stock/referentiel?limit=500&actif=1', { credentials: 'same-origin' });
+        const data = await res.json();
+        const list = document.getElementById('projSkuList');
+        list.innerHTML = (data.items || []).map(i => `<option value="${escapeAttr(i.sku)}">${escapeHtml(i.nom_court || '')}</option>`).join('');
+      } catch (err) { /* silent */ }
+    }
+
+    async function loadProjection(sku) {
+      const container = document.getElementById('projectionContent');
+      container.innerHTML = '<div class="loading">Chargement…</div>';
+      try {
+        const res = await fetch(`/api/stock/moteur/preview/${encodeURIComponent(sku)}`, { credentials: 'same-origin' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const d = await res.json();
+        container.innerHTML = renderProjection(d);
+      } catch (err) {
+        container.innerHTML = `<div class="empty-state">Erreur : ${err.message}</div>`;
+      }
+    }
+
+    function renderProjection(d) {
+      const proj = d.projection || [];
+      if (proj.length === 0) return '<div class="empty-state">Aucune projection disponible.</div>';
+      // Build SVG chart 90 days (already truncated by backend to 90)
+      const width = 900, height = 260, padL = 50, padR = 20, padT = 20, padB = 30;
+      const chartW = width - padL - padR;
+      const chartH = height - padT - padB;
+      const minStock = Math.min(0, ...proj.map(p => p.stock));
+      const maxStock = Math.max(...proj.map(p => p.stock), 0) * 1.1;
+      const range = maxStock - minStock || 1;
+      const x = i => padL + (i / (proj.length - 1)) * chartW;
+      const y = v => padT + chartH - ((v - minStock) / range) * chartH;
+      const y0 = y(0);
+      // Points
+      const pointsLine = proj.map((p, i) => `${x(i)},${y(p.stock)}`).join(' ');
+      // Y ticks
+      const yTicks = [];
+      const step = niceStep(range, 5);
+      for (let v = Math.ceil(minStock / step) * step; v <= maxStock; v += step) {
+        yTicks.push(v);
+      }
+      // Rupture marker
+      let ruptureX = null;
+      const ruptureIdx = proj.findIndex(p => p.stock <= 0);
+      if (ruptureIdx >= 0) ruptureX = x(ruptureIdx);
+      // BDC arrivals (bars above zero line)
+      const arrivals = proj.map((p, i) => ({ i, ins: p.ins })).filter(a => a.ins > 0);
+      const legendItems = `
+        <div style="display:flex;gap:16px;font-size:11px;color:var(--muted);margin-bottom:10px;">
+          <span><span style="display:inline-block;width:14px;height:2px;background:var(--primary);vertical-align:middle;margin-right:6px;"></span>Stock projeté</span>
+          <span><span style="display:inline-block;width:14px;height:14px;background:var(--acmd-bg);vertical-align:middle;margin-right:6px;"></span>Zone couverture visée (${d.couvertureViseeJours} j)</span>
+          <span><span style="display:inline-block;width:2px;height:14px;background:var(--rupture);vertical-align:middle;margin-right:6px;"></span>Date rupture ${d.dateRuptureEstimeeStr || ''}</span>
+          <span><span style="display:inline-block;width:8px;height:8px;background:var(--ok);vertical-align:middle;margin-right:6px;"></span>Arrivée BDC</span>
+        </div>`;
+      const coverageEndIdx = Math.min(proj.length - 1, d.leadTimeJours + d.couvertureViseeJours);
+      const svg = `
+        <svg viewBox="0 0 ${width} ${height}" style="width:100%;height:${height}px;">
+          <!-- Coverage zone (lead + couv) -->
+          <rect x="${padL}" y="${padT}" width="${x(coverageEndIdx) - padL}" height="${chartH}" fill="var(--acmd-bg)" opacity="0.4"/>
+          <!-- Zero line -->
+          <line x1="${padL}" y1="${y0}" x2="${padL + chartW}" y2="${y0}" stroke="var(--border)" stroke-width="1"/>
+          <!-- Y ticks + grid -->
+          ${yTicks.map(v => `
+            <line x1="${padL}" y1="${y(v)}" x2="${padL + chartW}" y2="${y(v)}" stroke="var(--border)" stroke-width="0.5" stroke-dasharray="2,3"/>
+            <text x="${padL - 6}" y="${y(v) + 4}" text-anchor="end" font-size="10" fill="var(--muted)">${fmtInt(v)}</text>
+          `).join('')}
+          <!-- Rupture vertical line -->
+          ${ruptureX != null ? `
+            <line x1="${ruptureX}" y1="${padT}" x2="${ruptureX}" y2="${padT + chartH}" stroke="var(--rupture)" stroke-width="1.5" stroke-dasharray="4,3"/>
+            <text x="${ruptureX + 4}" y="${padT + 12}" font-size="11" fill="var(--rupture)" font-weight="600">Rupture</text>
+          ` : ''}
+          <!-- BDC arrivals -->
+          ${arrivals.map(a => `
+            <circle cx="${x(a.i)}" cy="${y(proj[a.i].stock)}" r="4" fill="var(--ok)" stroke="#fff" stroke-width="1.5"/>
+            <text x="${x(a.i)}" y="${y(proj[a.i].stock) - 8}" text-anchor="middle" font-size="10" fill="var(--ok)" font-weight="600">+${a.ins}</text>
+          `).join('')}
+          <!-- Stock line -->
+          <polyline points="${pointsLine}" fill="none" stroke="var(--primary)" stroke-width="2"/>
+          <!-- X ticks: every 10 days -->
+          ${proj.map((p, i) => i % 15 === 0 ? `
+            <text x="${x(i)}" y="${height - 8}" text-anchor="middle" font-size="10" fill="var(--muted)">J+${i}</text>
+          ` : '').join('')}
+        </svg>`;
+      const metrics = [
+        { l: 'Niveau', v: `<span class="badge ${niveauCls(d.niveau)}">${niveauLbl(d.niveau)}</span>` },
+        { l: 'Stock actuel', v: fmtInt(d.stockActuel) },
+        { l: 'Lead time', v: `${d.leadTimeJours} j` },
+        { l: 'Couverture visée', v: `${d.couvertureViseeJours} j (${d.couvertureViseeSource || '—'})` },
+        { l: 'Date rupture', v: d.dateRuptureEstimeeStr || '—' },
+        { l: 'Proposition', v: d.proposition ? `${fmtInt(d.proposition.qte)} u · ${fmtEur(d.proposition.montant)}` : '—' },
+      ];
+      const forecastRows = (d.monthlyForecast || []).map(m => `
+        <tr>
+          <td>${m.ym}</td>
+          <td style="text-align:right;">${fmtInt(m.base_n_1)}</td>
+          <td style="text-align:right;">${m.coeff_sais.toFixed(2)}</td>
+          <td style="text-align:right;">${m.coeff_tend.toFixed(2)}</td>
+          <td style="text-align:right;font-weight:600;">${fmtInt(m.demande)}</td>
+        </tr>`).join('');
+      return `
+        <div style="margin-bottom:16px;">
+          <h3 style="margin:0 0 4px;font-size:15px;">${escapeHtml(d.ref.sku)} — ${escapeHtml(d.ref.nom_court || '')}</h3>
+          <div style="color:var(--muted);font-size:12px;">${escapeHtml(d.ref.famille || '')} / ${escapeHtml(d.ref.animal || '')}</div>
+        </div>
+        <div class="metrics">${metrics.map(m => `<div class="metric"><div class="lbl">${m.l}</div><div class="val">${m.v}</div></div>`).join('')}</div>
+        <h4>Projection 90 jours</h4>
+        ${legendItems}
+        <div style="background:#fff;border:1px solid var(--border);border-radius:8px;padding:8px;">${svg}</div>
+        <h4 style="margin-top:20px;">Prévision mensuelle (12 mois)</h4>
+        <table class="forecast-table">
+          <thead><tr><th>Mois</th><th style="text-align:right;">Base N-1</th><th style="text-align:right;">Sais</th><th style="text-align:right;">Tend</th><th style="text-align:right;">Demande</th></tr></thead>
+          <tbody>${forecastRows}</tbody>
+        </table>`;
+    }
+
+    function niceStep(range, targetTicks) {
+      const raw = range / targetTicks;
+      const exp = Math.pow(10, Math.floor(Math.log10(raw)));
+      const norm = raw / exp;
+      let step;
+      if (norm < 1.5) step = 1;
+      else if (norm < 3) step = 2;
+      else if (norm < 7) step = 5;
+      else step = 10;
+      return step * exp;
+    }
+
+    document.getElementById('btnLoadProjection').addEventListener('click', () => {
+      const sku = document.getElementById('projSkuInput').value.trim();
+      if (sku) loadProjection(sku);
+    });
+    document.getElementById('projSkuInput').addEventListener('change', e => {
+      const sku = e.target.value.trim();
+      if (sku) loadProjection(sku);
+    });
+
+    // ============================================================
+    // Paramètres
+    // ============================================================
+
+    async function loadParamsGlobaux() {
+      const res = await fetch('/api/stock/parametres-globaux', { credentials: 'same-origin' });
+      const data = await res.json();
+      const map = {};
+      (data.items || []).forEach(p => { map[p.key] = p.value; });
+      document.querySelectorAll('#tab-parametres input[data-param]').forEach(input => {
+        const k = input.dataset.param;
+        input.value = map[k] || '';
+      });
+    }
+
+    document.getElementById('btnSaveParamsGlobaux').addEventListener('click', async () => {
+      const msg = document.getElementById('paramsGlobauxMessage');
+      msg.textContent = 'Sauvegarde…';
+      msg.className = '';
+      const inputs = document.querySelectorAll('#tab-parametres input[data-param]');
+      let ok = 0, fail = 0;
+      for (const input of inputs) {
+        const k = input.dataset.param;
+        const v = input.value;
+        try {
+          const res = await fetch(`/api/stock/parametres-globaux/${encodeURIComponent(k)}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ value: v }),
+          });
+          if (res.ok) ok++; else fail++;
+        } catch (err) { fail++; }
+      }
+      msg.textContent = fail ? `${ok} sauvés, ${fail} erreurs` : `✓ ${ok} paramètres sauvés`;
+      msg.style.color = fail ? 'var(--rupture)' : 'var(--ok)';
+    });
+
+    async function loadFournisseursParametres() {
+      const container = document.getElementById('fournisseursContent');
+      container.innerHTML = '<div class="loading">Chargement…</div>';
+      const res = await fetch('/api/stock/fournisseurs', { credentials: 'same-origin' });
+      const data = await res.json();
+      FOURNISSEURS = data.items || [];
+      if (FOURNISSEURS.length === 0) {
+        container.innerHTML = '<div class="empty-state">Aucun fournisseur. Créer depuis l\'onglet Nouvelle commande.</div>';
+        return;
+      }
+      const rows = FOURNISSEURS.map(f => `
+        <tr>
+          <td><strong>${escapeHtml(f.nom)}</strong></td>
+          <td>${escapeHtml(f.email || '—')}</td>
+          <td>${escapeHtml(f.contact || '—')}</td>
+          <td>${escapeHtml(f.devise)} / ${escapeHtml(f.incoterm)}</td>
+          <td>${escapeHtml(f.conditions_paiement || '—')}</td>
+          <td>${f.actif ? '<span class="badge ok">actif</span>' : '<span class="badge dm">inactif</span>'}</td>
+          <td><button class="action-btn" onclick="editFournisseur(${f.id})">Éditer</button></td>
+        </tr>
+      `).join('');
+      container.innerHTML = `
+        <table>
+          <thead>
+            <tr>
+              <th>Nom</th>
+              <th>Email</th>
+              <th>Contact</th>
+              <th>Devise / Incoterm</th>
+              <th>Conditions</th>
+              <th>Statut</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    }
+    document.getElementById('btnReloadFournisseurs').addEventListener('click', loadFournisseursParametres);
+
+    async function editFournisseur(id) {
+      const f = FOURNISSEURS.find(x => x.id === id);
+      if (!f) return;
+      const modal = document.getElementById('modal');
+      const body = document.getElementById('modalBody');
+      document.getElementById('modalTitle').textContent = `Éditer fournisseur — ${f.nom}`;
+      modal.classList.add('active');
+      body.innerHTML = `
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <label>Nom <input type="text" id="editFournNom" value="${escapeAttr(f.nom)}"></label>
+          <label>Email <input type="text" id="editFournEmail" value="${escapeAttr(f.email || '')}"></label>
+          <label>Adresse <input type="text" id="editFournAdresse" value="${escapeAttr(f.adresse || '')}"></label>
+          <label>Contact <input type="text" id="editFournContact" value="${escapeAttr(f.contact || '')}"></label>
+          <label>Devise <select id="editFournDevise">
+            <option value="EUR"${f.devise==='EUR'?' selected':''}>EUR</option>
+            <option value="USD"${f.devise==='USD'?' selected':''}>USD</option>
+            <option value="CNY"${f.devise==='CNY'?' selected':''}>CNY</option>
+          </select></label>
+          <label>Incoterm <select id="editFournIncoterm">
+            <option value="EXW"${f.incoterm==='EXW'?' selected':''}>EXW</option>
+            <option value="FOB"${f.incoterm==='FOB'?' selected':''}>FOB</option>
+            <option value="DDP"${f.incoterm==='DDP'?' selected':''}>DDP</option>
+            <option value="CIF"${f.incoterm==='CIF'?' selected':''}>CIF</option>
+          </select></label>
+          <label style="grid-column:span 2;">Conditions de paiement <input type="text" id="editFournCGV" value="${escapeAttr(f.conditions_paiement || '')}"></label>
+          <label style="grid-column:span 2;">Notes <input type="text" id="editFournNotes" value="${escapeAttr(f.notes || '')}"></label>
+          <label style="grid-column:span 2;"><input type="checkbox" id="editFournActif"${f.actif?' checked':''}> Actif</label>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:16px;">
+          <button onclick="saveFournisseurEdit(${id})">Enregistrer</button>
+          <button class="action-btn" onclick="document.getElementById('modal').classList.remove('active')">Annuler</button>
+        </div>`;
+    }
+
+    async function saveFournisseurEdit(id) {
+      const payload = {
+        nom: document.getElementById('editFournNom').value.trim(),
+        email: document.getElementById('editFournEmail').value.trim() || null,
+        adresse: document.getElementById('editFournAdresse').value.trim() || null,
+        contact: document.getElementById('editFournContact').value.trim() || null,
+        devise: document.getElementById('editFournDevise').value,
+        incoterm: document.getElementById('editFournIncoterm').value,
+        conditions_paiement: document.getElementById('editFournCGV').value.trim() || null,
+        notes: document.getElementById('editFournNotes').value.trim() || null,
+        actif: document.getElementById('editFournActif').checked ? 1 : 0,
+      };
+      const res = await fetch(`/api/stock/fournisseurs/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) { alert(`Erreur: ${data.error}`); return; }
+      document.getElementById('modal').classList.remove('active');
+      loadFournisseursParametres();
+    }
+
+    async function loadFamilleParametres() {
+      const container = document.getElementById('familleParamContent');
+      container.innerHTML = '<div class="loading">Chargement…</div>';
+      // Fetch familles from the referentiel + existing params
+      const [refRes, paramRes] = await Promise.all([
+        fetch('/api/stock/referentiel?limit=500&actif=1', { credentials: 'same-origin' }),
+        fetch('/api/stock/parametres-famille', { credentials: 'same-origin' }),
+      ]);
+      const refData = await refRes.json();
+      const paramData = await paramRes.json();
+      const paramByKey = {};
+      (paramData.items || []).forEach(p => { paramByKey[`${p.famille}|${p.animal}`] = p; });
+      // Group refs by famille+animal
+      const pairs = {};
+      (refData.items || []).forEach(r => {
+        const key = `${r.famille || '(sans)'}|${r.animal || '(sans)'}`;
+        if (!pairs[key]) pairs[key] = { famille: r.famille || '(sans)', animal: r.animal || '(sans)', nb_sku: 0 };
+        pairs[key].nb_sku++;
+      });
+      const items = Object.values(pairs).sort((a, b) => a.famille.localeCompare(b.famille) || a.animal.localeCompare(b.animal));
+      if (items.length === 0) {
+        container.innerHTML = '<div class="empty-state">Aucune famille détectée dans le référentiel.</div>';
+        return;
+      }
+      const rows = items.map(it => {
+        const key = `${it.famille}|${it.animal}`;
+        const p = paramByKey[key];
+        return `
+          <tr>
+            <td><strong>${escapeHtml(it.famille)}</strong></td>
+            <td>${escapeHtml(it.animal)}</td>
+            <td style="text-align:right;color:var(--muted);">${it.nb_sku}</td>
+            <td><input type="number" data-fp-fam="${escapeAttr(it.famille)}" data-fp-ani="${escapeAttr(it.animal)}" data-fp-field="couverture_visee_jours" value="${p ? p.couverture_visee_jours : ''}" placeholder="défaut 90" min="1" style="width:80px;text-align:right;"></td>
+            <td><input type="number" step="0.05" data-fp-fam="${escapeAttr(it.famille)}" data-fp-ani="${escapeAttr(it.animal)}" data-fp-field="coeff_securite" value="${p ? p.coeff_securite : ''}" placeholder="défaut 1.15" min="1" style="width:80px;text-align:right;"></td>
+            <td><input type="number" step="0.05" data-fp-fam="${escapeAttr(it.famille)}" data-fp-ani="${escapeAttr(it.animal)}" data-fp-field="coeff_tendance" value="${p ? p.coeff_tendance : ''}" placeholder="défaut 1.0" min="0" style="width:80px;text-align:right;"></td>
+            <td>${p ? `<span class="badge acmd">override</span>` : `<span class="badge dm">défaut</span>`}</td>
+            <td><button class="action-btn" onclick="saveFamilleParam('${escapeAttr(it.famille)}', '${escapeAttr(it.animal)}')">Sauver</button></td>
+          </tr>`;
+      }).join('');
+      container.innerHTML = `
+        <table>
+          <thead>
+            <tr>
+              <th>Famille</th>
+              <th>Animal</th>
+              <th style="text-align:right;">Nb SKU</th>
+              <th style="text-align:right;">Couverture (j)</th>
+              <th style="text-align:right;">Coeff sécurité</th>
+              <th style="text-align:right;">Coeff tendance</th>
+              <th>Statut</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    }
+    document.getElementById('btnReloadFamilles').addEventListener('click', loadFamilleParametres);
+
+    async function saveFamilleParam(famille, animal) {
+      const inputs = document.querySelectorAll(`input[data-fp-fam="${famille}"][data-fp-ani="${animal}"]`);
+      const payload = { famille, animal };
+      inputs.forEach(i => {
+        const v = i.value;
+        if (v !== '') payload[i.dataset.fpField] = Number(v);
+      });
+      const res = await fetch('/api/stock/parametres-famille', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(payload),
+      });
+      if (res.ok) {
+        loadFamilleParametres();
+      } else {
+        const d = await res.json();
+        alert(`Erreur: ${d.error}`);
+      }
+    }
   </script>
 </body>
 </html>

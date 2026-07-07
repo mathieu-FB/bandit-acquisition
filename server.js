@@ -6180,6 +6180,94 @@ app.post('/api/stock/bdc/:id/annuler', (req, res) => {
   }
 });
 
+// Synthèse par famille × animal : nb SKU, stock, ventes, alertes, propositions.
+// Utilisé par la vue Prévisionnel pour un overview compact.
+app.get('/api/stock/synthese-familles', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const report = stockMoteur.runAll({ dryRun: true });
+    // Index refs by SKU for stock + PA
+    const refs = stockDb.listReferentielActif();
+    const refBySku = {};
+    refs.forEach(r => { refBySku[r.sku] = r; });
+    // Stock actuel
+    const stockBySku = {};
+    stockDb.listStockActuel().forEach(s => { stockBySku[s.sku] = s.stock_dispo || 0; });
+    // Ventes 3 derniers mois complets — depuis stock_previsions_mensuelles
+    const now = new Date();
+    const currentY = now.getUTCFullYear(), currentM = now.getUTCMonth() + 1;
+    const recentYms = new Set();
+    for (let i = 1; i <= 3; i++) {
+      let y = currentY, m = currentM - i;
+      while (m <= 0) { m += 12; y -= 1; }
+      recentYms.add(`${y}-${String(m).padStart(2, '0')}`);
+    }
+    const salesLastQuarterBySku = {};
+    for (const p of stockDb.listAllPrevisions()) {
+      const ym = `${p.annee}-${String(p.mois).padStart(2, '0')}`;
+      if (!recentYms.has(ym)) continue;
+      salesLastQuarterBySku[p.sku] = (salesLastQuarterBySku[p.sku] || 0) + (p.ventes_reelles || 0);
+    }
+    // Params famille (pour afficher les overrides)
+    const paramByFam = {};
+    stockDb.listParametresFamille().forEach(f => {
+      paramByFam[`${f.famille}|${f.animal}`] = f;
+    });
+    // Group by famille × animal
+    const groups = {};
+    for (const ref of refs) {
+      const key = `${ref.famille || '(sans)'}|${ref.animal || '(sans)'}`;
+      if (!groups[key]) {
+        groups[key] = {
+          famille: ref.famille || '(sans)',
+          animal: ref.animal || '(sans)',
+          nb_sku: 0,
+          stock_total: 0,
+          stock_valeur: 0,
+          ventes_3m_total: 0,
+          alertes: { RUPTURE: 0, CRITIQUE: 0, URGENT: 0, A_COMMANDER: 0, DONNEE_MANQUANTE: 0, OK: 0 },
+          proposition_qte: 0,
+          proposition_montant: 0,
+          param: paramByFam[key] || null,
+        };
+      }
+      const g = groups[key];
+      g.nb_sku++;
+      const stk = stockBySku[ref.sku] || 0;
+      g.stock_total += stk;
+      const pa = ref.pa_vs != null ? ref.pa_vs : ref.pa_dernier;
+      if (pa != null) g.stock_valeur += stk * pa;
+      g.ventes_3m_total += salesLastQuarterBySku[ref.sku] || 0;
+    }
+    // Overlay avec les alertes du moteur
+    for (const d of report.details) {
+      const key = `${d.famille || '(sans)'}|${d.animal || '(sans)'}`;
+      const g = groups[key];
+      if (!g) continue;
+      g.alertes[d.niveau] = (g.alertes[d.niveau] || 0) + 1;
+      if (d.proposition_qte > 0) {
+        g.proposition_qte += d.proposition_qte;
+        g.proposition_montant += d.proposition_montant || 0;
+      }
+    }
+    // Convert to array + calcul agrégat ventes mensuelles moyennes
+    const items = Object.values(groups).map(g => ({
+      ...g,
+      ventes_mensuelles_moyennes: Math.round(g.ventes_3m_total / 3),
+      stock_valeur: Number(g.stock_valeur.toFixed(2)),
+      proposition_montant: Number(g.proposition_montant.toFixed(2)),
+    })).sort((a, b) => b.proposition_montant - a.proposition_montant);
+    res.json({
+      today: report.today,
+      byNiveau: report.byNiveau,
+      familles: items,
+    });
+  } catch (err) {
+    console.error('[Stock] synthese-familles error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Alertes enrichies — moteur.runAll + join ref + fournisseur, groupé par fournisseur.
 // Utilisé par la vue Alertes UI (/stock.html).
 // ?includeOk=1 pour inclure les SKU OK (par défaut exclus).
