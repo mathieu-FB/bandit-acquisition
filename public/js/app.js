@@ -2076,6 +2076,7 @@ function renderAmzObjectivePeriod(prefix, data) {
 
 let b2bSourceChart = null;
 let b2bLoaded = false;
+let b2bLastData = null; // dernière réponse /api/pipedrive/b2b-report — cache local pour le click chart
 
 function getB2BDateRange(range) {
   const now = new Date();
@@ -2132,8 +2133,13 @@ async function loadB2BReport(range) {
     end = document.getElementById('b2bDateEnd').value;
   }
 
+  // Récupère le filter source courant (dropdown en haut). Vide = pas de filter.
+  const sourceFilter = (document.getElementById('b2bSourceFilter')?.value || '').trim();
+  const params = new URLSearchParams({ start, end });
+  if (sourceFilter) params.append('source', sourceFilter);
+
   try {
-    const res = await fetch(`/api/pipedrive/b2b-report?start=${start}&end=${end}`);
+    const res = await fetch(`/api/pipedrive/b2b-report?${params}`);
     const data = await res.json();
 
     if (data.error) {
@@ -2144,7 +2150,8 @@ async function loadB2BReport(range) {
       return;
     }
 
-    console.log(`[B2B] ${data.nbDeals} deals dans la période (${data.totalWonDeals} won deals au total)`);
+    b2bLastData = data;
+    console.log(`[B2B] ${data.nbDeals} deals dans la période (${data.totalWonDeals} won deals au total)${data.filterApplied ? ` [filter=${data.filterApplied}]` : ''}`);
 
     // KPI cards
     document.getElementById('b2b-ca').textContent = fmtB2BCurrency(data.ca);
@@ -2152,14 +2159,20 @@ async function loadB2BReport(range) {
     document.getElementById('b2b-deals').textContent = data.nbDeals;
     document.getElementById('b2b-panier').textContent = fmtB2BCurrency(data.panierMoyen);
 
+    // Peupler le dropdown source (sans écraser la sélection courante)
+    populateB2BSourceFilter(data.sourcesAvailable || []);
+
     // Objectives
     renderB2BObjectives(data.ca, data.objectives);
 
-    // Pie chart — CA par source
-    renderB2BSourceChart(data.sources);
+    // Pie chart — CA par source (clickable)
+    renderB2BSourceChart(data.sources, data);
 
-    // Top 5 clients
-    renderB2BTopClients(data.top5);
+    // Top 5 clients (liens Pipedrive)
+    renderB2BTopClients(data.top5, data.pipedriveBase);
+
+    // Table détail : hidden au reload
+    document.getElementById('b2bDetailWrap').style.display = 'none';
 
     loading.style.display = 'none';
     kpis.style.opacity = '1';
@@ -2169,6 +2182,23 @@ async function loadB2BReport(range) {
     loading.style.display = 'none';
     kpis.style.opacity = '1';
   }
+}
+
+// Peupler le dropdown filter source depuis la liste retournée par l'API.
+// Préserve la sélection courante si elle est encore présente ; sinon reset à "".
+function populateB2BSourceFilter(sourcesAvailable) {
+  const sel = document.getElementById('b2bSourceFilter');
+  if (!sel) return;
+  const currentValue = sel.value;
+  const options = ['<option value="">Toutes les sources</option>'];
+  for (const s of sourcesAvailable) {
+    const selected = s === currentValue ? ' selected' : '';
+    options.push(`<option value="${s.replace(/"/g, '&quot;')}"${selected}>${s}</option>`);
+  }
+  sel.innerHTML = options.join('');
+  // Si la sélection courante n'est plus dans la liste (source vide sur la
+  // nouvelle période), reset silencieusement à "toutes".
+  if (currentValue && !sourcesAvailable.includes(currentValue)) sel.value = '';
 }
 
 function renderB2BObjectives(ca, objectives) {
@@ -2236,7 +2266,7 @@ function renderB2BObjectives(ca, objectives) {
 
 const B2B_COLORS = ['#1a1a1a', '#2d9d5c', '#d94040', '#0984e3', '#f39c12', '#8b5cf6', '#00b894', '#e17055', '#636e72'];
 
-function renderB2BSourceChart(sources) {
+function renderB2BSourceChart(sources, fullData) {
   const ctx = document.getElementById('b2bSourceChart').getContext('2d');
 
   if (b2bSourceChart) b2bSourceChart.destroy();
@@ -2260,6 +2290,15 @@ function renderB2BSourceChart(sources) {
       responsive: true,
       maintainAspectRatio: false,
       cutout: '55%',
+      onClick: (evt, elements) => {
+        if (!elements || !elements.length) return;
+        const idx = elements[0].index;
+        const sourceName = labels[idx];
+        openB2BDetailForSource(sourceName);
+      },
+      onHover: (evt, elements) => {
+        evt.native.target.style.cursor = elements && elements.length ? 'pointer' : 'default';
+      },
       plugins: {
         legend: { display: false },
         tooltip: {
@@ -2268,7 +2307,7 @@ function renderB2BSourceChart(sources) {
               const val = ctx.parsed;
               const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
               const pct = total > 0 ? ((val / total) * 100).toFixed(1) : 0;
-              return `${ctx.label}: ${fmtB2BCurrency(val)} (${pct}%)`;
+              return `${ctx.label}: ${fmtB2BCurrency(val)} (${pct}%) — clic pour détail`;
             },
           },
         },
@@ -2276,32 +2315,81 @@ function renderB2BSourceChart(sources) {
     },
   });
 
-  // Custom legend
+  // Custom legend (clickable for the same effect)
   const legendEl = document.getElementById('b2bSourceLegend');
   const total = values.reduce((a, b) => a + b, 0);
   legendEl.innerHTML = sources.map((s, i) => {
     const pct = total > 0 ? ((s.value / total) * 100).toFixed(1) : 0;
-    return `<div class="b2b-legend-item">
+    return `<div class="b2b-legend-item" data-src="${s.name.replace(/"/g, '&quot;')}" style="cursor:pointer;">
       <span class="b2b-legend-dot" style="background:${colors[i]}"></span>
       ${s.name} — ${pct}%
     </div>`;
   }).join('');
+  legendEl.querySelectorAll('.b2b-legend-item').forEach(el => {
+    el.addEventListener('click', () => openB2BDetailForSource(el.dataset.src));
+  });
 }
 
-function renderB2BTopClients(top5) {
+// Formatage FR de la date (YYYY-MM-DD ou ISO) → JJ/MM/AAAA
+function fmtB2BDate(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+// Ouvre la table détail sous les grid en listant les deals de la source
+// cliquée, avec liens directs vers Pipedrive (deal + client).
+function openB2BDetailForSource(sourceName) {
+  if (!b2bLastData || !b2bLastData.sourcesDetail) return;
+  const deals = b2bLastData.sourcesDetail[sourceName] || [];
+  const base = b2bLastData.pipedriveBase || '';
+  const wrap = document.getElementById('b2bDetailWrap');
+  const srcEl = document.getElementById('b2bDetailSource');
+  const body = document.getElementById('b2bDetailBody');
+
+  srcEl.textContent = `${sourceName} · ${deals.length} deal(s) · ${fmtB2BCurrency(deals.reduce((s, d) => s + (d.value || 0), 0))}`;
+  if (!deals.length) {
+    body.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:24px;">Aucun deal pour cette source.</td></tr>';
+  } else {
+    body.innerHTML = deals.map(d => {
+      const dealUrl   = d.id     && base ? `${base}/deal/${d.id}`         : null;
+      const clientUrl = d.orgId  && base ? `${base}/organization/${d.orgId}` : (d.personId && base ? `${base}/person/${d.personId}` : null);
+      const clientName = d.orgName || d.personName || '—';
+      const title = d.title || `Deal #${d.id}`;
+      return `
+        <tr>
+          <td>${fmtB2BDate(d.wonTime)}</td>
+          <td>${clientUrl ? `<a href="${clientUrl}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;">${clientName}</a>` : clientName}</td>
+          <td>${dealUrl   ? `<a href="${dealUrl}"   target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;">${title}</a>` : title}</td>
+          <td style="text-align:right;font-weight:600;">${fmtB2BCurrency(d.value || 0)}</td>
+        </tr>`;
+    }).join('');
+  }
+  wrap.style.display = '';
+  wrap.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function renderB2BTopClients(top5, pipedriveBase) {
   const tbody = document.getElementById('b2bTopClients');
   if (!top5 || !top5.length) {
     tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:24px;">Aucun client sur cette période</td></tr>';
     return;
   }
-  tbody.innerHTML = top5.map((c, i) => `
+  const base = pipedriveBase || '';
+  tbody.innerHTML = top5.map((c, i) => {
+    const url = c.orgId && base ? `${base}/organization/${c.orgId}` : (c.personId && base ? `${base}/person/${c.personId}` : null);
+    const nameCell = url
+      ? `<a href="${url}" target="_blank" rel="noopener" style="color:inherit;text-decoration:underline;">${c.name}</a>`
+      : c.name;
+    return `
     <tr>
-      <td><span class="client-rank">${i + 1}</span><span class="client-name">${c.name}</span></td>
+      <td><span class="client-rank">${i + 1}</span><span class="client-name">${nameCell}</span></td>
       <td>${fmtB2BCurrency(c.ca)}</td>
       <td>${c.commandes}</td>
       <td>${fmtB2BCurrency(c.panierMoyen)}</td>
-    </tr>
-  `).join('');
+    </tr>`;
+  }).join('');
 }
 
 // ============================================================
@@ -3148,6 +3236,43 @@ document.addEventListener('DOMContentLoaded', async () => {
     };
     b2bStart.addEventListener('change', onB2BDateChange);
     b2bEnd.addEventListener('change', onB2BDateChange);
+  }
+
+  // B2B source filter dropdown — chaque changement re-fetch avec ?source=
+  const b2bSourceFilter = document.getElementById('b2bSourceFilter');
+  if (b2bSourceFilter) {
+    b2bSourceFilter.addEventListener('change', () => {
+      b2bLoaded = false;
+      loadB2BReport();
+    });
+  }
+
+  // B2B refresh button — purge le cache SQLite Pipedrive puis reload
+  const b2bRefreshBtn = document.getElementById('b2bRefreshBtn');
+  if (b2bRefreshBtn) {
+    b2bRefreshBtn.addEventListener('click', async () => {
+      const originalLabel = b2bRefreshBtn.textContent;
+      b2bRefreshBtn.disabled = true;
+      b2bRefreshBtn.textContent = '↻ Rafraîchissement…';
+      try {
+        await fetch('/api/cache/purge-pipedrive-deals', { method: 'POST' });
+        b2bLoaded = false;
+        await loadB2BReport();
+      } catch (err) {
+        console.error('[B2B] Refresh error:', err);
+      } finally {
+        b2bRefreshBtn.disabled = false;
+        b2bRefreshBtn.textContent = originalLabel;
+      }
+    });
+  }
+
+  // B2B detail table close button
+  const b2bDetailClose = document.getElementById('b2bDetailClose');
+  if (b2bDetailClose) {
+    b2bDetailClose.addEventListener('click', () => {
+      document.getElementById('b2bDetailWrap').style.display = 'none';
+    });
   }
 
   document.querySelectorAll('.date-input').forEach(input => {

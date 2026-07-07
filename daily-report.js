@@ -118,6 +118,74 @@ function getAmazonObjective(year, month) {
   return null;
 }
 
+// B2B objectives (mirrored from server.js B2B_OBJECTIVES). Kept as a flat
+// { 'YYYY-MM': target } map since we only need monthly targets in the daily report.
+const B2B_OBJECTIVES_MONTHLY = {
+  '2026-04': 296000,
+  '2026-05': 55000,
+  '2026-06': 30000,
+  '2026-07': 70000,
+  '2026-08': 10000,
+  '2026-09': 10000,
+};
+const B2B_EXCLUDED_CLIENTS = ['VETO SANTE'];
+
+function getB2BMonthlyObjective(year, month) {
+  const key = `${year}-${String(month).padStart(2, '0')}`;
+  return B2B_OBJECTIVES_MONTHLY[key] || null;
+}
+
+// ============================================================
+// PIPEDRIVE — fetch won deals (B2B)
+// Duplicated from server.js to keep daily-report standalone. Direct fetch
+// (no cache) because the cron runs 1x/day — cache reuse not critical here.
+// ============================================================
+
+function pipedriveBase() {
+  const domain = process.env.PIPEDRIVE_DOMAIN || 'api';
+  return domain.includes('.') ? `https://${domain}` : `https://${domain}.pipedrive.com`;
+}
+
+async function fetchAllWonDealsForRange(startDate, endDate) {
+  const token = process.env.PIPEDRIVE_API_TOKEN;
+  if (!token) return [];
+
+  const base = pipedriveBase();
+  const deals = [];
+  let start = 0;
+  let more = true;
+  while (more) {
+    const params = new URLSearchParams({ status: 'won', limit: '500', start: String(start), api_token: token });
+    const res = await fetch(`${base}/api/v1/deals?${params}`);
+    if (!res.ok) break;
+    const resp = await res.json();
+    if (resp.data) deals.push(...resp.data);
+    more = resp.additional_data?.pagination?.more_items_in_collection || false;
+    start += 500;
+  }
+
+  // Filter by won_time in range + exclude specific clients
+  return deals.filter(d => {
+    const wt = d.won_time ? new Date(d.won_time) : null;
+    if (!wt || wt < startDate || wt > endDate) return false;
+    const name = d.org_id?.name || d.org_name || '';
+    return !B2B_EXCLUDED_CLIENTS.some(ex => name.toUpperCase().includes(ex.toUpperCase()));
+  });
+}
+
+async function fetchB2BStats(startStr, endStr) {
+  const startDate = new Date(startStr + 'T00:00:00Z');
+  const endDate = new Date(endStr + 'T23:59:59Z');
+  try {
+    const deals = await fetchAllWonDealsForRange(startDate, endDate);
+    const ca = deals.reduce((s, d) => s + (d.value || 0), 0);
+    return { ca, nbDeals: deals.length };
+  } catch (err) {
+    console.warn('[Report] Pipedrive B2B fetch failed:', err.message);
+    return { ca: 0, nbDeals: 0 };
+  }
+}
+
 // ============================================================
 // SHOPIFY — fetch + compute HT net sales
 // ============================================================
@@ -662,6 +730,7 @@ async function collectReportData() {
     tiktokYesterday, tiktokDayBefore, tiktokLastWeek, tiktokMTD,
     amazonYesterday, amazonDayBefore, amazonLastWeek, amazonMTD,
     amazonAdsSpendMTD,
+    b2bYesterday, b2bMTD,
   ] = await Promise.all([
     fetchShopifyOrders(yStr, yStr),
     fetchShopifyOrders(dbStr, dbStr),
@@ -686,6 +755,8 @@ async function collectReportData() {
     fetchAmazonStats(lwStr, lwStr),
     fetchAmazonStats(mtdStart, yStr),
     fetchAmazonAdsSpendForRange(mtdStart, yStr),
+    fetchB2BStats(yStr, yStr),
+    fetchB2BStats(mtdStart, yStr),
   ]);
 
   const shopify = {
@@ -813,6 +884,29 @@ async function collectReportData() {
     };
   }
 
+  // B2B stats + objective (Pipedrive won deals, hors clients exclus).
+  const b2b = {
+    yesterday: b2bYesterday || { ca: 0, nbDeals: 0 },
+    mtd:       b2bMTD       || { ca: 0, nbDeals: 0 },
+  };
+  const b2bMonthlyTarget = getB2BMonthlyObjective(year, month);
+  let b2bObjectives = null;
+  if (b2bMonthlyTarget) {
+    const daysInMonth = new Date(year, month, 0).getDate();
+    const dayOfMonth = yesterday.getDate();
+    const expectedPace = (dayOfMonth / daysInMonth) * 100;
+    const progress = b2bMonthlyTarget > 0 ? (b2b.mtd.ca / b2bMonthlyTarget) * 100 : 0;
+    b2bObjectives = {
+      monthly: {
+        target: b2bMonthlyTarget,
+        current: b2b.mtd.ca,
+        progress,
+        expectedPace,
+        onTrack: progress >= expectedPace * 0.9,
+      },
+    };
+  }
+
   return {
     date: yStr,
     dateDayBefore: dbStr,
@@ -827,6 +921,8 @@ async function collectReportData() {
     },
     objectives,
     amazonObjectives,
+    b2b,
+    b2bObjectives,
     amazonTacosMTD,
     amzAdSpendMTD,
     bestAd,
@@ -856,6 +952,13 @@ ${d.objectives.monthly.onTrack ? '→ ON TRACK' : '→ EN RETARD'}` : '';
 - Target mois : ${d.amazonObjectives.monthly.target.toFixed(0)}€ | Réalisé MTD : ${d.amazonObjectives.monthly.current.toFixed(0)}€ | Progression : ${d.amazonObjectives.monthly.progress.toFixed(1)}% (rythme attendu : ${d.amazonObjectives.monthly.expectedPace.toFixed(1)}%)
 ${d.amazonObjectives.monthly.onTrack ? '→ ON TRACK' : '→ EN RETARD'}` : '';
 
+  const b2bSection = d.b2b ? `
+## B2B (Pipedrive — deals won hors clients exclus)
+- CA B2B hier : ${d.b2b.yesterday.ca.toFixed(0)}€ (${d.b2b.yesterday.nbDeals} deal(s))
+- CA B2B MTD : ${d.b2b.mtd.ca.toFixed(0)}€ (${d.b2b.mtd.nbDeals} deal(s))${d.b2bObjectives ? `
+- Objectif mois : ${d.b2bObjectives.monthly.target.toFixed(0)}€ | Progression : ${d.b2bObjectives.monthly.progress.toFixed(1)}% (rythme attendu : ${d.b2bObjectives.monthly.expectedPace.toFixed(1)}%)
+${d.b2bObjectives.monthly.onTrack ? '→ ON TRACK' : '→ EN RETARD'}` : ''}` : '';
+
   const notorietySection = (d.notoriety && (d.notoriety.yesterday.days > 0 || d.notoriety.mtd.days > 0)) ? `
 ## Note : ajustement campagne notoriété
 Les chiffres Meta/Google ci-dessus EXCLUENT déjà la dépense de la campagne notoriété (déduite pour reporter la perf d'acquisition pure).
@@ -882,6 +985,7 @@ ${objSection}
 - CA MTD : ${d.amazon.mtd.ca.toFixed(0)}€
 - TACOS MTD : ${d.amazonTacosMTD.toFixed(1)}% (Spend Ads MTD : ${d.amzAdSpendMTD.toFixed(0)}€)
 ${amzObjSection}
+${b2bSection}
 ${notorietySection}
 
 ## DÉTAIL PAR CANAL (pub e-commerce)
@@ -894,12 +998,13 @@ ${d.bestTiktokAd ? `## Best ad TikTok : "${d.bestTiktokAd.name}" — ROAS ${d.be
 
 ---
 
-Rédige un brief de 8 à 12 lignes max, en français, très professionnel et synthétique. Structure :
+Rédige un brief de 9 à 13 lignes max, en français, très professionnel et synthétique. Structure :
 1. Performance E-COMMERCE hier : CA, ROAS, tendance vs J-1 et J-7 (2-3 lignes)
 2. Performance AMAZON hier : CA, tendance (1-2 lignes)
-3. Objectifs : où on en est sur l'objectif mensuel e-commerce ET Amazon, on track ou pas (2 lignes)
-4. Signaux positifs / alertes (ROAS, CPM, CAC) (1-2 lignes)
-5. Best ads + recommandation actionnable si pertinent (1-2 lignes)
+3. Performance B2B hier : CA + nb de deals, MTD (1 ligne si activité, sinon "pas d'activité B2B hier")
+4. Objectifs : où on en est sur l'objectif mensuel e-commerce, Amazon ET B2B, on track ou pas (2 lignes)
+5. Signaux positifs / alertes (ROAS, CPM, CAC) (1-2 lignes)
+6. Best ads + recommandation actionnable si pertinent (1-2 lignes)
 
 Ton style : direct, factuel, chiffres. Pas de bullet points, texte fluide. Pas de titre ni de signature.`;
 
@@ -1029,11 +1134,12 @@ function buildEmailHTML(data, analysis) {
     </div>` : ''}
 
     <!-- OBJECTIVES -->
-    ${d.objectives || d.amazonObjectives ? `
+    ${d.objectives || d.amazonObjectives || d.b2bObjectives ? `
     <div style="background:#ffffff;border-radius:12px;padding:16px 20px;margin-bottom:20px;border:1px solid #e5e5e0;box-shadow:0 1px 3px rgba(0,0,0,0.04);">
       <div style="font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#1a1a1a;font-weight:700;margin-bottom:12px;">Objectifs du mois</div>
       ${d.objectives ? progressBar('E-commerce (Shopify)', d.objectives.monthly.current, d.objectives.monthly.target, d.objectives.monthly.onTrack) : ''}
       ${d.amazonObjectives ? progressBar('Amazon', d.amazonObjectives.monthly.current, d.amazonObjectives.monthly.target, d.amazonObjectives.monthly.onTrack) : ''}
+      ${d.b2bObjectives ? progressBar('B2B (Pipedrive)', d.b2bObjectives.monthly.current, d.b2bObjectives.monthly.target, d.b2bObjectives.monthly.onTrack) : ''}
     </div>` : ''}
 
     <!-- E-COMMERCE KPIs -->
@@ -1065,6 +1171,24 @@ function buildEmailHTML(data, analysis) {
         </tr>
       </table>
     </div>
+
+    <!-- B2B KPIs -->
+    ${d.b2b ? `
+    <div style="background:#ffffff;border-radius:12px;overflow:hidden;margin-bottom:20px;border:1px solid #e5e5e0;box-shadow:0 1px 3px rgba(0,0,0,0.04);">
+      <div style="padding:16px 16px 8px;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;color:#5b21b6;font-weight:700;">B2B (Pipedrive)</div>
+      <table style="width:100%;border-collapse:collapse;font-size:13px;">
+        <tr>
+          <td style="padding:10px 16px;font-weight:600;color:#1a1d26;border-bottom:1px solid #f0f0f0;">CA hier</td>
+          <td style="padding:10px 16px;font-size:18px;font-weight:700;color:#1a1d26;border-bottom:1px solid #f0f0f0;">${fmtEur(d.b2b.yesterday.ca)}</td>
+          <td style="padding:10px 16px;color:#6b7280;font-size:13px;border-bottom:1px solid #f0f0f0;" colspan="2">${d.b2b.yesterday.nbDeals} deal(s)</td>
+        </tr>
+        <tr>
+          <td style="padding:10px 16px;font-weight:600;color:#1a1d26;border-bottom:1px solid #f0f0f0;">CA MTD</td>
+          <td style="padding:10px 16px;font-size:18px;font-weight:700;color:#1a1d26;border-bottom:1px solid #f0f0f0;">${fmtEur(d.b2b.mtd.ca)}</td>
+          <td style="padding:10px 16px;color:#6b7280;font-size:13px;border-bottom:1px solid #f0f0f0;" colspan="2">${d.b2b.mtd.nbDeals} deal(s)</td>
+        </tr>
+      </table>
+    </div>` : ''}
 
     <!-- CHANNELS -->
     <div style="background:#ffffff;border-radius:12px;overflow:hidden;margin-bottom:20px;border:1px solid #e5e5e0;box-shadow:0 1px 3px rgba(0,0,0,0.04);">

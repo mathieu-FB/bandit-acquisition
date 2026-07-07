@@ -953,6 +953,14 @@ app.get('/api/cache/purge-all', (req, res) => {
   res.json({ purged: all.length });
 });
 
+// Purge Pipedrive deals cache — triggered by the B2B tab refresh button.
+// Force la prochaine requête B2B à re-fetcher Pipedrive (au lieu d'attendre TTL 1h).
+app.post('/api/cache/purge-pipedrive-deals', (req, res) => {
+  cache.purgePipedriveDeals();
+  console.log('[Cache] Purged Pipedrive deals');
+  res.json({ status: 'ok' });
+});
+
 // SQLite cache status (PR1 — observability before refactor)
 app.get('/api/cache/db-status', (req, res) => {
   res.json(cache.stats());
@@ -4412,6 +4420,22 @@ async function fetchAllWonDeals() {
   return deals;
 }
 
+// Cached wrapper: SQLite-backed with TTL 1h. Bouton refresh manuel dans l'UI
+// (POST /api/cache/purge-pipedrive-deals) force un rafraîchissement immédiat.
+const PIPEDRIVE_DEALS_TTL = 60 * 60 * 1000;
+
+async function fetchAllWonDealsCached() {
+  const cached = cache.getPipedriveDeals(PIPEDRIVE_DEALS_TTL);
+  if (cached) {
+    console.log(`[Pipedrive] Cache HIT: ${cached.length} won deals (TTL 1h)`);
+    return cached;
+  }
+  const deals = await fetchAllWonDeals();
+  cache.setPipedriveDeals(deals);
+  console.log(`[Pipedrive] Cache MISS: fetched + stored ${deals.length} won deals`);
+  return deals;
+}
+
 // Pipedrive deal fields — backed by cache.js (SQLite, 24h TTL)
 const PIPEDRIVE_FIELDS_TTL = 24 * 60 * 60 * 1000;
 
@@ -4459,9 +4483,13 @@ const B2B_OBJECTIVES = {
     '2026-04': 296000,
     '2026-05': 55000,
     '2026-06': 30000,
+    '2026-07': 70000,
+    '2026-08': 10000,
+    '2026-09': 10000,
   },
   quarterly: {
     '2026-Q2': 381000,
+    '2026-Q3': 90000, // 70k + 10k + 10k
   },
   annual: {
     '2026': 626000,
@@ -4475,11 +4503,12 @@ app.get('/api/pipedrive/b2b-report', async (req, res) => {
   }
   try {
     const { start, end } = req.query;
+    const sourceFilter = (req.query.source || '').trim(); // optional
     if (!start || !end) return res.json({ error: 'start and end required' });
 
-    console.log(`[Pipedrive] Fetching B2B report ${start} → ${end}`);
+    console.log(`[Pipedrive] Fetching B2B report ${start} → ${end}${sourceFilter ? ` [source=${sourceFilter}]` : ''}`);
 
-    const allDeals = await fetchAllWonDeals();
+    const allDeals = await fetchAllWonDealsCached();
     console.log(`[Pipedrive] Total won deals fetched: ${allDeals.length}`);
 
     // Log date range of all deals for debugging
@@ -4488,13 +4517,12 @@ app.get('/api/pipedrive/b2b-report', async (req, res) => {
       console.log(`[Pipedrive] Won dates range: ${wonDates[0]} → ${wonDates[wonDates.length - 1]}`);
     }
 
-    // Filter by won_time within date range
+    // Filter by won_time within date range + exclude specific clients
     const startDate = new Date(start + 'T00:00:00Z');
     const endDate = new Date(end + 'T23:59:59Z');
     const filtered = allDeals.filter(d => {
       const wt = d.won_time ? new Date(d.won_time) : null;
       if (!wt || wt < startDate || wt > endDate) return false;
-      // Exclude specific clients
       const name = d.org_id?.name || d.org_name || '';
       return !B2B_EXCLUDED_CLIENTS.some(ex => name.toUpperCase().includes(ex.toUpperCase()));
     });
@@ -4523,41 +4551,75 @@ app.get('/api/pipedrive/b2b-report', async (req, res) => {
       Dealbot: 'Dealbot',
     };
 
-    // CA total
-    const ca = filtered.reduce((s, d) => s + (d.value || 0), 0);
-
-    // Unique clients
-    const clientSet = new Set(filtered.map(d => getClientKey(d)).filter(v => v !== 'unknown'));
-    const nbClients = clientSet.size;
-
-    // Panier moyen
-    const panierMoyen = filtered.length > 0 ? ca / filtered.length : 0;
-
-    // Revenue by source — use "Canal d'Origine" custom field
+    // Resolve "Canal d'Origine" custom field once, then annotate every deal
+    // with its computed source label. Used both for filtering and breakdowns.
     const canalField = await findPipedriveField("Canal d'Origine");
-    const bySource = {};
-    for (const d of filtered) {
-      let src = 'Non défini';
+    const sourceOf = (d) => {
       if (canalField) {
         const raw = d[canalField.key];
         if (raw != null && raw !== '') {
-          src = canalField.options[String(raw)] || String(raw);
+          return canalField.options[String(raw)] || String(raw);
         }
-      } else {
-        // Fallback to origin if custom field not found
-        const rawOrigin = d.origin || 'Non défini';
-        src = ORIGIN_LABELS[rawOrigin] || rawOrigin;
+        return 'Non défini';
       }
+      const rawOrigin = d.origin || 'Non défini';
+      return ORIGIN_LABELS[rawOrigin] || rawOrigin;
+    };
+
+    // sourcesAvailable : liste TOUTES les sources présentes dans la période
+    // (avant filter). Sert à peupler le dropdown côté UI même quand un filter
+    // est actif — sinon l'utilisateur ne pourrait plus changer de source.
+    const sourcesAvailable = Array.from(new Set(filtered.map(sourceOf))).sort();
+
+    // Vue restreinte si un filter source est appliqué. Sinon = filtered.
+    const viewDeals = sourceFilter
+      ? filtered.filter(d => sourceOf(d) === sourceFilter)
+      : filtered;
+
+    // CA total (sur la vue filtrée)
+    const ca = viewDeals.reduce((s, d) => s + (d.value || 0), 0);
+
+    // Unique clients (sur la vue filtrée)
+    const clientSet = new Set(viewDeals.map(d => getClientKey(d)).filter(v => v !== 'unknown'));
+    const nbClients = clientSet.size;
+
+    // Panier moyen (sur la vue filtrée)
+    const panierMoyen = viewDeals.length > 0 ? ca / viewDeals.length : 0;
+
+    // Revenue by source — TOUJOURS calculé sur `filtered` (pas viewDeals) pour
+    // conserver l'affichage complet du pie chart même quand un filter est actif.
+    const bySource = {};
+    const sourcesDetail = {}; // { src: [ { id, title, value, wonTime, orgId, orgName, personId, personName } ] }
+    for (const d of filtered) {
+      const src = sourceOf(d);
       bySource[src] = (bySource[src] || 0) + (d.value || 0);
+      if (!sourcesDetail[src]) sourcesDetail[src] = [];
+      sourcesDetail[src].push({
+        id: d.id,
+        title: d.title || '',
+        value: d.value || 0,
+        wonTime: d.won_time || null,
+        orgId: getOrgId(d),
+        orgName: d.org_id?.name || d.org_name || null,
+        personId: getPersonId(d),
+        personName: d.person_id?.name || d.person_name || null,
+      });
+    }
+    // Tri des deals par valeur desc à l'intérieur de chaque source
+    for (const src of Object.keys(sourcesDetail)) {
+      sourcesDetail[src].sort((a, b) => (b.value || 0) - (a.value || 0));
     }
 
-    // Top 5 clients — v1 gives us org_id.name & person_id.name
+    // Top 5 clients — sur la vue filtrée (respecte le filter source)
     const clientDeals = {};
-    for (const d of filtered) {
+    for (const d of viewDeals) {
       const key = getClientKey(d);
       if (!clientDeals[key]) {
         clientDeals[key] = {
+          key,
           name: getClientName(d),
+          orgId: getOrgId(d),
+          personId: getPersonId(d),
           total: 0,
           count: 0,
         };
@@ -4570,12 +4632,14 @@ app.get('/api/pipedrive/b2b-report', async (req, res) => {
       .slice(0, 5)
       .map(c => ({
         name: c.name,
+        orgId: c.orgId,
+        personId: c.personId,
         ca: c.total,
         commandes: c.count,
         panierMoyen: c.count > 0 ? c.total / c.count : 0,
       }));
 
-    // Source breakdown for pie chart
+    // Source breakdown for pie chart (toutes sources, indépendant du filter)
     const sources = Object.entries(bySource)
       .map(([name, value]) => ({ name, value }))
       .sort((a, b) => b.value - a.value);
@@ -4643,12 +4707,16 @@ app.get('/api/pipedrive/b2b-report', async (req, res) => {
     res.json({
       ca,
       nbClients,
-      nbDeals: filtered.length,
+      nbDeals: viewDeals.length,
       panierMoyen,
-      sources,
-      top5,
+      sources,          // pie chart data — toutes les sources de la période
+      sourcesDetail,    // { srcName: [ {id, title, value, wonTime, orgId, orgName, personId, personName} ] }
+      sourcesAvailable, // liste triée pour le dropdown filter
+      top5,             // avec orgId + personId pour permettre les liens Pipedrive
       totalWonDeals: allDeals.length,
       objectives,
+      pipedriveBase: pipedriveBase(),
+      filterApplied: sourceFilter || null,
     });
   } catch (err) {
     console.error('[Pipedrive] B2B report error:', err);

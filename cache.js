@@ -25,6 +25,7 @@ const ram = {
   productTypeMap: { map: null, updatedAt: 0 },
   fontaineSKUs: { skus: null, updatedAt: 0 },
   pipedriveFields: { rows: null, updatedAt: 0 },
+  pipedriveDeals: { deals: null, fetchedAt: 0 }, // all won deals — TTL-based cache
   recharge: { data: null, fetchedAt: 0 },
 };
 
@@ -104,6 +105,12 @@ CREATE TABLE IF NOT EXISTS pipedrive_fields (
 CREATE TABLE IF NOT EXISTS recharge_snapshot (
   scope TEXT PRIMARY KEY,
   data_json TEXT NOT NULL,
+  fetched_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS pipedrive_deals (
+  scope TEXT PRIMARY KEY,
+  deals_json TEXT NOT NULL,
   fetched_at INTEGER NOT NULL
 );
 
@@ -245,6 +252,14 @@ function prepareStatements() {
       ON CONFLICT(scope) DO UPDATE SET data_json = excluded.data_json, fetched_at = excluded.fetched_at
     `),
     selectRecharge: db.prepare(`SELECT data_json, fetched_at FROM recharge_snapshot WHERE scope = ?`),
+
+    // pipedrive_deals — all won deals, single row scope='all', TTL-based invalidation
+    upsertPipedriveDeals: db.prepare(`
+      INSERT INTO pipedrive_deals (scope, deals_json, fetched_at) VALUES (?, ?, ?)
+      ON CONFLICT(scope) DO UPDATE SET deals_json = excluded.deals_json, fetched_at = excluded.fetched_at
+    `),
+    selectPipedriveDeals: db.prepare(`SELECT deals_json, fetched_at FROM pipedrive_deals WHERE scope = ?`),
+    deletePipedriveDeals: db.prepare(`DELETE FROM pipedrive_deals`),
 
     // schema_meta
     selectSchemaMeta: db.prepare(`SELECT value FROM schema_meta WHERE key = ?`),
@@ -415,6 +430,12 @@ function preload(opts = {}) {
   ram.recharge = rcRow
     ? { data: safeParse(rcRow.data_json), fetchedAt: rcRow.fetched_at }
     : { data: null, fetchedAt: 0 };
+
+  // 11. pipedrive_deals
+  const pdDealsRow = stmts.selectPipedriveDeals.get('all');
+  ram.pipedriveDeals = pdDealsRow
+    ? { deals: safeParse(pdDealsRow.deals_json), fetchedAt: pdDealsRow.fetched_at }
+    : { deals: null, fetchedAt: 0 };
 
   const elapsed = Date.now() - t0;
   return {
@@ -688,6 +709,29 @@ function setPipedriveFields(fields) {
 }
 
 // ------------------------------------------------------------
+// Pipedrive deals API — TTL-based cache (all won deals, single row).
+// Not stale-tolerant: if the caller passes maxAgeMs and the row is older
+// than that, we return null (caller re-fetches from Pipedrive and calls
+// setPipedriveDeals to refresh).
+// ------------------------------------------------------------
+function getPipedriveDeals(maxAgeMs) {
+  if (!ram.pipedriveDeals.deals) return null;
+  if (maxAgeMs && Date.now() - ram.pipedriveDeals.fetchedAt > maxAgeMs) return null;
+  return ram.pipedriveDeals.deals;
+}
+
+function setPipedriveDeals(deals) {
+  const now = Date.now();
+  ram.pipedriveDeals = { deals, fetchedAt: now };
+  safeWrite(() => stmts.upsertPipedriveDeals.run('all', JSON.stringify(deals), now));
+}
+
+function purgePipedriveDeals() {
+  ram.pipedriveDeals = { deals: null, fetchedAt: 0 };
+  safeWrite(() => stmts.deletePipedriveDeals.run());
+}
+
+// ------------------------------------------------------------
 // Recharge snapshot API
 // ------------------------------------------------------------
 function getRechargeSnapshot(maxAgeMs) {
@@ -790,6 +834,9 @@ module.exports = {
   // pipedrive
   getPipedriveFields,
   setPipedriveFields,
+  getPipedriveDeals,
+  setPipedriveDeals,
+  purgePipedriveDeals,
   // recharge
   getRechargeSnapshot,
   setRechargeSnapshot,

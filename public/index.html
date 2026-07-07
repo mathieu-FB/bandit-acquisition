@@ -998,7 +998,7 @@
       <!-- B2B Reporting -->
       <div class="b2b-subtab-content active" id="b2b-subtab-reporting">
 
-        <!-- Toolbar: date + quick ranges -->
+        <!-- Toolbar: date + quick ranges + source filter + refresh -->
         <div class="b2b-toolbar">
           <div class="b2b-date-group">
             <label class="date-label">Période</label>
@@ -1014,6 +1014,13 @@
             <button class="btn btn-outline" data-b2b-range="qtd">QTD</button>
             <button class="btn btn-outline" data-b2b-range="ytd">YTD</button>
           </div>
+          <div class="b2b-source-filter" style="display:flex;align-items:center;gap:8px;">
+            <label for="b2bSourceFilter" style="font-size:12px;color:var(--text-muted);">Source</label>
+            <select id="b2bSourceFilter" class="date-input" style="min-width:180px;">
+              <option value="">Toutes les sources</option>
+            </select>
+          </div>
+          <button class="btn btn-outline" id="b2bRefreshBtn" title="Rafraîchir depuis Pipedrive (bypass cache 1h)">↻ Rafraîchir</button>
         </div>
 
         <!-- Loading -->
@@ -1071,6 +1078,26 @@
               <tbody id="b2bTopClients"></tbody>
             </table>
           </div>
+        </div>
+
+        <!-- Detail table: shown when a doughnut slice is clicked. Lists all
+             deals of the selected source with links to Pipedrive. -->
+        <div class="b2b-table-card" id="b2bDetailWrap" style="display:none;margin-top:16px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <h3 class="b2b-section-title" style="margin:0;">Commandes de la source : <span id="b2bDetailSource" style="color:var(--text-muted);"></span></h3>
+            <button class="btn btn-outline" id="b2bDetailClose" style="padding:4px 10px;font-size:12px;">Fermer</button>
+          </div>
+          <table class="b2b-clients-table" id="b2bDetailTable">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Client</th>
+                <th>Deal</th>
+                <th style="text-align:right;">Valeur</th>
+              </tr>
+            </thead>
+            <tbody id="b2bDetailBody"></tbody>
+          </table>
         </div>
 
       </div><!-- /b2b-subtab-reporting -->
