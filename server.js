@@ -5628,6 +5628,19 @@ app.get('/api/stock/debug/inventory-check', async (req, res) => {
   }
 });
 
+// Debug — liste les sales channels du store Shopify pour identifier
+// les source_name numériques (ex: 211278528513, 295841693697).
+app.get('/api/stock/debug/sales-channels', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const result = await stockSync.debugSalesChannels();
+    res.json(result);
+  } catch (err) {
+    console.error('[Stock] debug sales-channels error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Debug ventes d'un SKU par source Shopify (toutes sources, filtre courant marqué).
 app.get('/api/stock/debug/sources-check', async (req, res) => {
   if (!requireAdmin(req, res)) return;

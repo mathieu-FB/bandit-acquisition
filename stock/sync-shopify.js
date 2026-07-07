@@ -21,8 +21,10 @@ const stockDb = require('./db');
 
 const API_VERSION = '2024-01';
 
-// Same filter used by the daily report — keeps stock/sales consistent with the
-// DTC channels that actually consume from the VETO SANTE location.
+// Legacy DTC-only filter — kept only for reference / cross-check with the
+// daily report. Stock/réappro uses a deny-list approach instead (see
+// loadStockExcludedSources below) because ALL sources that ship from
+// VETO SANTE dépile le stock, pas juste le DTC.
 const ALLOWED_SOURCES = new Set([
   'web',
   'JUST',
@@ -30,6 +32,18 @@ const ALLOWED_SOURCES = new Set([
   'subscription_contract',
   'subscription_contract_checkout_one',
 ]);
+
+// Stock/réappro : deny-list configurable via param global stock_excluded_sources
+// (CSV). Vide par défaut → toutes les sources qui dépilent VS sont comptées.
+// À utiliser si un canal a une chaîne logistique indépendante (ex: Amazon FBA
+// avec stock warehouse Amazon, pas MCF).
+function loadStockExcludedSources() {
+  const raw = stockDb.getParametreGlobal('stock_excluded_sources') || '';
+  const set = new Set(
+    raw.split(',').map(s => s.trim()).filter(Boolean)
+  );
+  return set;
+}
 
 function shopifyBase() {
   const store = process.env.SHOPIFY_STORE_URL;
@@ -323,13 +337,16 @@ async function syncShopifyMonthlySales({ fromYearMonth, toYearMonth, onProgress 
     if (!fromYearMonth || !toYearMonth) throw new Error('fromYearMonth et toYearMonth requis (YYYY-MM)');
     const from = parseYearMonth(fromYearMonth);
     const to = parseYearMonth(toYearMonth);
-    // Bounds: inclusive on the first of `from` month, exclusive on the first of the month AFTER `to`.
     const startISO = new Date(Date.UTC(from.year, from.month - 1, 1)).toISOString();
     const endISO = new Date(Date.UTC(to.year, to.month, 1)).toISOString();
 
+    const excludedSources = loadStockExcludedSources();
+
     // aggregates[sku][ym] = net units
     const aggregates = {};
-    let pages = 0, ordersSeen = 0, ordersKept = 0, lineItemsProcessed = 0;
+    // sourceUsage[source] = { orders, netUnits } — for observability in the sync log.
+    const sourceUsage = {};
+    let pages = 0, ordersSeen = 0, ordersKept = 0, ordersExcluded = 0, lineItemsProcessed = 0;
 
     const startUrl = `${shopifyBase()}/orders.json?` + new URLSearchParams({
       created_at_min: startISO,
@@ -343,19 +360,21 @@ async function syncShopifyMonthlySales({ fromYearMonth, toYearMonth, onProgress 
       pages++;
       for (const order of data.orders || []) {
         ordersSeen++;
-        if (!ALLOWED_SOURCES.has(order.source_name)) continue;
+        const src = order.source_name || '(null)';
+        if (excludedSources.has(src)) { ordersExcluded++; continue; }
         ordersKept++;
         const dt = new Date(order.created_at);
         const y = dt.getUTCFullYear();
         const m = dt.getUTCMonth() + 1;
         const ym = `${y}-${String(m).padStart(2, '0')}`;
-        // Refunded qty per line_item_id
         const refundedByLI = {};
         for (const ref of order.refunds || []) {
           for (const rli of ref.refund_line_items || []) {
             refundedByLI[rli.line_item_id] = (refundedByLI[rli.line_item_id] || 0) + (rli.quantity || 0);
           }
         }
+        if (!sourceUsage[src]) sourceUsage[src] = { orders: 0, netUnits: 0 };
+        sourceUsage[src].orders += 1;
         for (const li of order.line_items || []) {
           lineItemsProcessed++;
           if (!li.sku) continue;
@@ -363,6 +382,7 @@ async function syncShopifyMonthlySales({ fromYearMonth, toYearMonth, onProgress 
           if (!sku) continue;
           const netQty = Math.max(0, (li.quantity || 0) - (refundedByLI[li.id] || 0));
           if (netQty <= 0) continue;
+          sourceUsage[src].netUnits += netQty;
           if (!aggregates[sku]) aggregates[sku] = {};
           aggregates[sku][ym] = (aggregates[sku][ym] || 0) + netQty;
         }
@@ -370,7 +390,6 @@ async function syncShopifyMonthlySales({ fromYearMonth, toYearMonth, onProgress 
       if (onProgress) onProgress({ pages, ordersSeen, ordersKept });
     }
 
-    // Upsert only SKUs present in referentiel_sku.
     const rows = [];
     let skusMatched = 0, skusUnmatched = 0;
     for (const [sku, byMonth] of Object.entries(aggregates)) {
@@ -383,12 +402,20 @@ async function syncShopifyMonthlySales({ fromYearMonth, toYearMonth, onProgress 
     }
     stockDb.upsertPrevisionsMensuellesBulk(rows);
 
+    // Compact source usage for the sync log message (top 10 by netUnits).
+    const topSources = Object.entries(sourceUsage)
+      .map(([src, agg]) => ({ src, ...agg }))
+      .sort((a, b) => b.netUnits - a.netUnits)
+      .slice(0, 10);
+
     const stats = {
       range: `${fromYearMonth} → ${toYearMonth}`,
-      pages, ordersSeen, ordersKept,
+      pages, ordersSeen, ordersKept, ordersExcluded,
       lineItemsProcessed,
       skusMatched, skusUnmatched,
       previsionsUpserted: rows.length,
+      excludedSources: Array.from(excludedSources),
+      topSources,
     };
     stockDb.finishSync(logId, { status: 'ok', message: JSON.stringify(stats) });
     return stats;
@@ -398,12 +425,53 @@ async function syncShopifyMonthlySales({ fromYearMonth, toYearMonth, onProgress 
   }
 }
 
+// Retourne la liste des sales channels (publications) du store Shopify pour
+// aider à identifier les source_name numériques (ex: '211278528513').
+async function debugSalesChannels() {
+  // Try GraphQL publications first (channels).
+  const graphqlUrl = `${shopifyBase()}/graphql.json`;
+  const query = `{
+    publications(first: 50) {
+      edges {
+        node { id name supportsFuturePublishing app { title } }
+      }
+    }
+    shop { id name myshopifyDomain }
+  }`;
+  const res = await fetch(graphqlUrl, {
+    method: 'POST',
+    headers: { ...shopifyHeaders() },
+    body: JSON.stringify({ query }),
+  });
+  if (!res.ok) {
+    return { error: `Shopify GraphQL ${res.status}: ${await res.text()}` };
+  }
+  const data = await res.json();
+  const publications = ((data.data && data.data.publications && data.data.publications.edges) || []).map(e => {
+    const gid = e.node.id || '';
+    const numericId = gid.split('/').pop();
+    return {
+      publication_gid: gid,
+      publication_numeric_id: numericId,
+      name: e.node.name,
+      app_title: e.node.app ? e.node.app.title : null,
+    };
+  });
+  return {
+    shop: data.data && data.data.shop ? data.data.shop : null,
+    publications,
+    note: 'Le champ "source_name" des orders peut contenir : le nom du canal (ex: "web", "JUST"), l\'ID numérique du publication (ex: "295841693697"), le nom d\'un marketplace ("Choose", "Zooplus SE"), ou "shopify_draft_order" pour les commandes manuelles.',
+  };
+}
+
 module.exports = {
   syncShopifyVariants,
   syncShopifyStock,
   syncShopifyMonthlySales,
   debugInventoryForSku,
   debugSourcesForSku,
+  debugSalesChannels,
+  loadStockExcludedSources,
   ALLOWED_SOURCES,
   API_VERSION,
 };
