@@ -25,10 +25,10 @@ const stockDb = require('./db');
 // ---------- Defaults & fallbacks ----------
 const DEFAULTS = {
   couvertureViseeJours: 90,    // fallback famille
-  coeffSecurite: 1.1,          // fallback famille
+  coeffSecurite: 1.3,          // fallback famille — +30 % de sécurité par défaut
   coeffTendance: 1.0,          // fallback SKU
   coeffTendanceMin: 0.5,       // borne basse
-  coeffTendanceMax: 2.5,       // borne haute
+  coeffTendanceMax: 3.0,       // borne haute — laisse s'exprimer les fortes croissances (Fontaine, etc.)
   leadTimeJours: 60,           // fallback SKU
   urgentMargeJours: 15,        // marge appliquée au-dessus de lead_time pour URGENT
   horizonJours: 365,           // horizon de projection
@@ -349,9 +349,16 @@ function runForSku({ sku, ref, previsions, saisonaliteByFamille, famillesParam, 
   const skuPrev = previsions || {};
   const enCoursLignes = stockDb.getEnCoursForSku(sku);
   const leadTimeJours = ref.lead_time_jours != null ? ref.lead_time_jours : DEFAULTS.leadTimeJours;
-  const couvertureViseeJours = ref.couverture_visee_jours != null
-    ? ref.couverture_visee_jours
-    : ((famillesParam[`${ref.famille}|${ref.animal}`] && famillesParam[`${ref.famille}|${ref.animal}`].couverture_visee_jours) || DEFAULTS.couvertureViseeJours);
+  // Priorité : param famille (défini dans stock_parametres_famille) → xlsx → défaut global.
+  // Le param famille override la matrice pour permettre au user de recalibrer par famille sans
+  // toucher au fichier Excel source.
+  const famParam = famillesParam[`${ref.famille}|${ref.animal}`] || {};
+  const couvertureViseeJours = famParam.couverture_visee_jours != null
+    ? famParam.couverture_visee_jours
+    : (ref.couverture_visee_jours != null ? ref.couverture_visee_jours : DEFAULTS.couvertureViseeJours);
+  const couvertureViseeSource = famParam.couverture_visee_jours != null
+    ? 'param_famille'
+    : (ref.couverture_visee_jours != null ? 'matrice' : 'defaut_global');
 
   // Complétude check for niveau
   const paKnown = ref.pa_vs != null || ref.pa_dernier != null;
@@ -398,6 +405,7 @@ function runForSku({ sku, ref, previsions, saisonaliteByFamille, famillesParam, 
     complet,
     leadTimeJours,
     couvertureViseeJours,
+    couvertureViseeSource,
     tendance: forecast.tendance,
     coeffSecurite: forecast.coeffSec,
     monthlyForecast: forecast.rows,

@@ -203,6 +203,27 @@ function seedDefaults() {
     });
   });
   tx(defaults);
+
+  // Seed familles avec couvertures visées + coeff sécurité par défaut.
+  // On utilise INSERT OR IGNORE via l'upsert (avec la clé (famille, animal))
+  // pour ne pas écraser des overrides existants.
+  const familles = [
+    // Fontaine → produit à forte tendance, couverture 60j pour absorber les pics
+    { famille: 'Fontaine', animal: 'Chat', couverture_visee_jours: 60, coeff_securite: 1.3, coeff_tendance: 1.0 },
+  ];
+  familles.forEach(f => {
+    const existing = stmts.selectParametreFamille.get(f.famille, f.animal);
+    if (existing) return;
+    stmts.upsertParametreFamille.run({
+      famille: f.famille,
+      animal: f.animal,
+      couverture_visee_jours: f.couverture_visee_jours,
+      coeff_securite: f.coeff_securite,
+      coeff_saisonnalite_json: null,
+      coeff_tendance: f.coeff_tendance,
+      now,
+    });
+  });
 }
 
 function prepareStatements() {

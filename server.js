@@ -5563,6 +5563,57 @@ app.get('/api/stock/moteur/comparatif', (req, res) => {
   }
 });
 
+// Paramètres famille — liste + upsert (couverture, coeff sécurité/tendance, saisonnalité)
+app.get('/api/stock/parametres-famille', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    res.json({ items: stockDb.listParametresFamille() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/stock/parametres-famille', express.json(), (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const body = req.body || {};
+    if (!body.famille || !body.animal) {
+      return res.status(400).json({ error: 'Champs requis: famille, animal' });
+    }
+    stockDb.upsertParametreFamille({
+      famille: String(body.famille),
+      animal: String(body.animal),
+      couverture_visee_jours: body.couverture_visee_jours != null ? Number(body.couverture_visee_jours) : 90,
+      coeff_securite: body.coeff_securite != null ? Number(body.coeff_securite) : 1.3,
+      coeff_saisonnalite: body.coeff_saisonnalite || null,
+      coeff_tendance: body.coeff_tendance != null ? Number(body.coeff_tendance) : 1.0,
+    });
+    res.json({ ok: true, param: stockDb.getParametreFamille(body.famille, body.animal) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET alias for browser triggering with query params: ?famille=Fontaine&animal=Chat&couverture_visee_jours=60&coeff_securite=1.3
+app.get('/api/stock/parametres-famille/set', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const { famille, animal } = req.query;
+    if (!famille || !animal) return res.status(400).json({ error: 'Query requise: famille=&animal=' });
+    stockDb.upsertParametreFamille({
+      famille: String(famille),
+      animal: String(animal),
+      couverture_visee_jours: req.query.couverture_visee_jours != null ? Number(req.query.couverture_visee_jours) : 90,
+      coeff_securite: req.query.coeff_securite != null ? Number(req.query.coeff_securite) : 1.3,
+      coeff_tendance: req.query.coeff_tendance != null ? Number(req.query.coeff_tendance) : 1.0,
+      coeff_saisonnalite: null,
+    });
+    res.json({ ok: true, param: stockDb.getParametreFamille(String(famille), String(animal)) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Debug Shopify inventory pour un SKU précis (voir toutes les locations, comparer stock DB vs Shopify).
 app.get('/api/stock/debug/inventory-check', async (req, res) => {
   if (!requireAdmin(req, res)) return;
