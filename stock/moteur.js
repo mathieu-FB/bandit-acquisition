@@ -23,12 +23,16 @@
 const stockDb = require('./db');
 
 // ---------- Defaults & fallbacks ----------
+// Recalibration V2 après comparatif global +130 % vs matrice : on
+// baisse tendance max (3.0 → 2.0) et sécurité (1.3 → 1.15) pour ramener
+// l'écart moyen à ~+25 %. Les fortes croissances restent visibles via
+// la tendance 2.0× mais ne saturent plus la proposition.
 const DEFAULTS = {
   couvertureViseeJours: 90,    // fallback famille
-  coeffSecurite: 1.3,          // fallback famille — +30 % de sécurité par défaut
+  coeffSecurite: 1.15,         // fallback famille — +15 % de marge
   coeffTendance: 1.0,          // fallback SKU
   coeffTendanceMin: 0.5,       // borne basse
-  coeffTendanceMax: 3.0,       // borne haute — laisse s'exprimer les fortes croissances (Fontaine, etc.)
+  coeffTendanceMax: 2.0,       // borne haute
   leadTimeJours: 60,           // fallback SKU
   urgentMargeJours: 15,        // marge appliquée au-dessus de lead_time pour URGENT
   horizonJours: 365,           // horizon de projection

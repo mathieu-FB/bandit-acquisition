@@ -209,7 +209,7 @@ function seedDefaults() {
   // pour ne pas écraser des overrides existants.
   const familles = [
     // Fontaine → produit à forte tendance, couverture 60j pour absorber les pics
-    { famille: 'Fontaine', animal: 'Chat', couverture_visee_jours: 60, coeff_securite: 1.3, coeff_tendance: 1.0 },
+    { famille: 'Fontaine', animal: 'Chat', couverture_visee_jours: 60, coeff_securite: 1.15, coeff_tendance: 1.0 },
   ];
   familles.forEach(f => {
     const existing = stmts.selectParametreFamille.get(f.famille, f.animal);
