@@ -120,11 +120,13 @@ async function syncShopifyStock({ onProgress } = {}) {
       stockDb.finishSync(logId, { status: 'error', message: msg });
       throw new Error(msg);
     }
-    let updated = 0, chunks = 0, unmatched = 0;
+    let updated = 0, chunks = 0, unmatched = 0, itemsRequested = 0, levelsReturned = 0;
+    const missingItemIds = new Set(referentiels.map(r => r.shopify_inventory_item_id));
     const CHUNK = 50;
     for (let i = 0; i < referentiels.length; i += CHUNK) {
       const chunk = referentiels.slice(i, i + CHUNK);
       const ids = chunk.map(r => r.shopify_inventory_item_id).join(',');
+      itemsRequested += chunk.length;
       const url = `${shopifyBase()}/inventory_levels.json?` + new URLSearchParams({
         location_ids: locationId,
         inventory_item_ids: ids,
@@ -135,6 +137,7 @@ async function syncShopifyStock({ onProgress } = {}) {
       const data = await res.json();
       const upserts = [];
       for (const level of data.inventory_levels || []) {
+        levelsReturned++;
         const skuRow = stockDb.getSkuByInventoryItemId(level.inventory_item_id);
         if (!skuRow) { unmatched++; continue; }
         upserts.push({
@@ -143,19 +146,77 @@ async function syncShopifyStock({ onProgress } = {}) {
           location_id: String(level.location_id),
           source: 'shopify',
         });
+        missingItemIds.delete(String(level.inventory_item_id));
       }
       if (upserts.length) stockDb.upsertStockActuelBulk(upserts);
       updated += upserts.length;
       chunks++;
       if (onProgress) onProgress({ chunks, updated, unmatched });
     }
-    const stats = { chunks, updated, unmatched, locationId };
+    const stats = {
+      chunks, updated, unmatched, locationId,
+      itemsRequested,
+      levelsReturned,
+      itemsWithoutInventoryLevel: missingItemIds.size,
+      itemsWithoutInventoryLevelSample: Array.from(missingItemIds).slice(0, 10),
+      hint: missingItemIds.size > 0
+        ? `${missingItemIds.size} SKU n'ont AUCUN record inventory_level à la location ${locationId}. Vérifie que cette location est bien VETO SANTE — les SKU peuvent être activés à une autre location. GET /api/stock/debug/inventory-check?sku=<sku> pour investiguer.`
+        : null,
+    };
     stockDb.finishSync(logId, { status: 'ok', message: JSON.stringify(stats) });
     return stats;
   } catch (err) {
     stockDb.finishSync(logId, { status: 'error', message: err.message });
     throw err;
   }
+}
+
+// ------------------------------------------------------------
+// Debug helper: for a single SKU, return the raw list of locations
+// where its inventory_item_id has a record, plus the currently-tracked
+// location. Useful when a stock sync leaves a SKU at its seed value.
+// ------------------------------------------------------------
+async function debugInventoryForSku(sku) {
+  const ref = stockDb.getReferentielSku(sku);
+  if (!ref) return { error: `SKU introuvable dans le référentiel: ${sku}` };
+  if (!ref.shopify_inventory_item_id) {
+    return {
+      sku, ref: pickRefFields(ref),
+      error: 'Pas de shopify_inventory_item_id (lance sync variants d\'abord)',
+    };
+  }
+  const trackedLocation = stockDb.getParametreGlobal('shopify_location_id') || '82726682960';
+  // 1. All inventory levels for this inventory_item_id, all locations.
+  const levelsUrl = `${shopifyBase()}/inventory_levels.json?` + new URLSearchParams({
+    inventory_item_ids: ref.shopify_inventory_item_id,
+    limit: '250',
+  }).toString();
+  const levelsRes = await fetch(levelsUrl, { headers: shopifyHeaders() });
+  const levelsPayload = levelsRes.ok ? await levelsRes.json() : { status: levelsRes.status, text: await levelsRes.text() };
+  // 2. List all locations to help identify them by name.
+  const locsRes = await fetch(`${shopifyBase()}/locations.json`, { headers: shopifyHeaders() });
+  const locsPayload = locsRes.ok ? await locsRes.json() : { status: locsRes.status, text: await locsRes.text() };
+  return {
+    sku, ref: pickRefFields(ref),
+    trackedLocationId: trackedLocation,
+    levelsForItem: levelsPayload.inventory_levels || levelsPayload,
+    availableAtTrackedLocation: (levelsPayload.inventory_levels || []).find(l => String(l.location_id) === String(trackedLocation)) || null,
+    locations: (locsPayload.locations || []).map(l => ({
+      id: String(l.id), name: l.name, active: l.active,
+      matchTracked: String(l.id) === String(trackedLocation),
+    })),
+  };
+}
+
+function pickRefFields(ref) {
+  return {
+    sku: ref.sku, nom_court: ref.nom_court,
+    shopify_product_id: ref.shopify_product_id,
+    shopify_variant_id: ref.shopify_variant_id,
+    shopify_inventory_item_id: ref.shopify_inventory_item_id,
+    stockActuelDb: (stockDb.getStockActuel(ref.sku) || { stock_dispo: null }).stock_dispo,
+    stockActuelSource: (stockDb.getStockActuel(ref.sku) || {}).source || null,
+  };
 }
 
 // ------------------------------------------------------------
@@ -255,6 +316,7 @@ module.exports = {
   syncShopifyVariants,
   syncShopifyStock,
   syncShopifyMonthlySales,
+  debugInventoryForSku,
   ALLOWED_SOURCES,
   API_VERSION,
 };

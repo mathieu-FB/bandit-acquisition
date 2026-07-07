@@ -86,14 +86,16 @@ function loadState() {
 }
 
 // ------------------------------------------------------------
-// Family-level seasonal coefficients — mean(month) / mean(all months)
-// computed from every SKU in the famille × animal over its history.
-// Real (is_estimated=0) sales prioritized; if none, fall back to estimated.
-// Returns { 1: coeff, 2: coeff, ..., 12: coeff }. Any month with no data
-// gets 1.0 (neutral).
+// Family-level seasonal coefficients — mean(month) / mean(months WITH data).
+// A month with no data returns 1.0 (neutral) instead of 0 — otherwise
+// missing history collapses forecast demand to zero and understates
+// the propositions. Estimated sales (is_estimated=1) are included as
+// fallback: they carry seed-xlsx signal until Shopify sales overrides
+// them. To prevent a full flat seed from wiping out real seasonality,
+// we drop them once we have ≥3 real months for the same (famille,mois).
 // ------------------------------------------------------------
 function deriveSaisonalCoeffsPerFamille(previsions) {
-  const perFamille = {}; // key = "famille|animal", value = { month: [values...] }
+  const perFamille = {}; // key = "famille|animal" → { month: { real: [...], est: [...] } }
   const refBySku = {};
   for (const r of stockDb.listReferentielActif()) {
     refBySku[r.sku] = r;
@@ -104,28 +106,46 @@ function deriveSaisonalCoeffsPerFamille(previsions) {
     const key = `${ref.famille}|${ref.animal}`;
     if (!perFamille[key]) perFamille[key] = {};
     for (const [ym, v] of Object.entries(byYm)) {
-      if (v.est) continue; // Ignore les estimations pour dériver la saisonnalité
       const mo = Number(ym.split('-')[1]);
-      if (!perFamille[key][mo]) perFamille[key][mo] = [];
-      perFamille[key][mo].push(v.qty);
+      if (!perFamille[key][mo]) perFamille[key][mo] = { real: [], est: [] };
+      if (v.est) perFamille[key][mo].est.push(v.qty);
+      else perFamille[key][mo].real.push(v.qty);
     }
   }
   const result = {};
   for (const [key, byMonth] of Object.entries(perFamille)) {
+    // For each month, pick real sales if we have ≥1; otherwise fall back to estimated.
     const meanByMonth = {};
+    const hasDataByMonth = {};
     for (let m = 1; m <= 12; m++) {
-      const arr = byMonth[m] || [];
-      meanByMonth[m] = arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0;
+      const bucket = byMonth[m] || { real: [], est: [] };
+      const source = bucket.real.length > 0 ? bucket.real : bucket.est;
+      if (source.length > 0) {
+        meanByMonth[m] = source.reduce((a, b) => a + b, 0) / source.length;
+        hasDataByMonth[m] = true;
+      } else {
+        meanByMonth[m] = 0;
+        hasDataByMonth[m] = false;
+      }
     }
-    const monthsWithData = Object.values(meanByMonth).filter(v => v > 0).length;
-    const overallMean = monthsWithData
-      ? Object.values(meanByMonth).reduce((a, b) => a + b, 0) / 12
-      : 0;
+    // Denominator: mean of months WITH data (not all 12) — otherwise sparse
+    // months inflate the coefficients of populated months.
+    const monthsWithDataArr = Object.entries(hasDataByMonth).filter(([, v]) => v).map(([m]) => Number(m));
+    const monthsWithData = monthsWithDataArr.length;
+    const sumWithData = monthsWithDataArr.reduce((s, m) => s + meanByMonth[m], 0);
+    const overallMean = monthsWithData > 0 ? sumWithData / monthsWithData : 0;
     const coeffs = {};
     for (let m = 1; m <= 12; m++) {
-      coeffs[m] = (monthsWithData >= 6 && overallMean > 0)
-        ? Number((meanByMonth[m] / overallMean).toFixed(3))
-        : 1.0;
+      if (monthsWithData < 3 || overallMean <= 0) {
+        // Not enough family history for a reliable seasonality → neutral.
+        coeffs[m] = 1.0;
+      } else if (hasDataByMonth[m]) {
+        coeffs[m] = Number((meanByMonth[m] / overallMean).toFixed(3));
+      } else {
+        // Month has no history at all — assume seasonally neutral rather
+        // than zero so downstream demand doesn't collapse.
+        coeffs[m] = 1.0;
+      }
     }
     result[key] = coeffs;
   }
@@ -133,42 +153,53 @@ function deriveSaisonalCoeffsPerFamille(previsions) {
 }
 
 // ------------------------------------------------------------
-// SKU-level trend: sum(last 3 real months) / sum(same 3 months a year ago).
-// Bounded to [MIN, MAX]. Fallback 1.0 if either window is missing.
+// SKU-level trend: sum(last 3 completed months) / sum(same 3 months a year ago).
+// Bounded to [MIN, MAX]. Counts ALL non-null rows (real + estimated) — a
+// month that only has seed-xlsx flat data still carries signal (the flat
+// value is the annualised /12 average), which is better than falling back
+// to a neutral 1.0. A real ratio dominates a fallback ratio.
 // ------------------------------------------------------------
 function deriveTendanceCoeff(previsions, today, opts = {}) {
   const min = opts.min ?? DEFAULTS.coeffTendanceMin;
   const max = opts.max ?? DEFAULTS.coeffTendanceMax;
-  // Windows: 3 most recent completed months, and same 3 months a year ago
   const d = new Date(today);
   const currentYm = { y: d.getUTCFullYear(), m: d.getUTCMonth() + 1 };
   const recent = [];
   const previous = [];
   for (let i = 1; i <= 3; i++) {
-    // Skip current month (partial) — take M-1, M-2, M-3
     let y = currentYm.y, m = currentYm.m - i;
     while (m <= 0) { m += 12; y -= 1; }
-    const ymRecent = `${y}-${String(m).padStart(2, '0')}`;
-    const ymPrev = `${y - 1}-${String(m).padStart(2, '0')}`;
-    recent.push(ymRecent);
-    previous.push(ymPrev);
+    recent.push(`${y}-${String(m).padStart(2, '0')}`);
+    previous.push(`${y - 1}-${String(m).padStart(2, '0')}`);
   }
-  let sumRecent = 0, hasRecent = 0;
-  let sumPrev = 0, hasPrev = 0;
+  let sumRecent = 0, hasRecent = 0, hasRecentReal = 0;
+  let sumPrev = 0, hasPrev = 0, hasPrevReal = 0;
   for (const ym of recent) {
     const v = previsions[ym];
-    if (v != null) { sumRecent += v.qty; if (!v.est) hasRecent++; }
+    if (v != null) { sumRecent += v.qty; hasRecent++; if (!v.est) hasRecentReal++; }
   }
   for (const ym of previous) {
     const v = previsions[ym];
-    if (v != null) { sumPrev += v.qty; if (!v.est) hasPrev++; }
+    if (v != null) { sumPrev += v.qty; hasPrev++; if (!v.est) hasPrevReal++; }
   }
+  // Need ≥2 rows on both sides (real or estimated) AND non-zero N-1 baseline.
   if (hasRecent < 2 || hasPrev < 2 || sumPrev <= 0) {
-    return { coeff: DEFAULTS.coeffTendance, sumRecent, sumPrev, source: 'defaut' };
+    return {
+      coeff: DEFAULTS.coeffTendance,
+      sumRecent, sumPrev, hasRecent, hasPrev, hasRecentReal, hasPrevReal,
+      source: 'defaut',
+    };
   }
   const raw = sumRecent / sumPrev;
   const bounded = Math.max(min, Math.min(max, raw));
-  return { coeff: Number(bounded.toFixed(3)), raw: Number(raw.toFixed(3)), sumRecent, sumPrev, source: 'compute' };
+  const allReal = hasRecentReal === 3 && hasPrevReal === 3;
+  return {
+    coeff: Number(bounded.toFixed(3)),
+    raw: Number(raw.toFixed(3)),
+    sumRecent, sumPrev,
+    hasRecent, hasPrev, hasRecentReal, hasPrevReal,
+    source: allReal ? 'compute_real' : 'compute_mixed',
+  };
 }
 
 // ------------------------------------------------------------

@@ -5563,6 +5563,20 @@ app.get('/api/stock/moteur/comparatif', (req, res) => {
   }
 });
 
+// Debug Shopify inventory pour un SKU précis (voir toutes les locations, comparer stock DB vs Shopify).
+app.get('/api/stock/debug/inventory-check', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const sku = String(req.query.sku || '').trim();
+    if (!sku) return res.status(400).json({ error: 'Param requis: ?sku=<SKU>' });
+    const result = await stockSync.debugInventoryForSku(sku);
+    res.json(result);
+  } catch (err) {
+    console.error('[Stock] debug inventory error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Alertes — liste
 app.get('/api/stock/alertes', (req, res) => {
   if (!requireAdmin(req, res)) return;
