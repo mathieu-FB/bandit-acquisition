@@ -5273,6 +5273,33 @@ function requireAdmin(req, res) {
   return true;
 }
 
+// 10 MB is well over the 641 KB matrice + headroom for future spreadsheets.
+const stockUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
+// Upload the matrice xlsx and save it to <DATA_DIR>/seed/. Overwrites any
+// existing file. Does NOT run the seed — call /api/stock/seed-matrice next.
+app.post('/api/stock/upload-matrice', stockUpload.single('xlsx'), (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Fichier xlsx manquant (champ multipart: xlsx)' });
+    const seedDir = path.join(DATA_DIR, 'seed');
+    if (!fs.existsSync(seedDir)) fs.mkdirSync(seedDir, { recursive: true });
+    // Force the canonical filename so seed-matrice picks it up by default.
+    const target = path.join(seedDir, 'Matrice produits v2026-01.xlsx');
+    fs.writeFileSync(target, req.file.buffer);
+    res.json({
+      ok: true,
+      savedAt: target,
+      sizeBytes: req.file.size,
+      originalName: req.file.originalname,
+      nextStep: 'GET /api/stock/seed-matrice?dryRun=1 pour dry-run, dryRun=0 pour appliquer',
+    });
+  } catch (err) {
+    console.error('[Stock] upload matrice error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Stats globales
 app.get('/api/stock/stats', (req, res) => {
   if (!requireAdmin(req, res)) return;

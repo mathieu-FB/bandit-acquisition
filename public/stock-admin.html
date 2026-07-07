@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stock & Réappro — Admin</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; background: #f6f7f9; color: #1a1a1a; }
+    header { background: #0f172a; color: #fff; padding: 18px 32px; }
+    header h1 { margin: 0; font-size: 20px; font-weight: 600; }
+    header .subtitle { opacity: 0.7; font-size: 13px; margin-top: 2px; }
+    main { max-width: 1100px; margin: 24px auto; padding: 0 24px; }
+    .card { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 20px; margin-bottom: 20px; }
+    .card h2 { margin: 0 0 6px; font-size: 15px; font-weight: 600; }
+    .card p { margin: 0 0 12px; color: #6b7280; font-size: 13px; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    button, .btn { background: #0f172a; color: #fff; border: none; border-radius: 6px; padding: 8px 14px; font-size: 13px; cursor: pointer; }
+    button:hover, .btn:hover { background: #1e293b; }
+    button.secondary { background: #e5e7eb; color: #1a1a1a; }
+    button.secondary:hover { background: #d1d5db; }
+    button.danger { background: #b91c1c; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    input[type="file"], input[type="text"] { padding: 6px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; }
+    .out { background: #0f172a; color: #a5f3fc; font-family: "SF Mono", Menlo, Consolas, monospace; font-size: 12px; padding: 14px; border-radius: 8px; max-height: 500px; overflow: auto; margin-top: 14px; white-space: pre-wrap; word-break: break-word; }
+    .muted { color: #6b7280; font-size: 12px; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+    .badge.info { background: #dbeafe; color: #1e40af; }
+    .badge.warn { background: #fef3c7; color: #92400e; }
+    .badge.err { background: #fee2e2; color: #991b1b; }
+    .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+    .stat { background: #f9fafb; border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; }
+    .stat .label { font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em; }
+    .stat .value { font-size: 20px; font-weight: 600; margin-top: 2px; }
+    a { color: #0f172a; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Stock &amp; Réappro — Admin</h1>
+    <div class="subtitle">Import matrice, sync Shopify, complétude. Toutes les actions sont idempotentes.</div>
+  </header>
+  <main>
+    <div class="card">
+      <h2>1 · Upload de la matrice produits</h2>
+      <p>Sélectionne <code>Matrice produits v2026-01.xlsx</code>. Le fichier est sauvegardé côté serveur (persistent volume), tu n'auras à le re-uploader qu'à la prochaine version de la matrice.</p>
+      <form id="uploadForm" enctype="multipart/form-data">
+        <div class="row">
+          <input type="file" id="xlsx" name="xlsx" accept=".xlsx" required>
+          <button type="submit" id="uploadBtn">Uploader</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="card">
+      <h2>2 · Seed du référentiel depuis le xlsx</h2>
+      <p>Dry-run par défaut : parse le xlsx et retourne un rapport sans écrire en DB. Passe en <em>Appliquer</em> pour insérer/mettre à jour <code>referentiel_sku</code>, <code>stock_actuel</code>, <code>previsions_mensuelles</code>.</p>
+      <div class="row">
+        <button class="secondary" data-action="/api/stock/seed-matrice?dryRun=1">Dry-run</button>
+        <button data-action="/api/stock/seed-matrice?dryRun=0">Appliquer</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>3 · Sync Shopify</h2>
+      <p>Dans cet ordre : <strong>variants</strong> (mappe SKU → variant/inventory_item/image), puis <strong>stock</strong> (location 82726682960), puis <strong>sales</strong> (backfill 24 mois — job long, poll les logs).</p>
+      <div class="row">
+        <button data-action="/api/stock/sync-shopify?type=variants">Sync variants</button>
+        <button data-action="/api/stock/sync-shopify?type=stock">Sync stock</button>
+        <button data-action="/api/stock/sync-shopify?type=sales&fromYM=2024-07&toYM=2026-07">Sync sales (24 mois)</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>4 · Diagnostics</h2>
+      <div class="row">
+        <button class="secondary" data-action="/api/stock/stats">Stats</button>
+        <button class="secondary" data-action="/api/stock/completude">Complétude</button>
+        <button class="secondary" data-action="/api/stock/sync-log?limit=20">Sync log (20 derniers)</button>
+        <button class="secondary" data-action="/api/stock/sync-log?type=shopify_sales&limit=5">Sync log ventes</button>
+        <button class="secondary" data-action="/api/stock/parametres-globaux">Paramètres globaux</button>
+      </div>
+      <div id="statsGrid" class="stat-grid" style="margin-top: 16px; display: none;"></div>
+    </div>
+
+    <div class="card" id="outputCard" style="display: none;">
+      <h2>Résultat <span id="badge" class="badge info"></span></h2>
+      <p class="muted"><span id="endpoint"></span> · <span id="duration"></span></p>
+      <div id="out" class="out"></div>
+    </div>
+  </main>
+
+  <script>
+    const outCard = document.getElementById('outputCard');
+    const outEl = document.getElementById('out');
+    const badge = document.getElementById('badge');
+    const endpointEl = document.getElementById('endpoint');
+    const durationEl = document.getElementById('duration');
+    const statsGrid = document.getElementById('statsGrid');
+
+    async function callEndpoint(url, opts = {}) {
+      outCard.style.display = 'block';
+      outEl.textContent = 'Chargement...';
+      endpointEl.textContent = url;
+      badge.textContent = '...';
+      badge.className = 'badge info';
+      const t0 = performance.now();
+      try {
+        const res = await fetch(url, { method: opts.method || 'GET', body: opts.body, credentials: 'same-origin' });
+        const dt = Math.round(performance.now() - t0);
+        durationEl.textContent = `${dt} ms · HTTP ${res.status}`;
+        const ct = res.headers.get('content-type') || '';
+        let payload;
+        if (ct.includes('application/json')) {
+          payload = await res.json();
+          outEl.textContent = JSON.stringify(payload, null, 2);
+        } else {
+          payload = await res.text();
+          outEl.textContent = payload;
+        }
+        if (res.ok) {
+          badge.textContent = 'OK';
+          badge.className = 'badge info';
+        } else if (res.status === 202) {
+          badge.textContent = 'Accepté (async)';
+          badge.className = 'badge warn';
+        } else {
+          badge.textContent = `Erreur ${res.status}`;
+          badge.className = 'badge err';
+        }
+        return { res, payload };
+      } catch (err) {
+        durationEl.textContent = '';
+        badge.textContent = 'Exception';
+        badge.className = 'badge err';
+        outEl.textContent = err.message;
+      }
+    }
+
+    document.querySelectorAll('button[data-action]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const url = btn.getAttribute('data-action');
+        const { payload } = await callEndpoint(url) || {};
+        // If it was the stats endpoint, also render a compact grid on top
+        if (payload && url.endsWith('/api/stock/stats')) {
+          statsGrid.style.display = 'grid';
+          statsGrid.innerHTML = Object.entries(payload).map(([k, v]) => `
+            <div class="stat"><div class="label">${k}</div><div class="value">${v}</div></div>
+          `).join('');
+        }
+      });
+    });
+
+    document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = document.getElementById('uploadBtn');
+      const file = document.getElementById('xlsx').files[0];
+      if (!file) return;
+      const fd = new FormData();
+      fd.append('xlsx', file);
+      btn.disabled = true;
+      btn.textContent = `Upload… (${Math.round(file.size / 1024)} KB)`;
+      try {
+        await callEndpoint('/api/stock/upload-matrice', { method: 'POST', body: fd });
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Uploader';
+      }
+    });
+  </script>
+</body>
+</html>
