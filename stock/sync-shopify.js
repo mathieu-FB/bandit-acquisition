@@ -220,6 +220,92 @@ function pickRefFields(ref) {
 }
 
 // ------------------------------------------------------------
+// Debug helper: for a SKU, list ALL source_names encountered in Shopify
+// orders over a date range, with net-units and gross-units per source.
+// Ignores ALLOWED_SOURCES so we can see what's out there. Use this to
+// decide which sources should count for stock/réappro.
+// ------------------------------------------------------------
+async function debugSourcesForSku({ sku, fromYearMonth, toYearMonth }) {
+  if (!sku) throw new Error('sku requis');
+  const from = fromYearMonth || `${new Date().getUTCFullYear()}-${String(Math.max(1, new Date().getUTCMonth() - 2)).padStart(2, '0')}`;
+  const to = toYearMonth || `${new Date().getUTCFullYear()}-${String(new Date().getUTCMonth()).padStart(2, '0')}`;
+  const [fromY, fromM] = from.split('-').map(Number);
+  const [toY, toM] = to.split('-').map(Number);
+  const startISO = new Date(Date.UTC(fromY, fromM - 1, 1)).toISOString();
+  const endISO = new Date(Date.UTC(toY, toM, 1)).toISOString();
+
+  const perSource = {}; // source_name → { gross, net, orders, monthlyBreakdown: {ym: {gross, net}} }
+  let pages = 0, ordersSeen = 0, ordersWithSku = 0;
+
+  const startUrl = `${shopifyBase()}/orders.json?` + new URLSearchParams({
+    created_at_min: startISO,
+    created_at_max: endISO,
+    status: 'any',
+    limit: '250',
+    fields: 'id,name,created_at,source_name,line_items,refunds,financial_status',
+  }).toString();
+
+  for await (const data of paginate(startUrl)) {
+    pages++;
+    for (const order of data.orders || []) {
+      ordersSeen++;
+      const src = order.source_name || '(null)';
+      const dt = new Date(order.created_at);
+      const ym = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}`;
+      const refundedByLI = {};
+      for (const ref of order.refunds || []) {
+        for (const rli of ref.refund_line_items || []) {
+          refundedByLI[rli.line_item_id] = (refundedByLI[rli.line_item_id] || 0) + (rli.quantity || 0);
+        }
+      }
+      let orderMatched = false;
+      for (const li of order.line_items || []) {
+        if (!li.sku || String(li.sku).trim() !== String(sku).trim()) continue;
+        orderMatched = true;
+        const gross = li.quantity || 0;
+        const refunded = refundedByLI[li.id] || 0;
+        const net = Math.max(0, gross - refunded);
+        if (!perSource[src]) perSource[src] = { gross: 0, net: 0, refunded: 0, orders: 0, monthly: {} };
+        perSource[src].gross += gross;
+        perSource[src].net += net;
+        perSource[src].refunded += refunded;
+        if (!perSource[src].monthly[ym]) perSource[src].monthly[ym] = { gross: 0, net: 0 };
+        perSource[src].monthly[ym].gross += gross;
+        perSource[src].monthly[ym].net += net;
+      }
+      if (orderMatched) {
+        ordersWithSku++;
+        perSource[order.source_name || '(null)'].orders = (perSource[order.source_name || '(null)'].orders || 0) + 1;
+      }
+    }
+  }
+
+  const bySource = Object.entries(perSource).map(([source, agg]) => ({
+    source,
+    included_in_current_filter: ALLOWED_SOURCES.has(source),
+    gross_qty: agg.gross,
+    net_qty: agg.net,
+    refunded_qty: agg.refunded,
+    orders_count: agg.orders,
+    monthly: agg.monthly,
+  })).sort((a, b) => b.net_qty - a.net_qty);
+
+  const totalNet = bySource.reduce((s, x) => s + x.net_qty, 0);
+  const includedNet = bySource.filter(x => x.included_in_current_filter).reduce((s, x) => s + x.net_qty, 0);
+
+  return {
+    sku,
+    range: `${from} → ${to}`,
+    pages, ordersSeen, ordersWithSku,
+    totalNetAllSources: totalNet,
+    includedNetCurrentFilter: includedNet,
+    excludedNet: totalNet - includedNet,
+    bySource,
+    currentAllowedSources: Array.from(ALLOWED_SOURCES),
+  };
+}
+
+// ------------------------------------------------------------
 // 3. Monthly sales sync (backfill or refresh a range)
 // ------------------------------------------------------------
 function parseYearMonth(ym) {
@@ -317,6 +403,7 @@ module.exports = {
   syncShopifyStock,
   syncShopifyMonthlySales,
   debugInventoryForSku,
+  debugSourcesForSku,
   ALLOWED_SOURCES,
   API_VERSION,
 };
