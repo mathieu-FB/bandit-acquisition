@@ -114,6 +114,21 @@
     .forecast-table th, .forecast-table td { padding: 6px 8px; text-align: right; border-bottom: 1px solid var(--border); }
     .forecast-table th:first-child, .forecast-table td:first-child { text-align: left; }
     .forecast-table th { background: #fafbfc; font-size: 10px; text-transform: uppercase; color: var(--muted); }
+    /* Modal tabs */
+    .modal-tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+    .modal-tab { background: transparent; border: none; color: var(--muted); padding: 8px 14px; font-size: 13px; cursor: pointer; border-radius: 6px 6px 0 0; font-weight: 500; border-bottom: 2px solid transparent; margin-bottom: -8px; }
+    .modal-tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+    .modal-tab:hover:not(.active) { background: var(--secondary); color: var(--text); }
+    /* Sales history chart */
+    .sales-chart { display: flex; align-items: flex-end; gap: 3px; height: 140px; padding: 10px; background: #fafbfc; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; }
+    .sales-bar { flex: 1; background: var(--primary); border-radius: 3px 3px 0 0; min-height: 2px; position: relative; }
+    .sales-bar.estimated { background: repeating-linear-gradient(45deg, var(--dm), var(--dm) 4px, #94a3b8 4px, #94a3b8 8px); }
+    .sales-bar .bar-value { position: absolute; top: -18px; left: 50%; transform: translateX(-50%); font-size: 10px; color: var(--muted); white-space: nowrap; opacity: 0; transition: opacity 0.15s; }
+    .sales-bar:hover .bar-value { opacity: 1; }
+    .sales-legend { display: flex; gap: 16px; font-size: 11px; color: var(--muted); margin-bottom: 8px; }
+    .sales-legend .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; vertical-align: middle; margin-right: 4px; }
+    .sales-months { display: flex; gap: 3px; padding: 0 10px 6px; font-size: 9px; color: var(--muted); }
+    .sales-months span { flex: 1; text-align: center; }
     /* Subtabs BDC */
     .subtab-btn { background: transparent; border: none; color: var(--muted); padding: 8px 14px; font-size: 13px; cursor: pointer; border-radius: 6px; font-weight: 500; }
     .subtab-btn.active { background: var(--primary); color: #fff; }
@@ -179,6 +194,7 @@
         <button class="subtab-btn active" data-subtab="nouveau">Nouvelle commande</button>
         <button class="subtab-btn" data-subtab="en-cours">BDC en cours</button>
         <button class="subtab-btn" data-subtab="historique">Historique</button>
+        <button class="subtab-btn" data-subtab="assignations">Assignations SKU</button>
       </nav>
 
       <!-- Nouvelle commande -->
@@ -295,6 +311,40 @@
           <button class="reset-btn" id="btnReloadHisto">Actualiser</button>
         </div>
         <div id="bdcHistoContent" class="loading">Chargement…</div>
+      </section>
+
+      <!-- Assignations SKU -->
+      <section id="subtab-assignations" hidden>
+        <div class="filters">
+          <input type="search" id="assignSearch" placeholder="SKU / nom / EAN…">
+          <span class="filter-label">Famille</span>
+          <select id="assignFamille"><option value="">Toutes</option></select>
+          <span class="filter-label">Animal</span>
+          <select id="assignAnimal"><option value="">Tous</option></select>
+          <span class="filter-label">Fournisseur actuel</span>
+          <select id="assignFournisseurFilter">
+            <option value="">Tous</option>
+            <option value="__none__">— Sans fournisseur —</option>
+          </select>
+          <button class="reset-btn" id="btnAssignReset">Reset</button>
+        </div>
+
+        <div id="assignBulkBar" style="display:none;background:var(--primary);color:#fff;padding:12px 18px;border-radius:10px;margin-bottom:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+          <div>
+            <strong id="assignBulkCount">0 SKU sélectionnés</strong>
+            <span style="opacity:0.7;font-size:12px;margin-left:8px;">Applique une action ci-dessous ou vide la sélection.</span>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+            <select id="assignBulkFournisseur" style="padding:6px 10px;border-radius:6px;border:none;font-size:13px;">
+              <option value="">— Choisir un fournisseur —</option>
+            </select>
+            <button id="btnAssignApply" style="background:#065f46;color:#fff;border:none;padding:7px 14px;border-radius:6px;font-size:13px;cursor:pointer;">Assigner</button>
+            <button id="btnAssignRemove" style="background:#b91c1c;color:#fff;border:none;padding:7px 14px;border-radius:6px;font-size:13px;cursor:pointer;">Désassigner</button>
+            <button id="btnAssignClearSel" style="background:rgba(255,255,255,0.15);color:#fff;border:none;padding:7px 14px;border-radius:6px;font-size:13px;cursor:pointer;">Vider sélection</button>
+          </div>
+        </div>
+
+        <div id="assignContent" class="loading">Chargement du référentiel…</div>
       </section>
     </section>
     <section id="tab-parametres" hidden>
@@ -484,9 +534,88 @@
         const res = await fetch(`/api/stock/moteur/preview/${encodeURIComponent(sku)}`, { credentials: 'same-origin' });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const d = await res.json();
-        body.innerHTML = renderDetail(d);
+        body.innerHTML = `
+          <nav class="modal-tabs">
+            <button class="modal-tab active" data-mtab="overview">Vue d'ensemble</button>
+            <button class="modal-tab" data-mtab="historique" data-sku="${escapeAttr(sku)}">Historique ventes</button>
+          </nav>
+          <div id="mtab-overview">${renderDetail(d)}</div>
+          <div id="mtab-historique" hidden><div class="loading">Chargement…</div></div>
+        `;
+        body.querySelectorAll('.modal-tab').forEach(t => {
+          t.addEventListener('click', async () => {
+            body.querySelectorAll('.modal-tab').forEach(x => x.classList.remove('active'));
+            t.classList.add('active');
+            const target = t.dataset.mtab;
+            document.getElementById('mtab-overview').hidden = (target !== 'overview');
+            document.getElementById('mtab-historique').hidden = (target !== 'historique');
+            if (target === 'historique') {
+              const skuArg = t.dataset.sku;
+              if (skuArg) await renderVentesHistorique(skuArg);
+            }
+          });
+        });
       } catch (err) {
         body.innerHTML = `<div class="empty-state">Erreur : ${err.message}</div>`;
+      }
+    }
+
+    async function renderVentesHistorique(sku) {
+      const container = document.getElementById('mtab-historique');
+      container.innerHTML = '<div class="loading">Chargement…</div>';
+      try {
+        const res = await fetch(`/api/stock/referentiel/${encodeURIComponent(sku)}`, { credentials: 'same-origin' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const d = await res.json();
+        const previsions = (d.previsions || []).slice(); // [{annee, mois, ventes_reelles, is_estimated}]
+        if (previsions.length === 0) {
+          container.innerHTML = '<div class="empty-state">Aucune vente historique enregistrée pour ce SKU.</div>';
+          return;
+        }
+        // Sort by (annee, mois) asc and take last 24
+        previsions.sort((a, b) => a.annee - b.annee || a.mois - b.mois);
+        const last24 = previsions.slice(-24);
+        const maxQty = Math.max(1, ...last24.map(p => p.ventes_reelles || 0));
+        const total = last24.reduce((s, p) => s + (p.ventes_reelles || 0), 0);
+        const realOnly = last24.filter(p => !p.is_estimated);
+        const avgReal = realOnly.length ? realOnly.reduce((s, p) => s + (p.ventes_reelles || 0), 0) / realOnly.length : 0;
+        // Metrics header
+        const metrics = [
+          { l: 'Total sur 24 mois', v: fmtInt(total) + ' u' },
+          { l: 'Moyenne / mois (réel)', v: fmtInt(avgReal) + ' u' },
+          { l: 'Mois réels', v: `${realOnly.length} / ${last24.length}` },
+          { l: 'Mois estimés (seed)', v: last24.length - realOnly.length },
+        ];
+        // Chart
+        const bars = last24.map(p => {
+          const h = ((p.ventes_reelles || 0) / maxQty) * 100;
+          const label = `${p.annee}-${String(p.mois).padStart(2, '0')} : ${p.ventes_reelles || 0}${p.is_estimated ? ' (est)' : ''}`;
+          return `<div class="sales-bar ${p.is_estimated ? 'estimated' : ''}" style="height:${h}%" title="${escapeAttr(label)}"><span class="bar-value">${p.ventes_reelles || 0}</span></div>`;
+        }).join('');
+        const monthLabels = last24.map((p, i) => (i % 3 === 0 || i === last24.length - 1) ? `<span>${String(p.mois).padStart(2,'0')}/${String(p.annee).slice(-2)}</span>` : '<span></span>').join('');
+        // Table
+        const rows = last24.slice().reverse().map(p => `
+          <tr>
+            <td>${p.annee}-${String(p.mois).padStart(2, '0')}</td>
+            <td style="text-align:right;font-weight:600;">${fmtInt(p.ventes_reelles)}</td>
+            <td>${p.is_estimated ? '<span class="badge dm">estimé</span>' : '<span class="badge ok">réel</span>'}</td>
+          </tr>
+        `).join('');
+        container.innerHTML = `
+          <div class="metrics">${metrics.map(m => `<div class="metric"><div class="lbl">${m.l}</div><div class="val">${m.v}</div></div>`).join('')}</div>
+          <div class="sales-legend">
+            <span><span class="swatch" style="background:var(--primary);"></span>Vente réelle (Shopify sync)</span>
+            <span><span class="swatch" style="background:repeating-linear-gradient(45deg, var(--dm), var(--dm) 4px, #94a3b8 4px, #94a3b8 8px);"></span>Estimée (seed xlsx)</span>
+          </div>
+          <div class="sales-chart">${bars}</div>
+          <div class="sales-months">${monthLabels}</div>
+          <h4>Détail mensuel (du plus récent au plus ancien)</h4>
+          <table class="forecast-table">
+            <thead><tr><th>Mois</th><th style="text-align:right;">Ventes</th><th>Source</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>`;
+      } catch (err) {
+        container.innerHTML = `<div class="empty-state">Erreur : ${err.message}</div>`;
       }
     }
 
@@ -567,12 +696,14 @@
         document.querySelectorAll('#tab-bdc .subtab-btn').forEach(x => x.classList.remove('active'));
         b.classList.add('active');
         const sub = b.dataset.subtab;
-        ['nouveau', 'en-cours', 'historique'].forEach(t => {
-          document.getElementById(`subtab-${t}`).hidden = (t !== sub);
+        ['nouveau', 'en-cours', 'historique', 'assignations'].forEach(t => {
+          const el = document.getElementById(`subtab-${t}`);
+          if (el) el.hidden = (t !== sub);
         });
         if (sub === 'en-cours') loadBdcEnCours();
         if (sub === 'historique') loadBdcHistorique();
         if (sub === 'nouveau') loadFournisseurs();
+        if (sub === 'assignations') loadAssignations();
       });
     });
 
@@ -1041,6 +1172,201 @@
 
     // Load fournisseurs on start
     loadFournisseurs();
+
+    // ============================================================
+    // BDC — Sub-tab "Assignations SKU"
+    // ============================================================
+    let ASSIGN_ITEMS = [];        // full referentiel actif
+    let ASSIGN_SELECTED = new Set(); // sku's selected
+
+    async function loadAssignations() {
+      const content = document.getElementById('assignContent');
+      content.innerHTML = '<div class="loading">Chargement du référentiel…</div>';
+      // 1. Load fournisseurs (for the filter + bulk assign dropdown)
+      await loadFournisseurs();
+      populateAssignFournisseurDropdowns();
+      // 2. Load référentiel actif (large — could paginate, but 445 SKU is manageable)
+      const res = await fetch('/api/stock/referentiel?limit=500&actif=1', { credentials: 'same-origin' });
+      const data = await res.json();
+      ASSIGN_ITEMS = data.items || [];
+      // Enrich items with fournisseur_nom for display + populate famille dropdown
+      const fournById = {};
+      FOURNISSEURS.forEach(f => fournById[f.id] = f);
+      ASSIGN_ITEMS.forEach(it => {
+        it.fournisseur_nom = it.fournisseur_defaut_id ? (fournById[it.fournisseur_defaut_id]?.nom || `#${it.fournisseur_defaut_id}`) : null;
+      });
+      populateAssignFilters();
+      renderAssignTable();
+    }
+
+    function populateAssignFournisseurDropdowns() {
+      const filterSel = document.getElementById('assignFournisseurFilter');
+      const currentFilter = filterSel.value;
+      filterSel.innerHTML = '<option value="">Tous</option><option value="__none__">— Sans fournisseur —</option>' +
+        FOURNISSEURS.map(f => `<option value="${f.id}">${escapeHtml(f.nom)}</option>`).join('');
+      filterSel.value = currentFilter;
+      const bulkSel = document.getElementById('assignBulkFournisseur');
+      const currentBulk = bulkSel.value;
+      bulkSel.innerHTML = '<option value="">— Choisir un fournisseur —</option>' +
+        FOURNISSEURS.map(f => `<option value="${f.id}">${escapeHtml(f.nom)}</option>`).join('');
+      bulkSel.value = currentBulk;
+    }
+
+    function populateAssignFilters() {
+      const familles = Array.from(new Set(ASSIGN_ITEMS.map(x => x.famille).filter(Boolean))).sort();
+      const animaux = Array.from(new Set(ASSIGN_ITEMS.map(x => x.animal).filter(Boolean))).sort();
+      const famSel = document.getElementById('assignFamille');
+      const cur1 = famSel.value;
+      famSel.innerHTML = '<option value="">Toutes</option>' + familles.map(f => `<option value="${escapeAttr(f)}">${escapeHtml(f)}</option>`).join('');
+      famSel.value = cur1;
+      const aniSel = document.getElementById('assignAnimal');
+      const cur2 = aniSel.value;
+      aniSel.innerHTML = '<option value="">Tous</option>' + animaux.map(a => `<option value="${escapeAttr(a)}">${escapeHtml(a)}</option>`).join('');
+      aniSel.value = cur2;
+    }
+
+    function filterAssignItems() {
+      const q = document.getElementById('assignSearch').value.trim().toLowerCase();
+      const fam = document.getElementById('assignFamille').value;
+      const ani = document.getElementById('assignAnimal').value;
+      const fournFilter = document.getElementById('assignFournisseurFilter').value;
+      return ASSIGN_ITEMS.filter(it => {
+        if (fam && it.famille !== fam) return false;
+        if (ani && it.animal !== ani) return false;
+        if (fournFilter === '__none__' && it.fournisseur_defaut_id != null) return false;
+        if (fournFilter && fournFilter !== '__none__' && String(it.fournisseur_defaut_id) !== fournFilter) return false;
+        if (q) {
+          const hay = `${it.sku} ${it.nom_court || ''} ${it.nom_long || ''} ${it.ean_13 || ''}`.toLowerCase();
+          if (!hay.includes(q)) return false;
+        }
+        return true;
+      });
+    }
+
+    function renderAssignTable() {
+      const filtered = filterAssignItems();
+      const container = document.getElementById('assignContent');
+      if (filtered.length === 0) {
+        container.innerHTML = '<div class="empty-state">Aucun SKU ne correspond aux filtres.</div>';
+        updateAssignBulkBar();
+        return;
+      }
+      // Header with "select all visible"
+      const allVisibleSelected = filtered.every(x => ASSIGN_SELECTED.has(x.sku));
+      const rows = filtered.map(it => `
+        <tr>
+          <td style="width:32px;text-align:center;">
+            <input type="checkbox" data-sku="${escapeAttr(it.sku)}" ${ASSIGN_SELECTED.has(it.sku) ? 'checked' : ''}>
+          </td>
+          <td>
+            <div class="thumb ${it.image_url ? '' : 'empty'}" style="width:36px;height:36px;">
+              ${it.image_url ? `<img src="${escapeAttr(it.image_url)}" loading="lazy">` : ''}
+            </div>
+          </td>
+          <td class="sku-cell">
+            <div class="sku-code">${escapeHtml(it.sku)}</div>
+            <div class="sku-name">${escapeHtml(it.nom_court || '—')}</div>
+          </td>
+          <td style="font-size:12px;">${escapeHtml(it.famille || '—')} / ${escapeHtml(it.animal || '—')}</td>
+          <td>
+            ${it.fournisseur_nom
+              ? `<span class="badge acmd">${escapeHtml(it.fournisseur_nom)}</span>`
+              : '<span class="badge dm">Sans fournisseur</span>'}
+          </td>
+        </tr>
+      `).join('');
+      container.innerHTML = `
+        <div class="group">
+          <div class="group-header">
+            <div>
+              <div class="name">${filtered.length} SKU visibles</div>
+              <div class="stats">${ASSIGN_ITEMS.length} au total dans le référentiel actif</div>
+            </div>
+            <div style="display:flex;gap:8px;">
+              <button class="action-btn" id="btnSelectAllVisible">${allVisibleSelected ? 'Désélectionner' : 'Sélectionner'} tout le visible</button>
+            </div>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th></th>
+                <th></th>
+                <th>SKU / Nom</th>
+                <th>Famille / Animal</th>
+                <th>Fournisseur affecté</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>`;
+      // Bind checkboxes
+      container.querySelectorAll('input[type="checkbox"][data-sku]').forEach(cb => {
+        cb.addEventListener('change', e => {
+          const sku = e.target.dataset.sku;
+          if (e.target.checked) ASSIGN_SELECTED.add(sku);
+          else ASSIGN_SELECTED.delete(sku);
+          updateAssignBulkBar();
+        });
+      });
+      // Bind "select all visible"
+      document.getElementById('btnSelectAllVisible').addEventListener('click', () => {
+        if (allVisibleSelected) {
+          filtered.forEach(x => ASSIGN_SELECTED.delete(x.sku));
+        } else {
+          filtered.forEach(x => ASSIGN_SELECTED.add(x.sku));
+        }
+        renderAssignTable();
+      });
+      updateAssignBulkBar();
+    }
+
+    function updateAssignBulkBar() {
+      const bar = document.getElementById('assignBulkBar');
+      const n = ASSIGN_SELECTED.size;
+      document.getElementById('assignBulkCount').textContent = `${n} SKU sélectionné${n > 1 ? 's' : ''}`;
+      bar.style.display = n > 0 ? 'flex' : 'none';
+    }
+
+    async function applyAssign(fournisseurId) {
+      const skus = Array.from(ASSIGN_SELECTED);
+      if (skus.length === 0) { alert('Aucun SKU sélectionné'); return; }
+      const label = fournisseurId ? FOURNISSEURS.find(f => f.id === Number(fournisseurId))?.nom : 'Sans fournisseur';
+      if (!confirm(`Assigner ${skus.length} SKU à "${label}" ?`)) return;
+      const res = await fetch('/api/stock/referentiel/assign-fournisseur', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ skus, fournisseur_id: fournisseurId }),
+      });
+      const data = await res.json();
+      if (!res.ok) { alert(`Erreur: ${data.error}`); return; }
+      alert(`✓ ${data.updated} SKU mis à jour${data.skipped.length ? ` · ${data.skipped.length} skippés (inconnus)` : ''}.`);
+      ASSIGN_SELECTED.clear();
+      await loadAssignations();
+    }
+
+    document.getElementById('btnAssignApply').addEventListener('click', () => {
+      const fid = document.getElementById('assignBulkFournisseur').value;
+      if (!fid) { alert('Choisis un fournisseur dans le dropdown'); return; }
+      applyAssign(Number(fid));
+    });
+    document.getElementById('btnAssignRemove').addEventListener('click', () => applyAssign(null));
+    document.getElementById('btnAssignClearSel').addEventListener('click', () => {
+      ASSIGN_SELECTED.clear();
+      renderAssignTable();
+    });
+
+    document.getElementById('assignSearch').addEventListener('input', renderAssignTable);
+    document.getElementById('assignFamille').addEventListener('change', renderAssignTable);
+    document.getElementById('assignAnimal').addEventListener('change', renderAssignTable);
+    document.getElementById('assignFournisseurFilter').addEventListener('change', renderAssignTable);
+    document.getElementById('btnAssignReset').addEventListener('click', () => {
+      document.getElementById('assignSearch').value = '';
+      document.getElementById('assignFamille').value = '';
+      document.getElementById('assignAnimal').value = '';
+      document.getElementById('assignFournisseurFilter').value = '';
+      renderAssignTable();
+    });
   </script>
 </body>
 </html>

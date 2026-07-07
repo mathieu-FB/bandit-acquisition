@@ -5337,6 +5337,37 @@ app.get('/api/stock/referentiel', (req, res) => {
   }
 });
 
+// Référentiel — assignation en masse à un fournisseur
+// Body: { skus: string[], fournisseur_id: number | null }
+// Si fournisseur_id est null → désassigne le fournisseur_defaut_id pour ces SKU.
+app.post('/api/stock/referentiel/assign-fournisseur', express.json(), (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const body = req.body || {};
+    const skus = Array.isArray(body.skus) ? body.skus : null;
+    if (!skus || skus.length === 0) return res.status(400).json({ error: 'skus[] requis' });
+    if (skus.length > 1000) return res.status(400).json({ error: 'Trop de SKU en une seule requête (max 1000)' });
+    const fournisseurId = body.fournisseur_id != null ? Number(body.fournisseur_id) : null;
+    if (fournisseurId != null && !stockDb.getFournisseurById(fournisseurId)) {
+      return res.status(400).json({ error: `Fournisseur ${fournisseurId} introuvable` });
+    }
+    let updated = 0;
+    const skipped = [];
+    for (const sku of skus) {
+      const cleanSku = String(sku).trim();
+      if (!cleanSku) continue;
+      const existing = stockDb.getReferentielSku(cleanSku);
+      if (!existing) { skipped.push(cleanSku); continue; }
+      stockDb.updateReferentielOverrides(cleanSku, { fournisseur_defaut_id: fournisseurId });
+      updated++;
+    }
+    res.json({ ok: true, updated, skipped, fournisseur_id: fournisseurId });
+  } catch (err) {
+    console.error('[Stock] assign-fournisseur error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Référentiel — détail d'un SKU (avec stock, prévisions récentes, en-cours)
 app.get('/api/stock/referentiel/:sku', (req, res) => {
   if (!requireAdmin(req, res)) return;

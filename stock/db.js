@@ -539,15 +539,18 @@ function updateReferentielOverrides(sku, overrides) {
   const cur = stmts.selectReferentielSku.get(sku);
   if (!cur) throw new Error(`SKU inconnu: ${sku}`);
   const now = Date.now();
+  // Utilise `key in overrides` pour distinguer "clé absente" (garde valeur) de
+  // "clé présente à null" (efface). Nécessaire au moins pour fournisseur_defaut_id
+  // qui doit pouvoir être remis à null pour désassigner.
   return stmts.updateReferentielOverrides.run({
     sku,
-    fournisseur_defaut_id: overrides.fournisseur_defaut_id ?? cur.fournisseur_defaut_id,
-    moq: overrides.moq ?? cur.moq,
-    colisage: overrides.colisage ?? cur.colisage,
-    lead_time_jours: overrides.lead_time_jours ?? cur.lead_time_jours,
-    couverture_visee_jours: overrides.couverture_visee_jours ?? cur.couverture_visee_jours,
-    couverture_visee_source: overrides.couverture_visee_source ?? cur.couverture_visee_source,
-    actif: overrides.actif ?? cur.actif,
+    fournisseur_defaut_id: 'fournisseur_defaut_id' in overrides ? overrides.fournisseur_defaut_id : cur.fournisseur_defaut_id,
+    moq: 'moq' in overrides ? overrides.moq : cur.moq,
+    colisage: 'colisage' in overrides ? overrides.colisage : cur.colisage,
+    lead_time_jours: 'lead_time_jours' in overrides ? overrides.lead_time_jours : cur.lead_time_jours,
+    couverture_visee_jours: 'couverture_visee_jours' in overrides ? overrides.couverture_visee_jours : cur.couverture_visee_jours,
+    couverture_visee_source: 'couverture_visee_source' in overrides ? overrides.couverture_visee_source : cur.couverture_visee_source,
+    actif: 'actif' in overrides ? overrides.actif : cur.actif,
     now,
   });
 }
