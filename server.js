@@ -5326,8 +5326,8 @@ app.get('/api/stock/referentiel/:sku', (req, res) => {
   }
 });
 
-// Seed matrice xlsx
-app.post('/api/stock/seed-matrice', (req, res) => {
+// Seed matrice xlsx (GET alias accepted for browser triggering — action is idempotent)
+function handleSeedMatrice(req, res) {
   if (!requireAdmin(req, res)) return;
   try {
     const dryRun = req.query.dryRun !== '0';
@@ -5338,10 +5338,12 @@ app.post('/api/stock/seed-matrice', (req, res) => {
     console.error('[Stock] seed error:', err.message);
     res.status(500).json({ error: err.message, report: err.report || null });
   }
-});
+}
+app.post('/api/stock/seed-matrice', handleSeedMatrice);
+app.get('/api/stock/seed-matrice', handleSeedMatrice);
 
-// Sync Shopify — types: 'variants' | 'stock' | 'sales'
-app.post('/api/stock/sync-shopify', async (req, res) => {
+// Sync Shopify — types: 'variants' | 'stock' | 'sales' (GET alias for browser)
+async function handleSyncShopify(req, res) {
   if (!requireAdmin(req, res)) return;
   const type = String(req.query.type || '').toLowerCase();
   try {
@@ -5369,7 +5371,7 @@ app.post('/api/stock/sync-shopify', async (req, res) => {
       });
       return res.status(202).json({
         accepted: true,
-        message: `Sync ventes ${fromYearMonth} → ${toYearMonth} démarré en arrière-plan. Poll /api/stock/sync-log?type=shopify_sales pour l\'avancement.`,
+        message: `Sync ventes ${fromYearMonth} → ${toYearMonth} démarré en arrière-plan. Poll /api/stock/sync-log?type=shopify_sales pour l'avancement.`,
       });
     }
     return res.status(400).json({ error: 'type invalide (attendu: variants | stock | sales)' });
@@ -5377,7 +5379,9 @@ app.post('/api/stock/sync-shopify', async (req, res) => {
     console.error(`[Stock] sync ${type} error:`, err.message);
     res.status(500).json({ error: err.message });
   }
-});
+}
+app.post('/api/stock/sync-shopify', handleSyncShopify);
+app.get('/api/stock/sync-shopify', handleSyncShopify);
 
 // File complétude
 app.get('/api/stock/completude', (req, res) => {
