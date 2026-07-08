@@ -820,7 +820,7 @@ function renderRechargeByCategoryChart(byCategory) {
   const entries = Object.entries(byCategory).filter(([, v]) => v > 0);
   if (!entries.length) return;
 
-  const catColors = { 'Litière': '#5c6ac4', 'Box Jouet': '#f59e0b', 'Autre': '#6b7280' };
+  const catColors = { 'Litière': '#5c6ac4', 'Box Jouet': '#f59e0b', 'Fontaines & Filtres': '#0ea5e9', 'Autre': '#6b7280' };
 
   chartInstances['chart-rechargeByCategory'] = new Chart(ctx, {
     type: 'doughnut',

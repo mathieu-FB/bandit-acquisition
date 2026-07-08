@@ -1786,12 +1786,15 @@ async function fetchRechargeSubscriptions() {
     .map(([product, count]) => ({ product, count }))
     .sort((a, b) => b.count - a.count);
 
-  // Group by category: Litière vs Box Jouet vs Autre
-  const byCategory = { 'Litière': 0, 'Box Jouet': 0, 'Autre': 0 };
+  // Group by category: Litière vs Box Jouet vs Fontaines & Filtres vs Autre.
+  // Fontaine + Kit de filtration sont regroupés dans la même catégorie car
+  // le kit de filtration est proposé en abonnement à l'achat d'une fontaine.
+  const byCategory = { 'Litière': 0, 'Box Jouet': 0, 'Fontaines & Filtres': 0, 'Autre': 0 };
   for (const { product, count } of byProduct) {
     const lower = product.toLowerCase();
     if (lower.includes('litière') || lower.includes('litiere')) byCategory['Litière'] += count;
     else if (lower.includes('box jouet') || lower.includes('box jouets')) byCategory['Box Jouet'] += count;
+    else if (lower.includes('fontaine') || lower.includes('filtration')) byCategory['Fontaines & Filtres'] += count;
     else byCategory['Autre'] += count;
   }
 
