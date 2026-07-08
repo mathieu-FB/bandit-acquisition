@@ -299,7 +299,7 @@ function computeNiveau({ ref, dateRuptureEstimee, today, leadTimeJours, couvertu
 // Demand window: today → today + lead_time + couverture_visee.
 // En-cours utiles = BDC lignes dont l'ETA arrive DANS la fenêtre.
 // ------------------------------------------------------------
-function computeProposition({ ref, monthlyForecast, stockActuel, enCoursLignes, today, leadTimeJours, couvertureViseeJours }) {
+function computeProposition({ ref, famParam, monthlyForecast, stockActuel, enCoursLignes, today, leadTimeJours, couvertureViseeJours }) {
   const horizonJours = leadTimeJours + couvertureViseeJours;
   const endWindow = addDaysUTC(today, horizonJours);
   // Sum of daily demand between today and endWindow.
@@ -323,9 +323,15 @@ function computeProposition({ ref, monthlyForecast, stockActuel, enCoursLignes, 
     enCoursUtiles += Math.max(0, (line.qte_commandee || 0) - (line.qte_recue || 0));
   }
   const brut = Math.max(0, demandeFenetre - stockActuel - enCoursUtiles);
-  // Round up to colisage, at least MOQ.
-  const colisage = ref.colisage && ref.colisage > 0 ? ref.colisage : 1;
-  const moq = ref.moq && ref.moq > 0 ? ref.moq : 1;
+  // MOQ / PCB — cascade : override SKU (si > 1) → param famille → défaut 1.
+  // Un SKU avec moq/colisage à 1 (défaut du schéma) est considéré comme "pas
+  // d'override", on retombe alors sur la valeur famille si définie.
+  const skuColisage = ref.colisage && ref.colisage > 1 ? ref.colisage : null;
+  const skuMoq = ref.moq && ref.moq > 1 ? ref.moq : null;
+  const colisage = skuColisage || (famParam && famParam.colisage > 0 ? famParam.colisage : 1);
+  const moq = skuMoq || (famParam && famParam.moq > 0 ? famParam.moq : 1);
+  const colisageSource = skuColisage ? 'sku' : (famParam && famParam.colisage > 0 ? 'famille' : 'defaut');
+  const moqSource = skuMoq ? 'sku' : (famParam && famParam.moq > 0 ? 'famille' : 'defaut');
   let qte = Math.ceil(brut / colisage) * colisage;
   if (qte > 0 && qte < moq) qte = Math.ceil(moq / colisage) * colisage;
   if (brut === 0) qte = 0;
@@ -337,6 +343,7 @@ function computeProposition({ ref, monthlyForecast, stockActuel, enCoursLignes, 
     enCoursUtiles,
     brut: Number(brut.toFixed(2)),
     colisage, moq,
+    colisageSource, moqSource,
     qte,
     pa_unitaire: pa,
     montant,
@@ -388,7 +395,8 @@ function runForSku({ sku, ref, previsions, saisonaliteByFamille, famillesParam, 
   const proposition = niveau === NIVEAUX.DONNEE_MANQUANTE
     ? null
     : computeProposition({
-        ref, monthlyForecast: forecast.rows,
+        ref, famParam,
+        monthlyForecast: forecast.rows,
         stockActuel, enCoursLignes,
         today, leadTimeJours, couvertureViseeJours,
       });

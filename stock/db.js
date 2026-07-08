@@ -84,6 +84,8 @@ CREATE TABLE IF NOT EXISTS stock_parametres_famille (
   coeff_securite REAL DEFAULT 1.1,
   coeff_saisonnalite_json TEXT,
   coeff_tendance REAL DEFAULT 1.0,
+  moq INTEGER,
+  colisage INTEGER,
   updated_at INTEGER,
   PRIMARY KEY (famille, animal)
 );
@@ -178,6 +180,11 @@ CREATE INDEX IF NOT EXISTS idx_stock_sync_log_type ON stock_sync_log(type, start
 function init() {
   db = cache.getDb();
   db.exec(SCHEMA);
+  // Additive migrations pour DB existantes créées avant l'ajout des colonnes.
+  // SQLite ne supporte pas ADD COLUMN IF NOT EXISTS → on wrappe dans un try/catch.
+  const safeAlter = (sql) => { try { db.exec(sql); } catch (e) { /* column exists */ } };
+  safeAlter(`ALTER TABLE stock_parametres_famille ADD COLUMN moq INTEGER`);
+  safeAlter(`ALTER TABLE stock_parametres_famille ADD COLUMN colisage INTEGER`);
   prepareStatements();
   seedDefaults();
   console.log('[Stock] Schema initialised (10 tables).');
@@ -331,13 +338,15 @@ function prepareStatements() {
 
     // ---- parametres_famille ----
     upsertParametreFamille: db.prepare(`
-      INSERT INTO stock_parametres_famille (famille, animal, couverture_visee_jours, coeff_securite, coeff_saisonnalite_json, coeff_tendance, updated_at)
-      VALUES (@famille, @animal, @couverture_visee_jours, @coeff_securite, @coeff_saisonnalite_json, @coeff_tendance, @now)
+      INSERT INTO stock_parametres_famille (famille, animal, couverture_visee_jours, coeff_securite, coeff_saisonnalite_json, coeff_tendance, moq, colisage, updated_at)
+      VALUES (@famille, @animal, @couverture_visee_jours, @coeff_securite, @coeff_saisonnalite_json, @coeff_tendance, @moq, @colisage, @now)
       ON CONFLICT(famille, animal) DO UPDATE SET
         couverture_visee_jours = excluded.couverture_visee_jours,
         coeff_securite = excluded.coeff_securite,
         coeff_saisonnalite_json = excluded.coeff_saisonnalite_json,
         coeff_tendance = excluded.coeff_tendance,
+        moq = excluded.moq,
+        colisage = excluded.colisage,
         updated_at = excluded.updated_at
     `),
     selectParametreFamille: db.prepare(`SELECT * FROM stock_parametres_famille WHERE famille = ? AND animal = ?`),
@@ -562,12 +571,15 @@ function countReferentiel() { return stmts.countReferentiel.get().n; }
 function getSkuByInventoryItemId(inventoryItemId) { return stmts.selectByInventoryItemId.get(String(inventoryItemId)) || null; }
 
 // ------------------------ Paramètres famille ------------------------
-function upsertParametreFamille({ famille, animal, couverture_visee_jours = 90, coeff_securite = 1.1, coeff_saisonnalite = null, coeff_tendance = 1.0 }) {
+function upsertParametreFamille({ famille, animal, couverture_visee_jours = 90, coeff_securite = 1.15, coeff_saisonnalite = null, coeff_tendance = 1.0, moq = null, colisage = null }) {
   const now = Date.now();
   stmts.upsertParametreFamille.run({
     famille, animal, couverture_visee_jours, coeff_securite,
     coeff_saisonnalite_json: coeff_saisonnalite ? JSON.stringify(coeff_saisonnalite) : null,
-    coeff_tendance, now,
+    coeff_tendance,
+    moq: moq != null && moq > 0 ? Math.round(Number(moq)) : null,
+    colisage: colisage != null && colisage > 0 ? Math.round(Number(colisage)) : null,
+    now,
   });
 }
 function getParametreFamille(famille, animal) {

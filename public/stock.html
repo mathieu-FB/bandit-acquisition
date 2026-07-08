@@ -1848,6 +1848,8 @@
             <td><input type="number" data-fp-fam="${escapeAttr(it.famille)}" data-fp-ani="${escapeAttr(it.animal)}" data-fp-field="couverture_visee_jours" value="${p ? p.couverture_visee_jours : ''}" placeholder="défaut 90" min="1" style="width:80px;text-align:right;"></td>
             <td><input type="number" step="0.05" data-fp-fam="${escapeAttr(it.famille)}" data-fp-ani="${escapeAttr(it.animal)}" data-fp-field="coeff_securite" value="${p ? p.coeff_securite : ''}" placeholder="défaut 1.15" min="1" style="width:80px;text-align:right;"></td>
             <td><input type="number" step="0.05" data-fp-fam="${escapeAttr(it.famille)}" data-fp-ani="${escapeAttr(it.animal)}" data-fp-field="coeff_tendance" value="${p ? p.coeff_tendance : ''}" placeholder="défaut 1.0" min="0" style="width:80px;text-align:right;"></td>
+            <td><input type="number" data-fp-fam="${escapeAttr(it.famille)}" data-fp-ani="${escapeAttr(it.animal)}" data-fp-field="moq" value="${p && p.moq ? p.moq : ''}" placeholder="défaut 1" min="1" style="width:80px;text-align:right;"></td>
+            <td><input type="number" data-fp-fam="${escapeAttr(it.famille)}" data-fp-ani="${escapeAttr(it.animal)}" data-fp-field="colisage" value="${p && p.colisage ? p.colisage : ''}" placeholder="défaut 1" min="1" style="width:80px;text-align:right;"></td>
             <td>${p ? `<span class="badge acmd">override</span>` : `<span class="badge dm">défaut</span>`}</td>
             <td><button class="action-btn" onclick="saveFamilleParam('${escapeAttr(it.famille)}', '${escapeAttr(it.animal)}')">Sauver</button></td>
           </tr>`;
@@ -1859,9 +1861,11 @@
               <th>Famille</th>
               <th>Animal</th>
               <th style="text-align:right;">Nb SKU</th>
-              <th style="text-align:right;">Couverture (j)</th>
-              <th style="text-align:right;">Coeff sécurité</th>
-              <th style="text-align:right;">Coeff tendance</th>
+              <th style="text-align:right;" title="Nb de jours de stock à conserver après réception d'une commande">Couverture (j)</th>
+              <th style="text-align:right;" title="Multiplicateur appliqué à la demande prévue (marge)">Coeff sécurité</th>
+              <th style="text-align:right;" title="Multiplicateur ratio ventes récentes / ventes N-1 (borné 0.5-2.0)">Coeff tendance</th>
+              <th style="text-align:right;" title="MOQ = quantité minimum de commande fournisseur">MOQ</th>
+              <th style="text-align:right;" title="PCB = plus petit colisage (arrondi supérieur)">PCB</th>
               <th>Statut</th>
               <th></th>
             </tr>

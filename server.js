@@ -5655,9 +5655,11 @@ app.post('/api/stock/parametres-famille', express.json(), (req, res) => {
       famille: String(body.famille),
       animal: String(body.animal),
       couverture_visee_jours: body.couverture_visee_jours != null ? Number(body.couverture_visee_jours) : 90,
-      coeff_securite: body.coeff_securite != null ? Number(body.coeff_securite) : 1.3,
+      coeff_securite: body.coeff_securite != null ? Number(body.coeff_securite) : 1.15,
       coeff_saisonnalite: body.coeff_saisonnalite || null,
       coeff_tendance: body.coeff_tendance != null ? Number(body.coeff_tendance) : 1.0,
+      moq: body.moq != null ? Number(body.moq) : null,
+      colisage: body.colisage != null ? Number(body.colisage) : null,
     });
     res.json({ ok: true, param: stockDb.getParametreFamille(body.famille, body.animal) });
   } catch (err) {
@@ -5665,7 +5667,7 @@ app.post('/api/stock/parametres-famille', express.json(), (req, res) => {
   }
 });
 
-// GET alias for browser triggering with query params: ?famille=Fontaine&animal=Chat&couverture_visee_jours=60&coeff_securite=1.3
+// GET alias for browser triggering with query params: ?famille=Fontaine&animal=Chat&couverture_visee_jours=60&coeff_securite=1.15&moq=100&colisage=10
 app.get('/api/stock/parametres-famille/set', (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
@@ -5675,8 +5677,10 @@ app.get('/api/stock/parametres-famille/set', (req, res) => {
       famille: String(famille),
       animal: String(animal),
       couverture_visee_jours: req.query.couverture_visee_jours != null ? Number(req.query.couverture_visee_jours) : 90,
-      coeff_securite: req.query.coeff_securite != null ? Number(req.query.coeff_securite) : 1.3,
+      coeff_securite: req.query.coeff_securite != null ? Number(req.query.coeff_securite) : 1.15,
       coeff_tendance: req.query.coeff_tendance != null ? Number(req.query.coeff_tendance) : 1.0,
+      moq: req.query.moq != null ? Number(req.query.moq) : null,
+      colisage: req.query.colisage != null ? Number(req.query.colisage) : null,
       coeff_saisonnalite: null,
     });
     res.json({ ok: true, param: stockDb.getParametreFamille(String(famille), String(animal)) });
