@@ -198,7 +198,7 @@ function runSeed({ dryRun = true, xlsxPath = null } = {}) {
   if (!dryRun) logId = stockDb.startSync('seed_matrice');
 
   try {
-    // 1. Matrice sheet → referentiel_sku
+    // 1. Matrice sheet → referentiel_sku (INDISPENSABLE)
     const matriceRows = xlsxIo.readSheetRaw(resolvedPath, 'Matrice');
     const matrice = parseMatrice(matriceRows);
     report.sheets.matrice = {
@@ -211,27 +211,41 @@ function runSeed({ dryRun = true, xlsxPath = null } = {}) {
       if (matrice.skipped.length > 20) report.warnings.push(`[Matrice] +${matrice.skipped.length - 20} autres warnings tronqués`);
     }
 
-    // 2. STOCK sheet → stock_actuel (initial, remplacé par sync Shopify)
-    const stockRows = xlsxIo.readSheetRaw(resolvedPath, 'STOCK');
-    const stock = parseStock(stockRows);
-    report.sheets.stock = {
-      rowsSeen: stockRows.length - 1,
-      stockCount: stock.items.length,
-      skipped: stock.skipped.length,
-    };
+    // 2. STOCK sheet → stock_actuel (OPTIONNELLE — écrasée par sync Shopify)
+    let stockRows = null;
+    let stock = { items: [], skipped: [] };
+    try {
+      stockRows = xlsxIo.readSheetRaw(resolvedPath, 'STOCK');
+      stock = parseStock(stockRows);
+      report.sheets.stock = {
+        rowsSeen: stockRows.length - 1,
+        stockCount: stock.items.length,
+        skipped: stock.skipped.length,
+      };
+    } catch (err) {
+      report.sheets.stock = { skipped: true, reason: 'feuille absente' };
+      report.warnings.push('[STOCK] Feuille absente — ignorée (le stock sera récupéré via sync Shopify)');
+    }
 
-    // 3. VENTES 2025 sheet → previsions_mensuelles (spread annual → 12 months, is_estimated=1)
-    const ventesRows = xlsxIo.readSheetRaw(resolvedPath, 'VENTES 2025');
-    const ventes = parseVentesAnnuelles(ventesRows, matrice.cipToSku);
-    report.sheets.ventes = {
-      rowsSeen: ventesRows.length - 1,
-      previsionsCount: ventes.items.length,
-      skusMatched: new Set(ventes.items.map(i => i.sku)).size,
-      skipped: ventes.skipped.length,
-    };
-    if (ventes.skipped.length) {
-      report.warnings.push(...ventes.skipped.slice(0, 20).map(s => `[VENTES 2025] Ligne ${s.row} clé=${s.key}: ${s.reason}`));
-      if (ventes.skipped.length > 20) report.warnings.push(`[VENTES 2025] +${ventes.skipped.length - 20} autres warnings tronqués`);
+    // 3. VENTES 2025 sheet → previsions_mensuelles (OPTIONNELLE — écrasée par sync Shopify sales)
+    let ventesRows = null;
+    let ventes = { items: [], skipped: [] };
+    try {
+      ventesRows = xlsxIo.readSheetRaw(resolvedPath, 'VENTES 2025');
+      ventes = parseVentesAnnuelles(ventesRows, matrice.cipToSku);
+      report.sheets.ventes = {
+        rowsSeen: ventesRows.length - 1,
+        previsionsCount: ventes.items.length,
+        skusMatched: new Set(ventes.items.map(i => i.sku)).size,
+        skipped: ventes.skipped.length,
+      };
+      if (ventes.skipped.length) {
+        report.warnings.push(...ventes.skipped.slice(0, 20).map(s => `[VENTES 2025] Ligne ${s.row} clé=${s.key}: ${s.reason}`));
+        if (ventes.skipped.length > 20) report.warnings.push(`[VENTES 2025] +${ventes.skipped.length - 20} autres warnings tronqués`);
+      }
+    } catch (err) {
+      report.sheets.ventes = { skipped: true, reason: 'feuille absente' };
+      report.warnings.push('[VENTES 2025] Feuille absente — ignorée (les ventes historiques seront récupérées via sync Shopify sales)');
     }
 
     // 4. Apply — only if !dryRun
