@@ -151,6 +151,7 @@
     <div class="brand"><a href="/">← Dashboard</a> · Stock &amp; Réappro</div>
     <nav class="tabs">
       <button data-tab="alertes" class="active">Alertes</button>
+      <button data-tab="catalogue">Catalogue</button>
       <button data-tab="previsionnel">Prévisionnel</button>
       <button data-tab="bdc">Commandes fournisseur</button>
       <button data-tab="parametres">Paramètres</button>
@@ -180,6 +181,33 @@
       </div>
 
       <div id="alertesContent" class="loading">Chargement du moteur…</div>
+    </section>
+
+    <!-- Catalogue — vue plate de tous les produits -->
+    <section id="tab-catalogue" hidden>
+      <div id="catalogueKpiRow" class="kpi-row"></div>
+      <div class="filters">
+        <input type="search" id="cataSearchInput" placeholder="Rechercher SKU, nom, EAN…">
+        <span class="filter-label">Famille</span>
+        <select id="cataFamilleFilter"><option value="">Toutes</option></select>
+        <span class="filter-label">Animal</span>
+        <select id="cataAnimalFilter"><option value="">Tous</option></select>
+        <span class="filter-label">Fournisseur</span>
+        <select id="cataFournisseurFilter">
+          <option value="">Tous</option>
+          <option value="__none__">— Sans fournisseur —</option>
+        </select>
+        <span class="filter-label">Niveau</span>
+        <select id="cataNiveauFilter">
+          <option value="">Tous</option>
+          <option value="OK">OK seul</option>
+          <option value="RUPTURE,CRITIQUE,URGENT,A_COMMANDER">Actionnables</option>
+          <option value="RUPTURE">Rupture seule</option>
+          <option value="DONNEE_MANQUANTE">Data manquante</option>
+        </select>
+        <button class="reset-btn" id="btnCataReset">Reset</button>
+      </div>
+      <div id="catalogueContent" class="loading">Chargement du catalogue…</div>
     </section>
 
     <!-- Placeholders for future steps -->
@@ -471,8 +499,9 @@
         document.querySelectorAll('nav.tabs button').forEach(x => x.classList.remove('active'));
         b.classList.add('active');
         const tab = b.dataset.tab;
-        ['alertes', 'previsionnel', 'bdc', 'parametres'].forEach(t => {
-          document.getElementById(`tab-${t}`).hidden = (t !== tab);
+        ['alertes', 'catalogue', 'previsionnel', 'bdc', 'parametres'].forEach(t => {
+          const el = document.getElementById(`tab-${t}`);
+          if (el) el.hidden = (t !== tab);
         });
       });
     });
@@ -1478,6 +1507,9 @@
           loadProjSkuList();
         });
       }
+      if (b.dataset.tab === 'catalogue') {
+        b.addEventListener('click', () => loadCatalogue());
+      }
       if (b.dataset.tab === 'parametres') {
         b.addEventListener('click', () => {
           loadParamsGlobaux();
@@ -1485,6 +1517,167 @@
           loadFamilleParametres();
         });
       }
+    });
+
+    // ============================================================
+    // Catalogue — vue plate de tous les produits (y compris OK)
+    // ============================================================
+    let CATA_DATA = null;
+
+    async function loadCatalogue() {
+      const container = document.getElementById('catalogueContent');
+      container.innerHTML = '<div class="loading">Chargement…</div>';
+      try {
+        // includeOk=1 pour tout charger, quel que soit le niveau
+        const res = await fetch('/api/stock/alertes/enriched?includeOk=1', { credentials: 'same-origin' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        // Flatten items depuis les groupes
+        CATA_DATA = {
+          today: data.today,
+          byNiveau: data.byNiveau,
+          items: data.grouped.flatMap(g => g.items),
+          familles: data.familles,
+          fournisseurs: data.fournisseurs,
+        };
+        renderCatalogueKpis();
+        populateCatalogueFilters();
+        renderCatalogueTable();
+      } catch (err) {
+        container.innerHTML = `<div class="empty-state">Erreur : ${err.message}</div>`;
+      }
+    }
+
+    function renderCatalogueKpis() {
+      const b = CATA_DATA.byNiveau;
+      const cards = [
+        { key: 'total', cls: '', label: 'Total SKU', value: CATA_DATA.items.length },
+        { key: 'RUPTURE', cls: 'rupture', label: 'Rupture', value: b.RUPTURE || 0 },
+        { key: 'CRITIQUE', cls: 'critique', label: 'Critique', value: b.CRITIQUE || 0 },
+        { key: 'URGENT', cls: 'urgent', label: 'Urgent', value: b.URGENT || 0 },
+        { key: 'A_COMMANDER', cls: 'acmd', label: 'À commander', value: b.A_COMMANDER || 0 },
+        { key: 'OK', cls: 'ok', label: 'OK', value: b.OK || 0 },
+        { key: 'DM', cls: 'dm', label: 'Data ⚠', value: b.DONNEE_MANQUANTE || 0 },
+      ];
+      document.getElementById('catalogueKpiRow').innerHTML =
+        cards.map(c => `<div class="kpi ${c.cls}"><div class="label">${c.label}</div><div class="value">${c.value}</div></div>`).join('');
+    }
+
+    function populateCatalogueFilters() {
+      const famSel = document.getElementById('cataFamilleFilter');
+      const curFa = famSel.value;
+      famSel.innerHTML = '<option value="">Toutes</option>' + (CATA_DATA.familles || []).map(f => `<option value="${escapeAttr(f)}">${escapeHtml(f)}</option>`).join('');
+      famSel.value = curFa;
+      const aniSel = document.getElementById('cataAnimalFilter');
+      const curAni = aniSel.value;
+      const animaux = Array.from(new Set(CATA_DATA.items.map(x => x.animal).filter(Boolean))).sort();
+      aniSel.innerHTML = '<option value="">Tous</option>' + animaux.map(a => `<option value="${escapeAttr(a)}">${escapeHtml(a)}</option>`).join('');
+      aniSel.value = curAni;
+      const foSel = document.getElementById('cataFournisseurFilter');
+      const curFo = foSel.value;
+      foSel.innerHTML = '<option value="">Tous</option><option value="__none__">— Sans fournisseur —</option>' +
+        (CATA_DATA.fournisseurs || []).filter(f => f !== '— Sans fournisseur —').map(f => `<option value="${escapeAttr(f)}">${escapeHtml(f)}</option>`).join('');
+      foSel.value = curFo;
+    }
+
+    function renderCatalogueTable() {
+      const q = document.getElementById('cataSearchInput').value.trim().toLowerCase();
+      const fam = document.getElementById('cataFamilleFilter').value;
+      const ani = document.getElementById('cataAnimalFilter').value;
+      const fo = document.getElementById('cataFournisseurFilter').value;
+      const niv = document.getElementById('cataNiveauFilter').value;
+      const nivSet = niv ? new Set(niv.split(',')) : null;
+      const filtered = CATA_DATA.items.filter(i => {
+        if (fam && i.famille !== fam) return false;
+        if (ani && i.animal !== ani) return false;
+        if (fo === '__none__' && i.fournisseur_nom) return false;
+        if (fo && fo !== '__none__' && i.fournisseur_nom !== fo) return false;
+        if (nivSet && !nivSet.has(i.niveau)) return false;
+        if (q) {
+          const hay = `${i.sku} ${i.nom_court || ''} ${i.nom_long || ''} ${i.ean_13 || ''}`.toLowerCase();
+          if (!hay.includes(q)) return false;
+        }
+        return true;
+      });
+      const NIVEAU_ORDER = { RUPTURE: 0, CRITIQUE: 1, URGENT: 2, A_COMMANDER: 3, DONNEE_MANQUANTE: 4, OK: 5 };
+      filtered.sort((a, b) => {
+        const na = NIVEAU_ORDER[a.niveau] ?? 99;
+        const nb = NIVEAU_ORDER[b.niveau] ?? 99;
+        if (na !== nb) return na - nb;
+        return (a.sku || '').localeCompare(b.sku || '');
+      });
+      const container = document.getElementById('catalogueContent');
+      if (filtered.length === 0) {
+        container.innerHTML = '<div class="empty-state">Aucun SKU ne correspond aux filtres.</div>';
+        return;
+      }
+      const rows = filtered.map(i => {
+        const dj = daysUntil(i.dateRuptureEstimee);
+        const stockValeur = i.pa_vs != null ? (i.stockActuel || 0) * i.pa_vs : null;
+        return `
+          <tr>
+            <td><div class="thumb ${i.image_url ? '' : 'empty'}">${i.image_url ? `<img src="${escapeAttr(i.image_url)}" loading="lazy">` : ''}</div></td>
+            <td class="sku-cell">
+              <div class="sku-code">${escapeHtml(i.sku)}</div>
+              <div class="sku-name">${escapeHtml(i.nom_court || '—')}</div>
+              ${i.ean_13 ? `<div style="font-size:10px;color:var(--muted);font-family:monospace;">${escapeHtml(i.ean_13)}</div>` : ''}
+            </td>
+            <td>${escapeHtml(i.famille || '—')} <span style="color:var(--muted);font-size:11px;">/ ${escapeHtml(i.animal || '—')}</span></td>
+            <td>${i.fournisseur_nom ? `<span class="badge acmd">${escapeHtml(i.fournisseur_nom)}</span>` : '<span class="badge dm">—</span>'}</td>
+            <td><span class="badge ${niveauCls(i.niveau)}">${niveauLbl(i.niveau)}</span></td>
+            <td style="text-align:right;">${fmtInt(i.stockActuel)}</td>
+            <td style="text-align:right;font-size:12px;color:var(--muted);">${stockValeur != null ? fmtEur(stockValeur) : '—'}</td>
+            <td style="text-align:right;">${i.pa_vs != null ? fmtEur(i.pa_vs) : '—'}</td>
+            <td>${i.dateRuptureEstimee
+              ? `<div>${fmtDate(i.dateRuptureEstimee)}</div><div style="font-size:11px;color:var(--muted);">${dj != null ? (dj <= 0 ? "aujourd'hui" : `dans ${dj} j`) : ''}</div>`
+              : '<span style="color:var(--muted);">—</span>'}</td>
+            <td class="qty-cell">
+              ${i.proposition_qte > 0 ? `<div class="qte">${fmtInt(i.proposition_qte)}</div><div class="montant">${fmtEur(i.proposition_montant)}</div>` : '<span style="color:var(--muted);">—</span>'}
+            </td>
+            <td><button class="action-btn" onclick="openDetail('${escapeAttr(i.sku)}')">Détail</button></td>
+          </tr>`;
+      }).join('');
+      container.innerHTML = `
+        <div class="group">
+          <div class="group-header">
+            <div>
+              <div class="name">${filtered.length} SKU affichés</div>
+              <div class="stats">sur ${CATA_DATA.items.length} au total dans le référentiel actif</div>
+            </div>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th></th>
+                <th>SKU / Nom / EAN</th>
+                <th>Famille / Animal</th>
+                <th>Fournisseur</th>
+                <th>Niveau</th>
+                <th style="text-align:right;">Stock</th>
+                <th style="text-align:right;">Valeur stock</th>
+                <th style="text-align:right;">PA</th>
+                <th>Rupture prévue</th>
+                <th style="text-align:right;">Proposition</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>`;
+    }
+
+    document.getElementById('cataSearchInput').addEventListener('input', renderCatalogueTable);
+    document.getElementById('cataFamilleFilter').addEventListener('change', renderCatalogueTable);
+    document.getElementById('cataAnimalFilter').addEventListener('change', renderCatalogueTable);
+    document.getElementById('cataFournisseurFilter').addEventListener('change', renderCatalogueTable);
+    document.getElementById('cataNiveauFilter').addEventListener('change', renderCatalogueTable);
+    document.getElementById('btnCataReset').addEventListener('click', () => {
+      document.getElementById('cataSearchInput').value = '';
+      document.getElementById('cataFamilleFilter').value = '';
+      document.getElementById('cataAnimalFilter').value = '';
+      document.getElementById('cataFournisseurFilter').value = '';
+      document.getElementById('cataNiveauFilter').value = '';
+      renderCatalogueTable();
     });
 
     async function loadSyntheseFamilles() {
