@@ -5445,6 +5445,15 @@ app.get('/api/stock/seed-matrice', handleSeedMatrice);
 async function handleSyncShopify(req, res) {
   if (!requireAdmin(req, res)) return;
   const type = String(req.query.type || '').toLowerCase();
+  const syncTypeKey = { variants: 'shopify_variants', stock: 'shopify_stock', sales: 'shopify_sales' }[type];
+  // Empêche un second run concurrent du même sync (protection contre les
+  // clics multiples ou les redémarrages qui laissent des jobs fantômes).
+  const force = req.query.force === '1';
+  if (syncTypeKey && !force && stockDb.countRunningSync(syncTypeKey) > 0) {
+    return res.status(409).json({
+      error: `Un sync ${type} est déjà en cours. Utilise ?force=1 pour ignorer, ou GET /api/stock/sync-log/cleanup-stale pour purger les jobs fantômes.`,
+    });
+  }
   try {
     if (type === 'variants') {
       const stats = await stockSync.syncShopifyVariants();
@@ -5481,6 +5490,21 @@ async function handleSyncShopify(req, res) {
 }
 app.post('/api/stock/sync-shopify', handleSyncShopify);
 app.get('/api/stock/sync-shopify', handleSyncShopify);
+
+// Cleanup manuel des jobs sync fantômes (running > 15 min sans finished_at).
+// Utile après un crash / redéploy Railway qui a tué le process pendant un sync.
+function handleCleanupStale(req, res) {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const maxAgeMinutes = req.query.maxAgeMinutes ? Number(req.query.maxAgeMinutes) : 15;
+    const changed = stockDb.cleanupStaleSyncLog(maxAgeMinutes);
+    res.json({ ok: true, cleanedUp: changed, maxAgeMinutes });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+app.post('/api/stock/sync-log/cleanup-stale', handleCleanupStale);
+app.get('/api/stock/sync-log/cleanup-stale', handleCleanupStale);
 
 // File complétude
 app.get('/api/stock/completude', (req, res) => {

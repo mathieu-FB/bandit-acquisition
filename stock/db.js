@@ -187,6 +187,20 @@ function init() {
   safeAlter(`ALTER TABLE stock_parametres_famille ADD COLUMN colisage INTEGER`);
   prepareStatements();
   seedDefaults();
+  // Cleanup des jobs "running" fantômes laissés par un redémarrage / crash du process.
+  // Marque comme "crashed" tous ceux started_at > 15 minutes sans finished_at.
+  const cutoff = Date.now() - 15 * 60 * 1000;
+  const crashedInfo = db.prepare(`
+    UPDATE stock_sync_log
+       SET status = 'crashed',
+           message = 'Marqué crashed au démarrage : job started_at > 15 min sans finished_at (probable redémarrage serveur pendant le sync)',
+           finished_at = ?,
+           duration_ms = ? - started_at
+     WHERE status = 'running' AND started_at < ?
+  `).run(Date.now(), Date.now(), cutoff);
+  if (crashedInfo.changes > 0) {
+    console.warn(`[Stock] Cleanup: ${crashedInfo.changes} sync log(s) marqués crashed (running fantômes après restart).`);
+  }
   console.log('[Stock] Schema initialised (10 tables).');
 }
 
@@ -808,6 +822,22 @@ function finishSync(id, { status = 'ok', message = null } = {}) {
 }
 function listRecentSyncLog(limit = 50) { return stmts.selectRecentSyncLog.all(limit); }
 function listRecentSyncLogByType(type, limit = 20) { return stmts.selectRecentSyncLogByType.all(type, limit); }
+function countRunningSync(type) {
+  return db.prepare(`SELECT COUNT(*) AS n FROM stock_sync_log WHERE type = ? AND status = 'running'`).get(type).n;
+}
+function cleanupStaleSyncLog(maxAgeMinutes = 15) {
+  const cutoff = Date.now() - maxAgeMinutes * 60 * 1000;
+  const now = Date.now();
+  const info = db.prepare(`
+    UPDATE stock_sync_log
+       SET status = 'crashed',
+           message = 'Marqué crashed via cleanup manuel',
+           finished_at = ?,
+           duration_ms = ? - started_at
+     WHERE status = 'running' AND started_at < ?
+  `).run(now, now, cutoff);
+  return info.changes;
+}
 
 // ------------------------ Diagnostics ------------------------
 function stats() {
@@ -852,7 +882,7 @@ module.exports = {
   // parametres globaux
   setParametreGlobal, getParametreGlobal, listParametresGlobaux,
   // sync log
-  startSync, finishSync, listRecentSyncLog, listRecentSyncLogByType,
+  startSync, finishSync, listRecentSyncLog, listRecentSyncLogByType, countRunningSync, cleanupStaleSyncLog,
   // diagnostics
   stats,
 };
