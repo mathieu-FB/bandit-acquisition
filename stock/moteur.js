@@ -299,8 +299,18 @@ function computeNiveau({ ref, dateRuptureEstimee, today, leadTimeJours, couvertu
 // Demand window: today → today + lead_time + couverture_visee.
 // En-cours utiles = BDC lignes dont l'ETA arrive DANS la fenêtre.
 // ------------------------------------------------------------
-function computeProposition({ ref, famParam, monthlyForecast, stockActuel, enCoursLignes, today, leadTimeJours, couvertureViseeJours }) {
-  const horizonJours = leadTimeJours + couvertureViseeJours;
+function computeProposition({ ref, famParam, monthlyForecast, stockActuel, enCoursLignes, today, leadTimeJours, couvertureViseeJours, niveau }) {
+  // Horizon de calcul de la QUANTITÉ à commander :
+  // - Pour un niveau actionable (RUPTURE / CRITIQUE / URGENT / A_COMMANDER),
+  //   on vise à avoir `couverture` jours de stock APRÈS RÉCEPTION → horizon =
+  //   lead + 2 × couverture. Sinon on tomberait à 0 pile à réception + couverture,
+  //   ce qui est trop juste (pas de temps pour re-commander).
+  // - Pour un niveau OK, on garde l'horizon court (lead + couverture) pour ne
+  //   pas proposer inutilement (la proposition sera 0 la plupart du temps).
+  const isActionable = ['RUPTURE', 'CRITIQUE', 'URGENT', 'A_COMMANDER'].includes(niveau);
+  const horizonJours = isActionable
+    ? leadTimeJours + couvertureViseeJours * 2
+    : leadTimeJours + couvertureViseeJours;
   const endWindow = addDaysUTC(today, horizonJours);
   // Sum of daily demand between today and endWindow.
   let demandeFenetre = 0;
@@ -399,6 +409,7 @@ function runForSku({ sku, ref, previsions, saisonaliteByFamille, famillesParam, 
         monthlyForecast: forecast.rows,
         stockActuel, enCoursLignes,
         today, leadTimeJours, couvertureViseeJours,
+        niveau,
       });
 
   const messageParts = [];
