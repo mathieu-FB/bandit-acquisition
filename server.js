@@ -1709,14 +1709,19 @@ async function fetchRechargeSubscriptions() {
   // 1. Count active subscriptions
   const countRes = await fetch(`${baseUrl}/subscriptions/count?status=active`, { headers });
   if (!countRes.ok) {
-    console.error('[Recharge] Count error:', countRes.status, await countRes.text());
-    return null;
+    const body = await countRes.text();
+    console.error('[Recharge] Count error:', countRes.status, body);
+    throw new Error(`Recharge /subscriptions/count failed: ${countRes.status} ${body.slice(0, 300)}`);
   }
   const countJson = await countRes.json();
   const activeCount = countJson.count || 0;
 
   // 2. Count cancelled subscriptions
   const cancelledRes = await fetch(`${baseUrl}/subscriptions/count?status=cancelled`, { headers });
+  if (!cancelledRes.ok) {
+    const body = await cancelledRes.text();
+    console.error('[Recharge] Cancelled count error:', cancelledRes.status, body);
+  }
   const cancelledCount = cancelledRes.ok ? (await cancelledRes.json()).count || 0 : 0;
 
   // 3. Get recent subscriptions (last 30 days) for trend
@@ -1855,13 +1860,13 @@ app.get('/api/recharge/subscriptions', async (req, res) => {
     }
 
     const data = await fetchRechargeSubscriptions();
-    if (!data) return res.status(500).json({ error: 'Erreur API Recharge' });
+    if (!data) return res.status(500).json({ error: 'Erreur API Recharge (data null)' });
 
     cache.setRechargeSnapshot(data);
     res.json(data);
   } catch (err) {
-    console.error('[Recharge] Error:', err);
-    res.status(500).json({ error: err.message });
+    console.error('[Recharge] Error:', err.message);
+    return res.status(500).json({ error: err.message || String(err) });
   }
 });
 
