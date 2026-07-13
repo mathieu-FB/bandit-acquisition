@@ -1699,30 +1699,42 @@ async function fetchRechargeSubscriptions() {
   const token = process.env.RECHARGE_API_TOKEN;
   if (!token) return null;
 
-  // Force API version 2021-11 pour comportement pagination Link header stable.
-  const headers = {
-    'X-Recharge-Access-Token': token,
-    'X-Recharge-Version': '2021-11',
-  };
+  // Pas de X-Recharge-Version : on garde la version par défaut du store
+  // (habituellement legacy qui supporte /subscriptions/count et body next_cursor).
+  // Notre extractRechargeNextCursor gère les deux formats de pagination donc
+  // on est safe des 2 côtés.
+  const headers = { 'X-Recharge-Access-Token': token };
   const baseUrl = 'https://api.rechargeapps.com';
 
-  // 1. Count active subscriptions
-  const countRes = await fetch(`${baseUrl}/subscriptions/count?status=active`, { headers });
-  if (!countRes.ok) {
-    const body = await countRes.text();
-    console.error('[Recharge] Count error:', countRes.status, body);
-    throw new Error(`Recharge /subscriptions/count failed: ${countRes.status} ${body.slice(0, 300)}`);
+  // 1. Count active subscriptions — tente /count, fallback via pagination
+  //    en étape 5. Certaines versions récentes de l'API Recharge ont supprimé
+  //    cet endpoint (404 Not Found).
+  let activeCount = 0;
+  let activeCountFromEndpoint = false;
+  try {
+    const countRes = await fetch(`${baseUrl}/subscriptions/count?status=active`, { headers });
+    if (countRes.ok) {
+      activeCount = (await countRes.json()).count || 0;
+      activeCountFromEndpoint = true;
+    } else {
+      console.warn(`[Recharge] /subscriptions/count active retourne ${countRes.status} — fallback via pagination`);
+    }
+  } catch (err) {
+    console.warn('[Recharge] /count active call failed:', err.message);
   }
-  const countJson = await countRes.json();
-  const activeCount = countJson.count || 0;
 
-  // 2. Count cancelled subscriptions
-  const cancelledRes = await fetch(`${baseUrl}/subscriptions/count?status=cancelled`, { headers });
-  if (!cancelledRes.ok) {
-    const body = await cancelledRes.text();
-    console.error('[Recharge] Cancelled count error:', cancelledRes.status, body);
+  // 2. Count cancelled subscriptions — même stratégie
+  let cancelledCount = 0;
+  try {
+    const cancelledRes = await fetch(`${baseUrl}/subscriptions/count?status=cancelled`, { headers });
+    if (cancelledRes.ok) {
+      cancelledCount = (await cancelledRes.json()).count || 0;
+    } else {
+      console.warn(`[Recharge] /subscriptions/count cancelled retourne ${cancelledRes.status} — 0 par défaut`);
+    }
+  } catch (err) {
+    console.warn('[Recharge] /count cancelled call failed:', err.message);
   }
-  const cancelledCount = cancelledRes.ok ? (await cancelledRes.json()).count || 0 : 0;
 
   // 3. Get recent subscriptions (last 30 days) for trend
   const thirtyDaysAgo = new Date();
@@ -1811,7 +1823,12 @@ async function fetchRechargeSubscriptions() {
     activePage++;
   } while (activeCursor && activePage < 20);
   const activeFetched = Object.values(productCounts).reduce((s, v) => s + v, 0);
-  if (activeFetched < activeCount) {
+  // Fallback : si le count endpoint a échoué (activeCountFromEndpoint === false),
+  // utilise le total réel des subs parcourues comme activeCount.
+  if (!activeCountFromEndpoint) {
+    activeCount = activeFetched;
+    console.log(`[Recharge] activeCount = ${activeCount} (via pagination fallback, ${activePage} pages)`);
+  } else if (activeFetched < activeCount) {
     console.warn(`[Recharge] ⚠ ${activeCount - activeFetched} subs manquants (fetched ${activeFetched}/${activeCount} sur ${activePage} pages)`);
   }
 
