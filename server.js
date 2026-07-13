@@ -1683,11 +1683,27 @@ function getObjective(year, month) {
 // Recharge snapshot — backed by cache.js (SQLite, 1h TTL)
 const RECHARGE_CACHE_TTL = 60 * 60 * 1000; // 1 hour
 
+// Extrait le prochain cursor de pagination Recharge. Support des 2 formats :
+// - API 2021-11+ : header HTTP `Link` avec rel="next" (comme Shopify)
+// - Legacy : `next_cursor` dans le body
+function extractRechargeNextCursor(res, json) {
+  const link = res.headers.get('link');
+  if (link) {
+    const m = link.match(/<[^>]*[?&]cursor=([^&>]+)[^>]*>;\s*rel="next"/);
+    if (m) return decodeURIComponent(m[1]);
+  }
+  return json && json.next_cursor ? json.next_cursor : null;
+}
+
 async function fetchRechargeSubscriptions() {
   const token = process.env.RECHARGE_API_TOKEN;
   if (!token) return null;
 
-  const headers = { 'X-Recharge-Access-Token': token };
+  // Force API version 2021-11 pour comportement pagination Link header stable.
+  const headers = {
+    'X-Recharge-Access-Token': token,
+    'X-Recharge-Version': '2021-11',
+  };
   const baseUrl = 'https://api.rechargeapps.com';
 
   // 1. Count active subscriptions
@@ -1717,7 +1733,10 @@ async function fetchRechargeSubscriptions() {
     if (cursor) url += `&cursor=${cursor}`;
 
     const listRes = await fetch(url, { headers });
-    if (!listRes.ok) break;
+    if (!listRes.ok) {
+      console.error(`[Recharge] recent subs page ${page} failed: ${listRes.status} ${await listRes.text()}`);
+      break;
+    }
     const listJson = await listRes.json();
     const subs = listJson.subscriptions || [];
 
@@ -1731,7 +1750,7 @@ async function fetchRechargeSubscriptions() {
       }
     }
 
-    cursor = listJson.next_cursor || null;
+    cursor = extractRechargeNextCursor(listRes, listJson);
     page++;
   } while (cursor && page < 10);
 
@@ -1743,7 +1762,10 @@ async function fetchRechargeSubscriptions() {
     if (cancelCursor) url += `&cursor=${cancelCursor}`;
 
     const cancelRes2 = await fetch(url, { headers });
-    if (!cancelRes2.ok) break;
+    if (!cancelRes2.ok) {
+      console.error(`[Recharge] cancelled subs page ${cancelPage} failed: ${cancelRes2.status} ${await cancelRes2.text()}`);
+      break;
+    }
     const cancelJson = await cancelRes2.json();
     const subs = cancelJson.subscriptions || [];
 
@@ -1755,7 +1777,7 @@ async function fetchRechargeSubscriptions() {
       }
     }
 
-    cancelCursor = cancelJson.next_cursor || null;
+    cancelCursor = extractRechargeNextCursor(cancelRes2, cancelJson);
     cancelPage++;
   } while (cancelCursor && cancelPage < 10);
 
@@ -1768,7 +1790,10 @@ async function fetchRechargeSubscriptions() {
     if (activeCursor) url += `&cursor=${activeCursor}`;
 
     const activeRes = await fetch(url, { headers });
-    if (!activeRes.ok) break;
+    if (!activeRes.ok) {
+      console.error(`[Recharge] active subs page ${activePage} failed: ${activeRes.status} ${await activeRes.text()}`);
+      break;
+    }
     const activeJson = await activeRes.json();
     const subs = activeJson.subscriptions || [];
 
@@ -1777,9 +1802,13 @@ async function fetchRechargeSubscriptions() {
       productCounts[title] = (productCounts[title] || 0) + 1;
     }
 
-    activeCursor = activeJson.next_cursor || null;
+    activeCursor = extractRechargeNextCursor(activeRes, activeJson);
     activePage++;
   } while (activeCursor && activePage < 20);
+  const activeFetched = Object.values(productCounts).reduce((s, v) => s + v, 0);
+  if (activeFetched < activeCount) {
+    console.warn(`[Recharge] ⚠ ${activeCount - activeFetched} subs manquants (fetched ${activeFetched}/${activeCount} sur ${activePage} pages)`);
+  }
 
   // Build product breakdown sorted by count
   const byProduct = Object.entries(productCounts)
