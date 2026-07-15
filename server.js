@@ -1742,13 +1742,10 @@ async function fetchRechargeSubscriptions() {
   const createdMin = formatDate(thirtyDaysAgo);
 
   const dailyCounts = {};
-  let cursor = null;
-  let page = 0;
-
-  do {
-    let url = `${baseUrl}/subscriptions?created_at_min=${createdMin}T00:00:00&limit=250&sort_by=created_at-asc`;
-    if (cursor) url += `&cursor=${cursor}`;
-
+  // Pagination page-based (?page=N) — compatible legacy et cursor si présent.
+  // On stoppe dès qu'une page renvoie < limit (dernière page) ou 0 items.
+  for (let page = 1; page <= 20; page++) {
+    const url = `${baseUrl}/subscriptions?created_at_min=${createdMin}T00:00:00&limit=250&sort_by=created_at-asc&page=${page}`;
     const listRes = await fetch(url, { headers });
     if (!listRes.ok) {
       console.error(`[Recharge] recent subs page ${page} failed: ${listRes.status} ${await listRes.text()}`);
@@ -1756,6 +1753,7 @@ async function fetchRechargeSubscriptions() {
     }
     const listJson = await listRes.json();
     const subs = listJson.subscriptions || [];
+    if (subs.length === 0) break;
 
     for (const sub of subs) {
       const day = sub.created_at ? sub.created_at.substring(0, 10) : null;
@@ -1767,17 +1765,12 @@ async function fetchRechargeSubscriptions() {
       }
     }
 
-    cursor = extractRechargeNextCursor(listRes, listJson);
-    page++;
-  } while (cursor && page < 10);
+    if (subs.length < 250) break; // dernière page
+  }
 
-  // 4. Get recent cancellations (last 30 days)
-  let cancelCursor = null;
-  let cancelPage = 0;
-  do {
-    let url = `${baseUrl}/subscriptions?status=cancelled&updated_at_min=${createdMin}T00:00:00&limit=250&sort_by=updated_at-asc`;
-    if (cancelCursor) url += `&cursor=${cancelCursor}`;
-
+  // 4. Get recent cancellations (last 30 days) — pagination page-based.
+  for (let cancelPage = 1; cancelPage <= 20; cancelPage++) {
+    const url = `${baseUrl}/subscriptions?status=cancelled&updated_at_min=${createdMin}T00:00:00&limit=250&sort_by=updated_at-asc&page=${cancelPage}`;
     const cancelRes2 = await fetch(url, { headers });
     if (!cancelRes2.ok) {
       console.error(`[Recharge] cancelled subs page ${cancelPage} failed: ${cancelRes2.status} ${await cancelRes2.text()}`);
@@ -1785,6 +1778,7 @@ async function fetchRechargeSubscriptions() {
     }
     const cancelJson = await cancelRes2.json();
     const subs = cancelJson.subscriptions || [];
+    if (subs.length === 0) break;
 
     for (const sub of subs) {
       const day = sub.cancelled_at ? sub.cancelled_at.substring(0, 10) : (sub.updated_at ? sub.updated_at.substring(0, 10) : null);
@@ -1794,18 +1788,14 @@ async function fetchRechargeSubscriptions() {
       }
     }
 
-    cancelCursor = extractRechargeNextCursor(cancelRes2, cancelJson);
-    cancelPage++;
-  } while (cancelCursor && cancelPage < 10);
+    if (subs.length < 250) break;
+  }
 
-  // 5. Get ALL active subscriptions for product breakdown
+  // 5. Get ALL active subscriptions for product breakdown — pagination page-based.
   const productCounts = {}; // { productTitle: count }
-  let activeCursor = null;
-  let activePage = 0;
-  do {
-    let url = `${baseUrl}/subscriptions?status=active&limit=250`;
-    if (activeCursor) url += `&cursor=${activeCursor}`;
-
+  let pagesFetched = 0;
+  for (let activePage = 1; activePage <= 40; activePage++) {
+    const url = `${baseUrl}/subscriptions?status=active&limit=250&page=${activePage}`;
     const activeRes = await fetch(url, { headers });
     if (!activeRes.ok) {
       console.error(`[Recharge] active subs page ${activePage} failed: ${activeRes.status} ${await activeRes.text()}`);
@@ -1813,23 +1803,23 @@ async function fetchRechargeSubscriptions() {
     }
     const activeJson = await activeRes.json();
     const subs = activeJson.subscriptions || [];
+    if (subs.length === 0) break;
 
     for (const sub of subs) {
       const title = sub.product_title || 'Inconnu';
       productCounts[title] = (productCounts[title] || 0) + 1;
     }
-
-    activeCursor = extractRechargeNextCursor(activeRes, activeJson);
-    activePage++;
-  } while (activeCursor && activePage < 20);
+    pagesFetched = activePage;
+    if (subs.length < 250) break; // dernière page
+  }
   const activeFetched = Object.values(productCounts).reduce((s, v) => s + v, 0);
   // Fallback : si le count endpoint a échoué (activeCountFromEndpoint === false),
   // utilise le total réel des subs parcourues comme activeCount.
   if (!activeCountFromEndpoint) {
     activeCount = activeFetched;
-    console.log(`[Recharge] activeCount = ${activeCount} (via pagination fallback, ${activePage} pages)`);
+    console.log(`[Recharge] activeCount = ${activeCount} (via pagination fallback, ${pagesFetched} pages)`);
   } else if (activeFetched < activeCount) {
-    console.warn(`[Recharge] ⚠ ${activeCount - activeFetched} subs manquants (fetched ${activeFetched}/${activeCount} sur ${activePage} pages)`);
+    console.warn(`[Recharge] ⚠ ${activeCount - activeFetched} subs manquants (fetched ${activeFetched}/${activeCount} sur ${pagesFetched} pages)`);
   }
 
   // Build product breakdown sorted by count
