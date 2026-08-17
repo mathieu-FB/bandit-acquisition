@@ -6238,6 +6238,93 @@ app.get('/api/stock/bdc/:id/export-xlsx', (req, res) => {
   }
 });
 
+// ---- CSV fournisseur (format ELVETIS et similaires) ----
+const stockCsvImport = require('./stock/csv-import-fournisseur');
+
+// Étape 1 : preview — parse le CSV et retourne le résultat sans rien créer.
+app.post('/api/stock/bdc/parse-csv-fournisseur', stockUpload.single('csv'), (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Fichier CSV manquant (champ multipart: csv)' });
+    // Détecte encodage : utf-8 par défaut, tente latin1 en fallback si accents cassés.
+    let text = req.file.buffer.toString('utf-8');
+    if (text.includes('�')) text = req.file.buffer.toString('latin1');
+    const parsed = stockCsvImport.parseFournisseurCsv(text);
+    res.json(parsed);
+  } catch (err) {
+    console.error('[Stock] parse CSV fournisseur error:', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Étape 2 : confirm — crée le fournisseur (si nouveau) puis le BDC (statut envoye).
+// Body: { fournisseur_nom, numero_commande?, date_envoi?, date_eta?, notes?, lignes: [{sku, qte_commandee, pa_unitaire?}] }
+app.post('/api/stock/bdc/create-from-csv', express.json({ limit: '2mb' }), async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const body = req.body || {};
+    const fournisseurNom = body.fournisseur_nom ? String(body.fournisseur_nom).trim() : '';
+    if (!fournisseurNom) return res.status(400).json({ error: 'fournisseur_nom requis' });
+    if (!Array.isArray(body.lignes) || body.lignes.length === 0) {
+      return res.status(400).json({ error: 'Au moins une ligne requise' });
+    }
+    // Trouve ou crée le fournisseur (matching nom insensible à la casse).
+    let fournisseur = stockDb.listFournisseurs().find(f => f.nom.toLowerCase() === fournisseurNom.toLowerCase());
+    if (!fournisseur) {
+      const id = stockDb.upsertFournisseur({
+        nom: fournisseurNom,
+        devise: body.devise || 'EUR',
+        incoterm: body.incoterm || 'EXW',
+      });
+      fournisseur = stockDb.getFournisseurById(id);
+    }
+    // Filtre : ne garder que les SKU du référentiel (les autres sont rejetés côté BDC)
+    const lignesValides = [];
+    const rejetes = [];
+    for (const l of body.lignes) {
+      const sku = l.sku ? String(l.sku).trim() : '';
+      if (!sku) continue;
+      const ref = stockDb.getReferentielSku(sku);
+      if (!ref) { rejetes.push(sku); continue; }
+      const qte = Number(l.qte_commandee);
+      if (!Number.isFinite(qte) || qte <= 0) { rejetes.push(sku + ' (qté invalide)'); continue; }
+      lignesValides.push({
+        sku,
+        qte_commandee: qte,
+        qte_recue: 0,
+        pa_unitaire: l.pa_unitaire != null ? Number(l.pa_unitaire) : (ref.pa_vs != null ? ref.pa_vs : null),
+        devise: body.devise || fournisseur.devise || 'EUR',
+      });
+    }
+    if (lignesValides.length === 0) {
+      return res.status(400).json({ error: 'Aucune ligne valide après filtrage', rejetes });
+    }
+    // Crée le BDC en statut "envoye" (l'import CSV représente une commande DÉJÀ passée).
+    const created = stockDb.createBdc({
+      fournisseur_id: fournisseur.id,
+      statut: 'envoye',
+      date_envoi: body.date_envoi ? new Date(body.date_envoi).getTime() : Date.now(),
+      date_eta: body.date_eta ? new Date(body.date_eta).getTime() : null,
+      notes: body.notes || (body.numero_commande ? `Import CSV — n° fournisseur : ${body.numero_commande}` : 'Import CSV fournisseur'),
+      devise: body.devise || fournisseur.devise || 'EUR',
+      lignes: lignesValides,
+    });
+    res.json({
+      ok: true,
+      bdc_id: created.id,
+      bdc_numero: created.numero,
+      fournisseur_id: fournisseur.id,
+      fournisseur_nom: fournisseur.nom,
+      fournisseur_created: !fournisseur.updated_at || fournisseur.updated_at > Date.now() - 5000,
+      lignes_creees: lignesValides.length,
+      lignes_rejetees: rejetes,
+    });
+  } catch (err) {
+    console.error('[Stock] create BDC from CSV error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Parse un xlsx uploadé et retourne les lignes détectées (aperçu avant création de BDC)
 // Multipart: field 'xlsx'. Retourne { rows: [{sku, qte, pa, ...}], warnings: [...] }
 app.post('/api/stock/bdc/parse-xlsx', stockUpload.single('xlsx'), (req, res) => {

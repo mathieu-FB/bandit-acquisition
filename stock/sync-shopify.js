@@ -84,15 +84,18 @@ async function* paginate(startUrl) {
 async function syncShopifyVariants({ onProgress } = {}) {
   const logId = stockDb.startSync('shopify_variants');
   try {
-    let updated = 0, unmatched = 0, pages = 0, variantsSeen = 0;
+    let updated = 0, unmatched = 0, pages = 0, variantsSeen = 0, bisDisabledCount = 0;
+    // On récupère aussi `tags` pour détecter les produits en édition limitée
+    // (tag "disable_BIS" — ces SKU sont exclus du moteur de réappro).
     const startUrl = `${shopifyBase()}/products.json?` + new URLSearchParams({
       limit: '250',
-      fields: 'id,title,image,variants',
+      fields: 'id,title,image,variants,tags',
     }).toString();
     for await (const data of paginate(startUrl)) {
       pages++;
       for (const product of data.products || []) {
         const productImage = product.image && product.image.src ? product.image.src : null;
+        const productTags = product.tags || '';
         for (const variant of product.variants || []) {
           variantsSeen++;
           if (!variant.sku) continue;
@@ -107,12 +110,14 @@ async function syncShopifyVariants({ onProgress } = {}) {
             shopify_variant_title: variant.title || null,
             image_url: productImage,
           });
+          const tagInfo = stockDb.updateReferentielShopifyTags(sku, productTags);
+          if (tagInfo.bisDisabled) bisDisabledCount++;
           updated++;
         }
       }
-      if (onProgress) onProgress({ pages, variantsSeen, updated, unmatched });
+      if (onProgress) onProgress({ pages, variantsSeen, updated, unmatched, bisDisabledCount });
     }
-    const stats = { pages, variantsSeen, updated, unmatched };
+    const stats = { pages, variantsSeen, updated, unmatched, bisDisabledCount };
     stockDb.finishSync(logId, { status: 'ok', message: JSON.stringify(stats) });
     return stats;
   } catch (err) {

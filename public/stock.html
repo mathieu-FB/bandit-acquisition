@@ -293,12 +293,14 @@
               <div class="name">2. Lignes de commande</div>
               <div class="stats">Ajoute manuellement, pré-remplis depuis les propositions du moteur, ou importe un xlsx.</div>
             </div>
-            <div style="display:flex;gap:8px;">
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
               <button class="action-btn" id="btnDownloadTemplate">Template xlsx</button>
               <button class="action-btn" id="btnDownloadPropositions">Propositions moteur (xlsx)</button>
               <button class="action-btn" id="btnUploadXlsx">Importer xlsx</button>
               <input type="file" id="importXlsxInput" accept=".xlsx" hidden>
               <button class="action-btn" id="btnPrefillFromEngine">Pré-remplir depuis propositions</button>
+              <button class="action-btn" id="btnUploadCsvFournisseur" style="background:#dbeafe;color:#1e40af;border-color:#93c5fd;">📄 Importer CSV fournisseur</button>
+              <input type="file" id="importCsvFournInput" accept=".csv" hidden>
             </div>
           </div>
           <div style="padding:16px 18px;">
@@ -1007,6 +1009,108 @@
       }));
       renderNewBdcLines();
     });
+
+    // Import CSV fournisseur (format ELVETIS et similaires)
+    document.getElementById('btnUploadCsvFournisseur').addEventListener('click', () => {
+      document.getElementById('importCsvFournInput').click();
+    });
+    document.getElementById('importCsvFournInput').addEventListener('change', async e => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const fd = new FormData();
+      fd.append('csv', file);
+      const res = await fetch('/api/stock/bdc/parse-csv-fournisseur', { method: 'POST', body: fd, credentials: 'same-origin' });
+      const data = await res.json();
+      e.target.value = '';
+      if (!res.ok) { alert(`Erreur parse CSV: ${data.error}`); return; }
+      openCsvFournisseurPreviewModal(data, file.name);
+    });
+
+    function openCsvFournisseurPreviewModal(data, fileName) {
+      const modal = document.getElementById('modal');
+      const body = document.getElementById('modalBody');
+      document.getElementById('modalTitle').textContent = `Import CSV — ${fileName}`;
+      modal.classList.add('active');
+      const rows = data.rows.map((r, i) => `
+        <tr style="${r.in_referentiel ? '' : 'background:#fee2e2;'}">
+          <td style="font-family:monospace;font-size:12px;">${escapeHtml(r.sku)}</td>
+          <td style="font-size:12px;">${escapeHtml(r.nom_ref || r.nom_csv || '—')}</td>
+          <td style="font-family:monospace;font-size:11px;color:var(--muted);">${escapeHtml(r.ean_csv || '')}</td>
+          <td style="text-align:right;">${r.qte_commandee}</td>
+          <td style="text-align:right;">${r.pa_unitaire != null ? fmtEur(r.pa_unitaire) : '—'}</td>
+          <td style="text-align:right;">${r.pa_unitaire != null ? fmtEur(r.qte_commandee * r.pa_unitaire) : '—'}</td>
+          <td>${r.in_referentiel ? '<span class="badge ok">OK</span>' : '<span class="badge rupture">Inconnu</span>'}</td>
+        </tr>`).join('');
+      const metrics = [
+        { l: 'Fournisseur détecté', v: data.fournisseur_nom || '<em>?</em>' },
+        { l: 'N° commande', v: data.numero_commande || '<em>—</em>' },
+        { l: 'Date envoi', v: data.date_envoi || '<em>—</em>' },
+        { l: 'Lignes détectées', v: data.rows_count },
+        { l: 'SKU reconnus', v: `${data.matched_count} / ${data.rows_count}` },
+        { l: 'Total qté', v: fmtInt(data.total_qte) },
+        { l: 'Total montant', v: data.total_montant ? fmtEur(data.total_montant) : '—' },
+      ];
+      const warningsBlock = (data.warnings || []).length > 0
+        ? `<div style="background:#fef3c7;padding:10px;border-radius:6px;margin-bottom:12px;font-size:12px;">
+            <strong>⚠ ${data.warnings.length} warning(s)</strong>
+            <ul style="margin:6px 0 0 20px;padding:0;">${data.warnings.slice(0, 5).map(w => `<li>${escapeHtml(w)}</li>`).join('')}</ul>
+            ${data.warnings.length > 5 ? `<div style="margin-top:4px;color:var(--muted);">+ ${data.warnings.length - 5} autres...</div>` : ''}
+          </div>` : '';
+      body.innerHTML = `
+        <div class="metrics">${metrics.map(m => `<div class="metric"><div class="lbl">${m.l}</div><div class="val">${m.v}</div></div>`).join('')}</div>
+        ${warningsBlock}
+        <h4>Lignes (${data.rows_count})</h4>
+        <table class="forecast-table">
+          <thead><tr><th>SKU</th><th>Nom</th><th>EAN</th><th>Qté</th><th>PA</th><th>Total</th><th>Statut</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+        <div style="margin-top:16px;background:#f9fafb;padding:12px;border-radius:6px;border:1px solid var(--border);">
+          <div style="font-size:12px;font-weight:600;margin-bottom:8px;">Options de création du BDC</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <label>Nom fournisseur (éditable) <input type="text" id="csvFournNom" value="${escapeAttr(data.fournisseur_nom || '')}"></label>
+            <label>Date ETA (à réception) <input type="date" id="csvBdcEta"></label>
+          </div>
+          <label style="margin-top:8px;display:block;">Notes <input type="text" id="csvBdcNotes" value="${escapeAttr(data.numero_commande ? `Import CSV — n° fournisseur : ${data.numero_commande}` : 'Import CSV fournisseur')}"></label>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:16px;">
+          <button onclick='confirmCsvFournisseurImport(${JSON.stringify(data).replace(/'/g, "&#39;")})' style="background:#065f46;">Créer BDC (statut envoyé)</button>
+          <button class="action-btn" onclick="document.getElementById('modal').classList.remove('active')">Annuler</button>
+        </div>
+        <p style="margin-top:10px;font-size:11px;color:var(--muted);">Les SKU inconnus du référentiel (en rouge) seront rejetés à la création. Fournisseur créé automatiquement si nouveau nom.</p>`;
+    }
+
+    async function confirmCsvFournisseurImport(parsedData) {
+      const fournNom = document.getElementById('csvFournNom').value.trim();
+      if (!fournNom) { alert('Nom fournisseur requis'); return; }
+      const etaVal = document.getElementById('csvBdcEta').value;
+      const notes = document.getElementById('csvBdcNotes').value.trim();
+      const validLignes = parsedData.rows.filter(r => r.in_referentiel).map(r => ({
+        sku: r.sku,
+        qte_commandee: r.qte_commandee,
+        pa_unitaire: r.pa_unitaire,
+      }));
+      if (validLignes.length === 0) { alert('Aucune ligne valide à créer.'); return; }
+      const payload = {
+        fournisseur_nom: fournNom,
+        numero_commande: parsedData.numero_commande,
+        date_envoi: parsedData.date_envoi,
+        date_eta: etaVal || null,
+        notes,
+        lignes: validLignes,
+      };
+      const res = await fetch('/api/stock/bdc/create-from-csv', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) { alert(`Erreur création BDC: ${data.error}`); return; }
+      alert(`✓ BDC ${data.bdc_numero} créé avec ${data.lignes_creees} lignes${data.lignes_rejetees.length ? ` · ${data.lignes_rejetees.length} rejetés` : ''}${data.fournisseur_created ? '\n(fournisseur "' + data.fournisseur_nom + '" créé automatiquement)' : ''}`);
+      document.getElementById('modal').classList.remove('active');
+      // Reload la liste BDC en cours
+      document.querySelector('#tab-bdc .subtab-btn[data-subtab="en-cours"]').click();
+    }
 
     // Import xlsx
     document.getElementById('btnUploadXlsx').addEventListener('click', () => {

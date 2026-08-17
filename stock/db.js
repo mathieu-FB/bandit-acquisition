@@ -185,6 +185,10 @@ function init() {
   const safeAlter = (sql) => { try { db.exec(sql); } catch (e) { /* column exists */ } };
   safeAlter(`ALTER TABLE stock_parametres_famille ADD COLUMN moq INTEGER`);
   safeAlter(`ALTER TABLE stock_parametres_famille ADD COLUMN colisage INTEGER`);
+  // bis_disabled : SKU tagué "disable_BIS" dans Shopify (édition limitée non reproduite).
+  // Écrasé par sync-shopify?type=variants ; le moteur exclut ces SKU du calcul.
+  safeAlter(`ALTER TABLE stock_referentiel_sku ADD COLUMN bis_disabled INTEGER DEFAULT 0`);
+  safeAlter(`ALTER TABLE stock_referentiel_sku ADD COLUMN shopify_tags TEXT`);
   prepareStatements();
   seedDefaults();
   // Cleanup des jobs "running" fantômes laissés par un redémarrage / crash du process.
@@ -346,7 +350,7 @@ function prepareStatements() {
     `),
     selectReferentielSku: db.prepare(`SELECT * FROM stock_referentiel_sku WHERE sku = ?`),
     selectAllReferentiel: db.prepare(`SELECT * FROM stock_referentiel_sku ORDER BY famille, animal, sku`),
-    selectActifReferentiel: db.prepare(`SELECT * FROM stock_referentiel_sku WHERE actif = 1 ORDER BY famille, animal, sku`),
+    selectActifReferentiel: db.prepare(`SELECT * FROM stock_referentiel_sku WHERE actif = 1 AND (bis_disabled IS NULL OR bis_disabled = 0) ORDER BY famille, animal, sku`),
     countReferentiel: db.prepare(`SELECT COUNT(*) AS n FROM stock_referentiel_sku`),
     selectByInventoryItemId: db.prepare(`SELECT * FROM stock_referentiel_sku WHERE shopify_inventory_item_id = ?`),
 
@@ -556,6 +560,19 @@ function updateReferentielShopify(sku, { shopify_product_id = null, shopify_vari
   return stmts.updateReferentielShopify.run({
     sku, shopify_product_id, shopify_variant_id, shopify_inventory_item_id, shopify_variant_title, image_url, now,
   });
+}
+
+// Écrit les tags Shopify + calcule bis_disabled (tag "disable_BIS" présent).
+// Appelé par syncShopifyVariants pour chaque SKU rencontré.
+function updateReferentielShopifyTags(sku, tagsStr) {
+  const tags = String(tagsStr || '');
+  const bisDisabled = /(^|,)\s*disable_BIS\s*(,|$)/i.test(tags) ? 1 : 0;
+  db.prepare(`
+    UPDATE stock_referentiel_sku
+       SET shopify_tags = ?, bis_disabled = ?, updated_at = ?
+     WHERE sku = ?
+  `).run(tags, bisDisabled, Date.now(), sku);
+  return { bisDisabled };
 }
 
 function updateReferentielOverrides(sku, overrides) {
@@ -865,7 +882,7 @@ module.exports = {
   // fournisseurs
   upsertFournisseur, getFournisseurById, getFournisseurByNom, listFournisseurs,
   // referentiel
-  upsertReferentielSKUBulk, updateReferentielShopify, updateReferentielOverrides,
+  upsertReferentielSKUBulk, updateReferentielShopify, updateReferentielShopifyTags, updateReferentielOverrides,
   getReferentielSku, listReferentielAll, listReferentielActif, countReferentiel, getSkuByInventoryItemId,
   // parametres famille
   upsertParametreFamille, getParametreFamille, listParametresFamille,
