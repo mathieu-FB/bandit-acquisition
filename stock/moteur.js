@@ -230,6 +230,11 @@ function computeRecentMonthlyAverage(previsions, today, nbMois = 6) {
   return count > 0 ? sum / count : 0;
 }
 
+// Seuil : si la base lissée est < SEUIL_OUTLIER × moyenne récente, on considère
+// que c'est une anomalie (pré-lancement, rupture, promo one-shot) et on retombe
+// sur la moyenne récente.
+const SEUIL_OUTLIER_BAS = 0.2;
+
 function forecastPerSku({ sku, ref, previsions, saisonaliteByFamille, famillesParam, today }) {
   const familleKey = `${ref.famille}|${ref.animal}`;
   const saisonalite = saisonaliteByFamille[familleKey] || {};
@@ -237,8 +242,8 @@ function forecastPerSku({ sku, ref, previsions, saisonaliteByFamille, famillesPa
   const coeffSec = famParam.coeff_securite != null ? famParam.coeff_securite : DEFAULTS.coeffSecurite;
   const overrideSais = famParam.coeff_saisonnalite || null;
   const tendance = deriveTendanceCoeff(previsions, today);
-  // Fallback pour base_N-1 = 0 : moyenne des ventes récentes (6 derniers mois).
-  // Utile pour les SKU nouveaux / relancés qui n'ont pas d'historique N-1.
+  // Moyenne des ventes récentes (6 derniers mois) — utilisée pour le fallback
+  // outlier / SKU sans historique N-1.
   const recentAvg = computeRecentMonthlyAverage(previsions, today, 6);
   const rows = [];
   const d = new Date(today);
@@ -246,20 +251,36 @@ function forecastPerSku({ sku, ref, previsions, saisonaliteByFamille, famillesPa
     const cursor = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + i, 1));
     const y = cursor.getUTCFullYear();
     const m = cursor.getUTCMonth() + 1;
-    const ymRef = `${y - 1}-${String(m).padStart(2, '0')}`;
-    const baseN1Raw = previsions[ymRef] ? previsions[ymRef].qty : 0;
-    // Si pas d'historique N-1 mais des ventes récentes, on utilise la moyenne
-    // récente comme base. Le coeff_tendance est mis à 1.0 dans ce cas car
-    // il n'est pas calculable (pas de N-1 pour comparer).
+    // Lissage 3 mois glissants sur N-1 : moyenne de (M-1, M, M+1) de l'année précédente.
+    // Absorbe les anomalies ponctuelles (rupture, pic promo). Ignore les mois sans data.
+    const yPrev = y - 1;
+    const ymPrev = `${yPrev}-${String(m).padStart(2, '0')}`;
+    const ymPrevMinus1 = m === 1 ? `${yPrev - 1}-12` : `${yPrev}-${String(m - 1).padStart(2, '0')}`;
+    const ymPrevPlus1 = m === 12 ? `${yPrev + 1}-01` : `${yPrev}-${String(m + 1).padStart(2, '0')}`;
+    let sumSmooth = 0, countSmooth = 0;
+    for (const ymS of [ymPrevMinus1, ymPrev, ymPrevPlus1]) {
+      const v = previsions[ymS];
+      if (v != null && v.qty > 0) { sumSmooth += v.qty; countSmooth++; }
+    }
+    const baseSmooth = countSmooth > 0 ? sumSmooth / countSmooth : 0;
+    // Sélection de la base + coeff_tendance selon 3 cas :
+    // 1. baseSmooth OK (pas outlier vs recent_avg) → utilise base lissée
+    // 2. baseSmooth trop faible ou nul → fallback recent_avg (tendance forcée à 1.0)
+    // 3. Aucune donnée → 0
     let baseN1, baseSource, coeffTend;
-    if (baseN1Raw > 0) {
-      baseN1 = baseN1Raw;
-      baseSource = 'n_1';
+    const isOutlierLow = recentAvg > 0 && baseSmooth < SEUIL_OUTLIER_BAS * recentAvg;
+    if (baseSmooth > 0 && !isOutlierLow) {
+      baseN1 = baseSmooth;
+      baseSource = 'n_1_lissee_3m'; // moyenne 3 mois glissants N-1
       coeffTend = tendance.coeff;
     } else if (recentAvg > 0) {
       baseN1 = recentAvg;
-      baseSource = 'moyenne_recente_6m';
-      coeffTend = 1.0; // pas de comparaison N-1 possible
+      baseSource = baseSmooth > 0 ? 'moyenne_recente_6m_outlier' : 'moyenne_recente_6m';
+      coeffTend = 1.0; // pas de comparaison N-1 fiable
+    } else if (baseSmooth > 0) {
+      baseN1 = baseSmooth;
+      baseSource = 'n_1_lissee_3m';
+      coeffTend = tendance.coeff;
     } else {
       baseN1 = 0;
       baseSource = 'zero';
