@@ -6176,6 +6176,28 @@ app.put('/api/stock/bdc/:id/lignes', express.json(), (req, res) => {
   }
 });
 
+// Édition d'une ligne BDC — override date_eta ou qte non livrable par le fournisseur.
+// Body: { date_eta_ligne?: 'YYYY-MM-DD' | null, qte_annulee_fournisseur?: number }
+app.put('/api/stock/bdc/lignes/:id', express.json(), (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const id = Number(req.params.id);
+    const body = req.body || {};
+    const patch = {};
+    if ('date_eta_ligne' in body) {
+      patch.date_eta_ligne = body.date_eta_ligne ? new Date(body.date_eta_ligne).getTime() : null;
+    }
+    if ('qte_annulee_fournisseur' in body) {
+      patch.qte_annulee_fournisseur = Number(body.qte_annulee_fournisseur) || 0;
+    }
+    const updated = stockDb.updateBdcLigneOverrides(id, patch);
+    res.json({ ok: true, ligne: updated });
+  } catch (err) {
+    console.error('[Stock] update BDC ligne error:', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // Réception — { lignes: [{ligne_id, qte_recue}], date_reception_reelle? }
 app.post('/api/stock/bdc/:id/receptionner', express.json(), (req, res) => {
   if (!requireAdmin(req, res)) return;
@@ -6694,6 +6716,21 @@ app.get('/api/stock/alertes/enriched', (req, res) => {
       const ref = stockDb.getReferentielSku(d.sku);
       if (!ref) continue;
       const fournisseur = ref.fournisseur_defaut_id ? (fournisseursById[ref.fournisseur_defaut_id] || null) : null;
+      // Résumé BDC en cours : total qté utile + ETA la plus proche.
+      const bdcLignes = stockDb.getEnCoursForSku(d.sku);
+      let bdcQteUtile = 0, bdcEtaMin = null;
+      const bdcNumeros = new Set();
+      for (const l of bdcLignes) {
+        const utile = Math.max(0, (l.qte_commandee || 0) - (l.qte_annulee_fournisseur || 0) - (l.qte_recue || 0));
+        if (utile <= 0) continue;
+        bdcQteUtile += utile;
+        const etaRaw = l.date_eta_ligne || l.date_eta;
+        if (etaRaw) {
+          const etaMs = new Date(etaRaw).getTime();
+          if (bdcEtaMin == null || etaMs < bdcEtaMin) bdcEtaMin = etaMs;
+        }
+        if (l.numero) bdcNumeros.add(l.numero);
+      }
       enriched.push({
         sku: d.sku,
         nom_court: ref.nom_court,
@@ -6717,6 +6754,10 @@ app.get('/api/stock/alertes/enriched', (req, res) => {
         matrice_bh_ref: ref.matrice_bh_ref,
         fournisseur_id: ref.fournisseur_defaut_id,
         fournisseur_nom: fournisseur ? fournisseur.nom : null,
+        // Info BDC en cours : utile pour afficher "🚚 X u arrivée le JJ/MM"
+        bdcEnCoursQte: bdcQteUtile,
+        bdcEnCoursEta: bdcEtaMin,
+        bdcEnCoursNumeros: Array.from(bdcNumeros),
       });
     }
 

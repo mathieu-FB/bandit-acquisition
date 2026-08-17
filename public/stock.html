@@ -660,7 +660,10 @@
             <div class="sku-name">${escapeHtml(i.nom_court || '—')}</div>
           </td>
           <td>${escapeHtml(i.famille || '—')} <span style="color:var(--muted);font-size:11px;">/ ${escapeHtml(i.animal || '—')}</span></td>
-          <td><span class="badge ${niveauCls(i.niveau)}">${niveauLbl(i.niveau)}</span></td>
+          <td>
+            <span class="badge ${niveauCls(i.niveau)}">${niveauLbl(i.niveau)}</span>
+            ${i.bdcEnCoursQte > 0 ? `<div style="margin-top:4px;background:#dbeafe;color:#1e40af;padding:2px 6px;border-radius:8px;font-size:10px;font-weight:600;display:inline-block;" title="BDC en cours : ${i.bdcEnCoursNumeros.join(', ')}">🚚 ${fmtInt(i.bdcEnCoursQte)} u${i.bdcEnCoursEta ? ` · ${fmtDate(new Date(i.bdcEnCoursEta).toISOString())}` : ''}</div>` : ''}
+          </td>
           <td style="text-align:right;">${fmtInt(i.stockActuel)}</td>
           <td class="rupture-cell">
             ${i.dateRuptureEstimee
@@ -812,6 +815,24 @@
               <tr><td>Montant (PA ${fmtEur(p.pa_unitaire)})</td><td><strong>${fmtEur(p.montant)}</strong></td></tr>
             </tbody>
           </table>` : ''}
+        ${(d.enCoursLignes || []).length > 0 ? `
+          <h4>🚚 BDC en cours (réappro à venir)</h4>
+          <table class="forecast-table">
+            <thead><tr><th>BDC</th><th>Statut</th><th style="text-align:right;">Commandé</th><th style="text-align:right;">Annulé fournisseur</th><th style="text-align:right;">Reçu</th><th style="text-align:right;">Utile</th><th>ETA effective</th></tr></thead>
+            <tbody>
+              ${d.enCoursLignes.map(l => `
+                <tr>
+                  <td style="font-family:monospace;font-size:11px;">${escapeHtml(l.bdc)}</td>
+                  <td><span class="badge acmd" style="font-size:10px;">${escapeHtml(l.statut)}</span></td>
+                  <td style="text-align:right;">${l.qte_commandee}</td>
+                  <td style="text-align:right;color:${l.qte_annulee_fournisseur > 0 ? 'var(--rupture)' : 'var(--muted)'};">${l.qte_annulee_fournisseur}</td>
+                  <td style="text-align:right;">${l.qte_recue}</td>
+                  <td style="text-align:right;font-weight:600;">${l.qte_utile}</td>
+                  <td style="font-size:12px;">${l.date_eta_effective ? fmtDate(l.date_eta_effective) : '—'}${l.date_eta_ligne && l.date_eta_ligne !== l.date_eta ? ` <span style="color:var(--muted);font-size:10px;">(override)</span>` : ''}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+          <p style="font-size:11px;color:var(--muted);margin-top:4px;">Pour modifier date ETA ou qté annulée d'une ligne : Commandes fournisseur → BDC en cours → Voir → Éditer ligne.</p>` : ''}
       `;
     }
 
@@ -1312,22 +1333,39 @@
         { l: 'Lignes', v: `${b.nb_lignes} (${b.total_qte_commandee} u)` },
         { l: 'Montant', v: `${fmtEur(b.montant_total)} ${b.devise}` },
       ];
-      const rows = b.lignes.map(l => `
-        <tr>
-          <td style="font-family:monospace;font-size:11px;">${escapeHtml(l.sku)}</td>
-          <td>${escapeHtml(l.nom_court || '—')}</td>
-          <td style="text-align:right;">${l.qte_commandee}</td>
-          <td style="text-align:right;">${l.qte_recue}${l.qte_recue !== l.qte_commandee ? ` <span style="color:var(--rupture);font-size:11px;">(écart ${l.qte_recue - l.qte_commandee})</span>` : ''}</td>
-          <td style="text-align:right;">${l.pa_unitaire != null ? fmtEur(l.pa_unitaire) : '—'}</td>
-          <td style="text-align:right;">${fmtEur((l.qte_commandee || 0) * (l.pa_unitaire || 0))}</td>
-        </tr>
-      `).join('');
+      const editable = ['envoye', 'confirme', 'expedie'].includes(b.statut);
+      const rows = b.lignes.map(l => {
+        const utile = Math.max(0, (l.qte_commandee || 0) - (l.qte_annulee_fournisseur || 0) - (l.qte_recue || 0));
+        const etaLigneVal = l.date_eta_ligne ? new Date(l.date_eta_ligne).toISOString().slice(0, 10) : '';
+        return `
+          <tr>
+            <td style="font-family:monospace;font-size:11px;">${escapeHtml(l.sku)}</td>
+            <td>${escapeHtml(l.nom_court || '—')}</td>
+            <td style="text-align:right;">${l.qte_commandee}</td>
+            <td style="text-align:right;">${editable
+              ? `<input type="number" min="0" max="${l.qte_commandee}" data-ligne-id="${l.id}" data-field="qte_annulee_fournisseur" value="${l.qte_annulee_fournisseur || 0}" style="width:60px;text-align:right;padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:12px;">`
+              : (l.qte_annulee_fournisseur || 0)
+            }</td>
+            <td style="text-align:right;">${l.qte_recue}</td>
+            <td style="text-align:right;font-weight:600;color:${utile > 0 ? 'var(--ok)' : 'var(--muted)'};">${utile}</td>
+            <td>${editable
+              ? `<input type="date" data-ligne-id="${l.id}" data-field="date_eta_ligne" value="${etaLigneVal}" placeholder="défaut BDC" style="padding:3px 6px;border:1px solid var(--border);border-radius:4px;font-size:11px;font-family:inherit;">`
+              : (l.date_eta_ligne ? fmtDate(new Date(l.date_eta_ligne).toISOString()) : '<span style="color:var(--muted);">—</span>')
+            }</td>
+            <td style="text-align:right;">${l.pa_unitaire != null ? fmtEur(l.pa_unitaire) : '—'}</td>
+            <td>${editable
+              ? `<button class="action-btn" onclick="saveBdcLigneEdit(${l.id}, ${b.id})" style="padding:3px 8px;font-size:11px;">💾</button>`
+              : ''
+            }</td>
+          </tr>`;
+      }).join('');
       body.innerHTML = `
         <div class="metrics">${metrics.map(m => `<div class="metric"><div class="lbl">${m.l}</div><div class="val">${m.v}</div></div>`).join('')}</div>
         ${b.notes ? `<div style="margin-bottom:12px;background:#fef3c7;padding:10px;border-radius:6px;font-size:13px;">📝 ${escapeHtml(b.notes)}</div>` : ''}
         <h4>Lignes</h4>
+        ${editable ? `<p style="font-size:11px;color:var(--muted);margin:0 0 8px;">Colonne <strong>Annulée fournisseur</strong> : qté que le fournisseur ne pourra pas livrer. Colonne <strong>ETA ligne</strong> : override par SKU (vide = date ETA du BDC). Clique 💾 pour sauver.</p>` : ''}
         <table class="forecast-table">
-          <thead><tr><th>SKU</th><th>Nom</th><th>Commandé</th><th>Reçu</th><th>PA</th><th>Total</th></tr></thead>
+          <thead><tr><th>SKU</th><th>Nom</th><th style="text-align:right;">Cdé</th><th style="text-align:right;">Annulée fourn.</th><th style="text-align:right;">Reçu</th><th style="text-align:right;">Utile</th><th>ETA ligne</th><th style="text-align:right;">PA</th><th></th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
         <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;">
@@ -1336,6 +1374,25 @@
           ${['brouillon','envoye','confirme','expedie'].includes(b.statut) ? `<button class="action-btn" onclick="annulerBdc(${b.id})" style="color:var(--rupture);">Annuler ce BDC</button>` : ''}
           ${['brouillon','envoye','confirme','expedie'].includes(b.statut) ? `<button class="action-btn" onclick="changeStatut(${b.id})">Changer statut</button>` : ''}
         </div>`;
+    }
+
+    async function saveBdcLigneEdit(ligneId, bdcId) {
+      const etaInput = document.querySelector(`input[data-ligne-id="${ligneId}"][data-field="date_eta_ligne"]`);
+      const annuleeInput = document.querySelector(`input[data-ligne-id="${ligneId}"][data-field="qte_annulee_fournisseur"]`);
+      const payload = {
+        date_eta_ligne: etaInput.value || null,
+        qte_annulee_fournisseur: Number(annuleeInput.value) || 0,
+      };
+      const res = await fetch(`/api/stock/bdc/lignes/${ligneId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) { alert(`Erreur: ${data.error}`); return; }
+      // Recharge le modal pour voir les valeurs mises à jour + recompute utile
+      openBdcDetail(bdcId);
     }
 
     async function annulerBdc(id) {
@@ -1993,7 +2050,10 @@
             </td>
             <td>${escapeHtml(i.famille || '—')} <span style="color:var(--muted);font-size:11px;">/ ${escapeHtml(i.animal || '—')}</span></td>
             <td>${i.fournisseur_nom ? `<span class="badge acmd">${escapeHtml(i.fournisseur_nom)}</span>` : '<span class="badge dm">—</span>'}</td>
-            <td><span class="badge ${niveauCls(i.niveau)}">${niveauLbl(i.niveau)}</span></td>
+            <td>
+              <span class="badge ${niveauCls(i.niveau)}">${niveauLbl(i.niveau)}</span>
+              ${i.bdcEnCoursQte > 0 ? `<div style="margin-top:4px;background:#dbeafe;color:#1e40af;padding:2px 6px;border-radius:8px;font-size:10px;font-weight:600;display:inline-block;" title="${i.bdcEnCoursNumeros.join(', ')}">🚚 ${fmtInt(i.bdcEnCoursQte)} u${i.bdcEnCoursEta ? ` · ${fmtDate(new Date(i.bdcEnCoursEta).toISOString())}` : ''}</div>` : ''}
+            </td>
             <td style="text-align:right;">${fmtInt(i.stockActuel)}</td>
             <td style="text-align:right;font-size:12px;color:var(--muted);">${stockValeur != null ? fmtEur(stockValeur) : '—'}</td>
             <td style="text-align:right;">${i.pa_vs != null ? fmtEur(i.pa_vs) : '—'}</td>

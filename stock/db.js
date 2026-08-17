@@ -223,6 +223,11 @@ function init() {
   // Écrasé par sync-shopify?type=variants ; le moteur exclut ces SKU du calcul.
   safeAlter(`ALTER TABLE stock_referentiel_sku ADD COLUMN bis_disabled INTEGER DEFAULT 0`);
   safeAlter(`ALTER TABLE stock_referentiel_sku ADD COLUMN shopify_tags TEXT`);
+  // Override par ligne BDC : date ETA spécifique + qté que le fournisseur ne livrera pas.
+  // Permet de gérer les cas où le fournisseur annonce une livraison partielle ou décalée
+  // pour certains SKU sans toucher aux autres lignes du même BDC.
+  safeAlter(`ALTER TABLE stock_bdc_lignes ADD COLUMN date_eta_ligne INTEGER`);
+  safeAlter(`ALTER TABLE stock_bdc_lignes ADD COLUMN qte_annulee_fournisseur INTEGER DEFAULT 0`);
   prepareStatements();
   seedDefaults();
   // Cleanup des jobs "running" fantômes laissés par un redémarrage / crash du process.
@@ -819,6 +824,39 @@ function listBdcEnCours() { return listBdcByStatut(BDC_STATUTS_EN_COURS); }
 function getBdcLignes(bdc_id) { return stmts.selectBdcLignesForBdc.all(bdc_id); }
 function getEnCoursForSku(sku) { return stmts.selectBdcLignesForSku.all(sku); }
 
+// Récupère une ligne BDC par son id (avec info BDC parent pour date fallback).
+function getBdcLigne(id) {
+  return db.prepare(`
+    SELECT l.*, b.numero AS bdc_numero, b.statut AS bdc_statut, b.date_envoi AS bdc_date_envoi, b.date_eta AS bdc_date_eta
+    FROM stock_bdc_lignes l
+    JOIN stock_bdc b ON b.id = l.bdc_id
+    WHERE l.id = ?
+  `).get(id) || null;
+}
+
+// Update partiel d'une ligne BDC (uniquement les champs d'override).
+// `patch` : objet avec les clés à modifier. Utilise `'key' in patch` pour
+// distinguer absence (garde valeur) vs présence à null (efface).
+// Refuse si BDC en statut receptionne / annule.
+function updateBdcLigneOverrides(id, patch) {
+  const cur = getBdcLigne(id);
+  if (!cur) throw new Error(`Ligne BDC introuvable: ${id}`);
+  if (['receptionne', 'annule'].includes(cur.bdc_statut)) {
+    throw new Error(`BDC en statut ${cur.bdc_statut} — édition ligne interdite`);
+  }
+  const nextEta = 'date_eta_ligne' in patch ? (patch.date_eta_ligne ?? null) : cur.date_eta_ligne;
+  const nextAnnulee = 'qte_annulee_fournisseur' in patch
+    ? Math.max(0, Number(patch.qte_annulee_fournisseur) || 0)
+    : (cur.qte_annulee_fournisseur || 0);
+  db.prepare(`
+    UPDATE stock_bdc_lignes SET
+      date_eta_ligne = ?,
+      qte_annulee_fournisseur = ?
+    WHERE id = ?
+  `).run(nextEta, nextAnnulee, id);
+  return getBdcLigne(id);
+}
+
 // ------------------------ Commandes distributeur ------------------------
 // Commandes que Bandit REÇOIT de ses distributeurs B2B (ELVETIS, Zooplus, ...).
 // Ces qtés SORTENT du stock à date_livraison_prevue → augmentent les besoins.
@@ -1035,7 +1073,7 @@ module.exports = {
   // bdc
   BDC_STATUTS, BDC_STATUTS_EN_COURS,
   createBdc, updateBdcMeta, replaceBdcLignes, getBdc, getBdcByNumero, listBdc, listBdcByStatut, listBdcEnCours,
-  getBdcLignes, getEnCoursForSku, nextBdcNumero,
+  getBdcLignes, getEnCoursForSku, nextBdcNumero, getBdcLigne, updateBdcLigneOverrides,
   // commandes distributeur
   CD_STATUTS, CD_STATUTS_A_LIVRER,
   createCommandeDistributeur, getCommandeDistributeur, getCommandeDistributeurLignes,

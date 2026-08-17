@@ -294,13 +294,17 @@ function projectStockDaily({ stockInitial, monthlyForecast, enCoursLignes, comma
     const daysInMonth = new Date(Date.UTC(row.year, row.month, 0)).getUTCDate();
     dailyDemandByYm[row.ym] = row.demande / daysInMonth;
   }
-  // Arrivals: enCoursLignes[].date_eta → sum of (qte_commandee - qte_recue)
+  // Arrivals: pour chaque ligne BDC en cours :
+  //   ETA effective = date_eta_ligne (override) || date_eta du BDC
+  //   Qté utile = qte_commandee - qte_annulee_fournisseur - qte_recue
+  //   Si ETA passée sans réception → ignorée (le stock n'est pas encore arrivé)
   const arrivalsByDay = {};
   for (const line of enCoursLignes) {
-    if (!line.date_eta) continue;
-    const etaDay = Date.UTC(new Date(line.date_eta).getUTCFullYear(), new Date(line.date_eta).getUTCMonth(), new Date(line.date_eta).getUTCDate());
-    if (etaDay < today) continue; // ETA passée sans réception → ignorer pour la projection
-    const qty = Math.max(0, (line.qte_commandee || 0) - (line.qte_recue || 0));
+    const etaRaw = line.date_eta_ligne || line.date_eta;
+    if (!etaRaw) continue;
+    const etaDay = Date.UTC(new Date(etaRaw).getUTCFullYear(), new Date(etaRaw).getUTCMonth(), new Date(etaRaw).getUTCDate());
+    if (etaDay < today) continue;
+    const qty = Math.max(0, (line.qte_commandee || 0) - (line.qte_annulee_fournisseur || 0) - (line.qte_recue || 0));
     if (qty <= 0) continue;
     arrivalsByDay[etaDay] = (arrivalsByDay[etaDay] || 0) + qty;
   }
@@ -387,13 +391,16 @@ function computeProposition({ ref, famParam, monthlyForecast, stockActuel, enCou
     const { year, month } = ymFromUTC(day);
     demandeSurCouverture += dailyDemandByYm[`${year}-${String(month).padStart(2, '0')}`] || 0;
   }
-  // En-cours utiles — those with ETA ≤ endWindow (BDC fournisseur qui arriveront à temps).
+  // En-cours utiles — BDC fournisseur qui arriveront à temps.
+  // ETA effective = date_eta_ligne (override par ligne) || date_eta du BDC.
+  // Qté utile = qte_commandee - qte_annulee_fournisseur - qte_recue.
   let enCoursUtiles = 0;
   for (const line of enCoursLignes) {
-    if (!line.date_eta) continue;
-    const etaDay = Date.UTC(new Date(line.date_eta).getUTCFullYear(), new Date(line.date_eta).getUTCMonth(), new Date(line.date_eta).getUTCDate());
+    const etaRaw = line.date_eta_ligne || line.date_eta;
+    if (!etaRaw) continue;
+    const etaDay = Date.UTC(new Date(etaRaw).getUTCFullYear(), new Date(etaRaw).getUTCMonth(), new Date(etaRaw).getUTCDate());
     if (etaDay > endWindow) continue;
-    enCoursUtiles += Math.max(0, (line.qte_commandee || 0) - (line.qte_recue || 0));
+    enCoursUtiles += Math.max(0, (line.qte_commandee || 0) - (line.qte_annulee_fournisseur || 0) - (line.qte_recue || 0));
   }
   // Sorties distributeur dans la fenêtre : commandes B2B "à livrer" dont
   // date_livraison_prevue tombe avant endWindow. S'AJOUTENT à demandeFenetre car
@@ -531,9 +538,15 @@ function runForSku({ sku, ref, previsions, saisonaliteByFamille, famillesParam, 
     proposition,
     message: messageParts.join(' · '),
     enCoursLignes: enCoursLignes.map(l => ({
+      ligne_id: l.id,
       bdc: l.numero, statut: l.statut, sku: l.sku,
-      qte_commandee: l.qte_commandee, qte_recue: l.qte_recue,
+      qte_commandee: l.qte_commandee,
+      qte_recue: l.qte_recue,
+      qte_annulee_fournisseur: l.qte_annulee_fournisseur || 0,
+      qte_utile: Math.max(0, (l.qte_commandee || 0) - (l.qte_annulee_fournisseur || 0) - (l.qte_recue || 0)),
       date_eta: l.date_eta ? iso(l.date_eta) : null,
+      date_eta_ligne: l.date_eta_ligne ? iso(l.date_eta_ligne) : null,
+      date_eta_effective: (l.date_eta_ligne || l.date_eta) ? iso(l.date_eta_ligne || l.date_eta) : null,
     })),
     commandesDistribLignes: commandesDistribLignes.map(l => ({
       commande: l.numero_interne,
