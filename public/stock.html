@@ -788,13 +788,24 @@
         { l: 'Proposition', v: `${fmtInt(p.qte)} u · ${fmtEur(p.montant)}` },
       ];
       const hasDistrib = (d.monthlyForecast || []).some(m => (m.distributeur || 0) > 0);
+      // Badge indicateur de source de base : couleur + tooltip
+      const SOURCE_META = {
+        n_1_lissee_3m: { icon: '', color: '', title: 'Moyenne 3 mois glissants N-1' },
+        moyenne_recente_6m: { icon: '⚠', color: '#b45309', title: 'Fallback : aucun historique N-1, utilise moyenne 6 mois récents' },
+        moyenne_recente_6m_outlier: { icon: '⚠', color: '#b45309', title: 'Fallback : base N-1 anormalement faible (outlier), utilise moyenne 6 mois récents' },
+        zero: { icon: '∅', color: 'var(--rupture)', title: 'Aucune donnée (SKU sans historique)' },
+      };
       const forecastRows = (d.monthlyForecast || []).map(m => {
         const distrib = m.distributeur || 0;
         const total = m.demande_totale != null ? m.demande_totale : m.demande;
+        const src = SOURCE_META[m.base_source] || SOURCE_META.n_1_lissee_3m;
+        const baseCell = src.icon
+          ? `<span style="color:${src.color};" title="${escapeAttr(src.title)}">${fmtInt(m.base_n_1)} ${src.icon}</span>`
+          : fmtInt(m.base_n_1);
         return `
         <tr>
           <td>${m.ym}</td>
-          <td>${fmtInt(m.base_n_1)}</td>
+          <td>${baseCell}</td>
           <td>${m.coeff_sais.toFixed(2)}</td>
           <td>${m.coeff_tend.toFixed(2)}</td>
           <td>${m.coeff_sec.toFixed(2)}</td>
@@ -803,6 +814,15 @@
           ${hasDistrib ? `<td><strong>${fmtInt(total)}</strong></td>` : `<td><strong>${fmtInt(m.demande)}</strong></td>`}
         </tr>`;
       }).join('');
+      // Compte les sources pour afficher un warning si beaucoup de fallback
+      const sourceCounts = (d.monthlyForecast || []).reduce((acc, m) => {
+        acc[m.base_source] = (acc[m.base_source] || 0) + 1;
+        return acc;
+      }, {});
+      const nbFallback = (sourceCounts.moyenne_recente_6m || 0) + (sourceCounts.moyenne_recente_6m_outlier || 0);
+      const sourceWarn = nbFallback > 0
+        ? `<p style="font-size:11px;color:var(--muted);margin:6px 0 8px;">⚠ ${nbFallback} mois utilise le fallback "moyenne 6m récents" (pas d'historique N-1 fiable). Vérifie l'onglet <strong>Historique ventes</strong> pour voir les vraies données. Si beaucoup de mois sont vides, relance un sync sales 24 mois complet depuis <a href="/stock-admin.html">/stock-admin.html</a>.</p>`
+        : '';
       const totForecast = (d.monthlyForecast || []).reduce((s, m) => s + (m.demande || 0), 0);
       const totDistrib = (d.monthlyForecast || []).reduce((s, m) => s + (m.distributeur || 0), 0);
       const totFooter = hasDistrib
@@ -815,6 +835,7 @@
       return `
         <div class="metrics">${metrics.map(m => `<div class="metric"><div class="lbl">${m.l}</div><div class="val">${m.v}</div></div>`).join('')}</div>
         <h4>Prévision mensuelle (12 mois)${hasDistrib ? ' — <span style="color:#b45309;font-size:12px;font-weight:normal;">colonne "Distrib." = sorties commandes distributeurs B2B</span>' : ''}</h4>
+        ${sourceWarn}
         <table class="forecast-table">
           <thead><tr><th>Mois</th><th>Base N-1</th><th>Sais</th><th>Tend</th><th>Séc</th><th>Forecast</th>${hasDistrib ? '<th style="color:#b45309;">Distrib.</th>' : ''}<th>Total</th></tr></thead>
           <tbody>${forecastRows}${totFooter}</tbody>
