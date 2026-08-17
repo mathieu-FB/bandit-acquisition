@@ -186,9 +186,9 @@
     <!-- Catalogue — vue plate de tous les produits -->
     <section id="tab-catalogue" hidden>
       <div id="catalogueKpiRow" class="kpi-row"></div>
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:8px;">
-        <div id="stockLastSyncInfo" style="font-size:12px;color:var(--muted);">Chargement dernière sync stock…</div>
-        <button id="btnRefreshStock" class="action-btn" style="background:#065f46;color:#fff;border-color:#065f46;">🔄 Rafraîchir stock depuis Shopify</button>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:8px;background:#f9fafb;border:1px solid var(--border);padding:10px 14px;border-radius:8px;">
+        <div id="stockLastSyncInfo" style="font-size:12px;color:var(--muted);display:flex;gap:16px;flex-wrap:wrap;">Chargement…</div>
+        <button id="btnRefreshStock" class="action-btn" style="background:#065f46;color:#fff;border-color:#065f46;">🔄 Rafraîchir stock + ventes (3 mois)</button>
       </div>
       <div class="filters">
         <input type="search" id="cataSearchInput" placeholder="Rechercher SKU, nom, EAN…">
@@ -1852,19 +1852,27 @@
 
     async function loadLastStockSync() {
       const el = document.getElementById('stockLastSyncInfo');
-      try {
-        const res = await fetch('/api/stock/sync-log?type=shopify_stock&limit=1', { credentials: 'same-origin' });
-        const data = await res.json();
-        const last = data.items && data.items[0];
-        if (!last) { el.innerHTML = '<span style="color:var(--rupture);">⚠ Aucun sync stock jamais effectué</span>'; return; }
-        const cls = last.status === 'ok' ? '' : (last.status === 'running' ? 'style="color:var(--acmd);"' : 'style="color:var(--rupture);"');
-        const statusLabel = last.status === 'ok' ? '✓ OK' : (last.status === 'running' ? '⟳ en cours' : `⚠ ${last.status}`);
-        const ts = last.finished_at || last.started_at;
-        const abs = new Date(ts).toLocaleString('fr-FR', { timeZone: 'Europe/Paris', hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
-        el.innerHTML = `Dernière sync stock : <strong ${cls}>${timeAgo(ts)}</strong> (${abs}) · ${statusLabel}`;
-      } catch (err) {
-        el.textContent = 'Impossible de charger la dernière sync';
-      }
+      const syncType = async (type, label) => {
+        try {
+          const res = await fetch(`/api/stock/sync-log?type=${type}&limit=1`, { credentials: 'same-origin' });
+          const data = await res.json();
+          const last = data.items && data.items[0];
+          if (!last) return `<span><strong>${label}</strong>: <span style="color:var(--rupture);">jamais</span></span>`;
+          const color = last.status === 'ok' ? '' : (last.status === 'running' ? 'color:var(--acmd);' : 'color:var(--rupture);');
+          const icon = last.status === 'ok' ? '✓' : (last.status === 'running' ? '⟳' : '⚠');
+          const ts = last.finished_at || last.started_at;
+          const abs = new Date(ts).toLocaleString('fr-FR', { timeZone: 'Europe/Paris', hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
+          return `<span title="${abs}"><strong>${label}</strong>: <span style="${color}">${icon} ${timeAgo(ts)}</span></span>`;
+        } catch (err) {
+          return `<span><strong>${label}</strong>: erreur</span>`;
+        }
+      };
+      const [stock, sales, variants] = await Promise.all([
+        syncType('shopify_stock', 'Stock'),
+        syncType('shopify_sales', 'Ventes'),
+        syncType('shopify_variants', 'Variants'),
+      ]);
+      el.innerHTML = stock + sales + variants;
     }
 
     document.getElementById('btnRefreshStock').addEventListener('click', async () => {
@@ -1873,16 +1881,34 @@
       btn.disabled = true;
       btn.innerHTML = '⟳ Sync en cours…';
       try {
-        const res = await fetch('/api/stock/sync-shopify?type=stock', { method: 'POST', credentials: 'same-origin' });
-        const data = await res.json();
-        if (!res.ok) {
-          alert(`Erreur sync stock: ${data.error}`);
+        // Compute 3-month sliding window for sales sync
+        const now = new Date();
+        const from = new Date(now.getFullYear(), now.getMonth() - 2, 1);
+        const fromYM = `${from.getFullYear()}-${String(from.getMonth() + 1).padStart(2, '0')}`;
+        const toYM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        // Fire both in parallel — stock est court, sales fire-and-forget côté serveur
+        const [stockRes, salesRes] = await Promise.all([
+          fetch('/api/stock/sync-shopify?type=stock', { method: 'POST', credentials: 'same-origin' }),
+          fetch(`/api/stock/sync-shopify?type=sales&fromYM=${fromYM}&toYM=${toYM}`, { method: 'POST', credentials: 'same-origin' }),
+        ]);
+        const stockData = await stockRes.json();
+        const salesData = await salesRes.json();
+        const messages = [];
+        if (stockRes.ok) {
+          const parts = [`${stockData.updated} SKU stock`];
+          if (stockData.itemsWithoutInventoryLevel > 0) parts.push(`${stockData.itemsWithoutInventoryLevel} sans record`);
+          messages.push(`✓ Stock : ${parts.join(', ')}`);
         } else {
-          const parts = [`${data.updated} SKU updatés`];
-          if (data.itemsWithoutInventoryLevel > 0) parts.push(`${data.itemsWithoutInventoryLevel} sans record location`);
-          alert(`✓ Sync stock OK — ${parts.join(', ')}. Rechargement du catalogue…`);
-          loadCatalogue();
+          messages.push(`⚠ Stock : ${stockData.error}`);
         }
+        if (salesRes.ok) {
+          messages.push(`✓ Ventes : sync ${fromYM}→${toYM} lancée en arrière-plan (2-3 min)`);
+        } else {
+          messages.push(`⚠ Ventes : ${salesData.error}`);
+        }
+        alert(messages.join('\n\n'));
+        // Recharge le catalogue avec le stock frais (les ventes seront visibles au prochain moteur run)
+        loadCatalogue();
       } catch (err) {
         alert(`Erreur: ${err.message}`);
       } finally {

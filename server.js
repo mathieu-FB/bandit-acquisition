@@ -4472,6 +4472,48 @@ cron.schedule('0 6 * * 0', async () => {
   }
 }, { timezone: 'Europe/Paris' });
 
+// Sync sales INCRÉMENTAL quotidien à 6h30 Paris (3 mois glissants).
+// Capte les ventes récentes + refunds tardifs sans refaire tout l'historique.
+// Rapide (30 sec à 2 min selon volume).
+cron.schedule('30 6 * * *', async () => {
+  console.log('[Cron] Triggering incremental sales sync (3 months)...');
+  try {
+    if (stockDb.countRunningSync('shopify_sales') > 0) {
+      console.log('[Cron] Sales sync skipped — already running.');
+      return;
+    }
+    const now = new Date();
+    const from = new Date(now.getFullYear(), now.getMonth() - 2, 1);
+    const fromYM = `${from.getFullYear()}-${String(from.getMonth() + 1).padStart(2, '0')}`;
+    const toYM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const stats = await stockSync.syncShopifyMonthlySales({ fromYearMonth: fromYM, toYearMonth: toYM });
+    console.log(`[Cron] Incremental sales done: ${fromYM}→${toYM} · ${stats.ordersKept} orders · ${stats.previsionsUpserted} previsions.`);
+  } catch (err) {
+    console.error('[Cron] Incremental sales sync failed:', err.message);
+  }
+}, { timezone: 'Europe/Paris' });
+
+// Sync sales COMPLET hebdo dimanche 4h00 Paris (24 mois).
+// Rafraîchit tout l'historique pour corriger d'éventuelles dérives.
+// Job long (2-24 min), tourné la nuit quand personne n'utilise.
+cron.schedule('0 4 * * 0', async () => {
+  console.log('[Cron] Triggering full sales sync (24 months)...');
+  try {
+    if (stockDb.countRunningSync('shopify_sales') > 0) {
+      console.log('[Cron] Full sales sync skipped — already running.');
+      return;
+    }
+    const now = new Date();
+    const from = new Date(now.getFullYear() - 2, now.getMonth() + 1, 1);
+    const fromYM = `${from.getFullYear()}-${String(from.getMonth() + 1).padStart(2, '0')}`;
+    const toYM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const stats = await stockSync.syncShopifyMonthlySales({ fromYearMonth: fromYM, toYearMonth: toYM });
+    console.log(`[Cron] Full sales done: ${fromYM}→${toYM} · ${stats.ordersKept} orders · ${stats.previsionsUpserted} previsions.`);
+  } catch (err) {
+    console.error('[Cron] Full sales sync failed:', err.message);
+  }
+}, { timezone: 'Europe/Paris' });
+
 cron.schedule('0 8 * * 1-6', async () => {
   console.log('[Cron] Triggering stock daily alerts...');
   try {
