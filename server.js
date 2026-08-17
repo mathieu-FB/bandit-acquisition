@@ -115,12 +115,39 @@ app.get('/api/auth/me', (req, res) => {
   return res.json({ role: null });
 });
 
+// Basic Auth middleware SAV (htpasswd-style via env vars).
+// Utilisé pour les routes /sav-* et /api/sav/* (page dashboard SAV
+// dédiée pour opérateurs, sans le cookie admin habituel).
+function savBasicAuth(req, res, next) {
+  const savUser = process.env.SAV_USER;
+  const savPassword = process.env.SAV_PASSWORD;
+  if (!savUser || !savPassword) {
+    return res.status(500).json({ error: 'SAV auth non configurée — set SAV_USER + SAV_PASSWORD env vars sur Railway.' });
+  }
+  const authHeader = req.headers.authorization || '';
+  if (!authHeader.startsWith('Basic ')) {
+    res.setHeader('WWW-Authenticate', 'Basic realm="SAV Bandit", charset="UTF-8"');
+    return res.status(401).send('Authentification requise');
+  }
+  const [user, pass] = Buffer.from(authHeader.slice(6), 'base64').toString('utf8').split(':');
+  if (user !== savUser || pass !== savPassword) {
+    res.setHeader('WWW-Authenticate', 'Basic realm="SAV Bandit", charset="UTF-8"');
+    return res.status(401).send('Identifiants invalides');
+  }
+  req.userRole = 'sav';
+  return next();
+}
+
 // Auth middleware — protects all pages and API
 app.use((req, res, next) => {
   // Allow auth endpoints
   if (req.path.startsWith('/api/auth/')) return next();
   // Allow login page assets
   if (req.path === '/login.html') return next();
+  // Routes SAV : basic auth htpasswd via env vars, indépendant du cookie admin.
+  if (req.path.startsWith('/sav-') || req.path.startsWith('/api/sav/')) {
+    return savBasicAuth(req, res, next);
+  }
 
   const cookies = parseCookies(req);
   const auth = verifyAuthCookie(cookies.bandit_auth);
@@ -6796,6 +6823,73 @@ app.get('/api/stock/synthese-familles', (req, res) => {
 // Utilisé par la vue Alertes UI (/stock.html).
 // ?includeOk=1 pour inclure les SKU OK (par défaut exclus).
 // ?niveaux=RUPTURE,CRITIQUE pour filtrer.
+// ============================================================
+// SAV — Dashboard restock (auth Basic via htpasswd env vars)
+// Expose la liste des SKU actifs avec info restock à venir pour
+// permettre aux opérateurs SAV de répondre "quand est-ce que le
+// produit revient en stock ?".
+// ============================================================
+app.get('/api/sav/restock', (req, res) => {
+  // Middleware savBasicAuth déjà appliqué en amont
+  try {
+    const now = Date.now();
+    const in60days = now + 60 * 86400 * 1000;
+    const refs = stockDb.listReferentielActif();
+    const stockBySku = {};
+    stockDb.listStockActuel().forEach(s => { stockBySku[s.sku] = s.stock_dispo || 0; });
+    const items = [];
+    for (const ref of refs) {
+      const stock = stockBySku[ref.sku] || 0;
+      const bdcLignes = stockDb.getEnCoursForSku(ref.sku);
+      // Filtre les lignes utiles (qte_utile > 0) et calcule ETA effective
+      const utileLignes = bdcLignes.map(l => {
+        const utile = Math.max(0, (l.qte_commandee || 0) - (l.qte_annulee_fournisseur || 0) - (l.qte_recue || 0));
+        const etaRaw = l.date_eta_ligne || l.date_eta;
+        const etaMs = etaRaw ? new Date(etaRaw).getTime() : null;
+        return { bdc: l.numero, statut: l.statut, qte_utile: utile, eta: etaMs };
+      }).filter(l => l.qte_utile > 0 && l.eta != null);
+      // Prochain restock = ETA la plus proche (utile > 0)
+      utileLignes.sort((a, b) => a.eta - b.eta);
+      const prochain = utileLignes[0] || null;
+      // Total restock à 60j = somme des qte_utile dont ETA ≤ today + 60j
+      const total60j = utileLignes.filter(l => l.eta <= in60days).reduce((s, l) => s + l.qte_utile, 0);
+      items.push({
+        sku: ref.sku,
+        nom: ref.nom_court || ref.nom_long || '',
+        ean_13: ref.ean_13 || null,
+        famille: ref.famille || null,
+        animal: ref.animal || null,
+        image_url: ref.image_url || null,
+        stock_actuel: stock,
+        prochain_restock: prochain ? {
+          date: new Date(prochain.eta).toISOString(),
+          qte: prochain.qte_utile,
+          bdc: prochain.bdc,
+        } : null,
+        restock_total_60j: total60j,
+        bdc_en_cours_count: utileLignes.length,
+      });
+    }
+    // Tri : rupture d'abord (stock 0), puis stock faible, puis alphabétique
+    items.sort((a, b) => {
+      if (a.stock_actuel === 0 && b.stock_actuel > 0) return -1;
+      if (b.stock_actuel === 0 && a.stock_actuel > 0) return 1;
+      if (a.stock_actuel !== b.stock_actuel) return a.stock_actuel - b.stock_actuel;
+      return (a.sku || '').localeCompare(b.sku || '');
+    });
+    res.json({
+      today: new Date(now).toISOString(),
+      total: items.length,
+      en_rupture: items.filter(i => i.stock_actuel === 0).length,
+      avec_restock: items.filter(i => i.restock_total_60j > 0).length,
+      items,
+    });
+  } catch (err) {
+    console.error('[SAV] restock endpoint error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/stock/alertes/enriched', (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {

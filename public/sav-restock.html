@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bandit SAV — Restock à venir</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; background: #f6f7f9; color: #1a1a1a; font-size: 14px; }
+    header { background: #0f172a; color: #fff; padding: 16px 24px; }
+    header h1 { margin: 0; font-size: 18px; }
+    header .subtitle { opacity: 0.7; font-size: 12px; margin-top: 4px; }
+    main { padding: 16px 24px; max-width: 1400px; margin: 0 auto; }
+    .kpi-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; margin-bottom: 16px; }
+    .kpi { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; }
+    .kpi .label { font-size: 11px; color: #6b7280; text-transform: uppercase; font-weight: 600; letter-spacing: 0.05em; }
+    .kpi .value { font-size: 24px; font-weight: 700; margin-top: 2px; }
+    .kpi.rupture .value { color: #991b1b; }
+    .kpi.restock .value { color: #065f46; }
+    .filters { background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; padding: 10px 12px; margin-bottom: 14px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    .filters input, .filters select { padding: 7px 10px; border: 1px solid #d1d5db; border-radius: 6px; font-size: 13px; }
+    .filters input[type="search"] { min-width: 260px; flex: 1; max-width: 400px; }
+    .filters .badge-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; background: #e5e7eb; border-radius: 6px; cursor: pointer; font-size: 12px; }
+    .filters .badge-toggle input { margin: 0; }
+    .filters .refresh-btn { background: #0f172a; color: #fff; border: none; padding: 7px 12px; border-radius: 6px; font-size: 13px; cursor: pointer; margin-left: auto; }
+    .filters .last-sync { font-size: 11px; color: #6b7280; margin-right: 12px; }
+    table { width: 100%; background: #fff; border: 1px solid #e5e7eb; border-radius: 10px; border-collapse: separate; border-spacing: 0; overflow: hidden; }
+    thead th { text-align: left; padding: 10px 12px; background: #fafbfc; font-size: 11px; text-transform: uppercase; color: #6b7280; font-weight: 600; letter-spacing: 0.03em; border-bottom: 1px solid #e5e7eb; }
+    tbody td { padding: 10px 12px; border-bottom: 1px solid #e5e7eb; vertical-align: middle; }
+    tbody tr:last-child td { border-bottom: none; }
+    tbody tr:hover { background: #fafbfc; }
+    .sku-cell .sku-code { font-family: "SF Mono", Menlo, monospace; font-weight: 600; font-size: 13px; }
+    .sku-cell .sku-nom { color: #6b7280; font-size: 12px; margin-top: 2px; }
+    .sku-cell .sku-ean { color: #9ca3af; font-size: 10px; font-family: monospace; margin-top: 2px; }
+    .stock { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+    .stock.rupture { color: #991b1b; }
+    .stock.faible { color: #b45309; }
+    .stock.ok { color: #065f46; }
+    .restock-cell { text-align: right; }
+    .restock-cell.no { color: #9ca3af; font-style: italic; font-size: 12px; }
+    .restock-cell .date { font-weight: 600; color: #065f46; }
+    .restock-cell .qte { font-size: 11px; color: #6b7280; margin-top: 2px; }
+    .thumb { width: 32px; height: 32px; border-radius: 6px; background: #f3f4f6; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+    .thumb img { max-width: 100%; max-height: 100%; }
+    .empty-state, .loading { padding: 40px; text-align: center; color: #6b7280; background: #fff; border: 1px dashed #e5e7eb; border-radius: 10px; }
+    .fam-cell { font-size: 12px; color: #6b7280; }
+    @media (max-width: 640px) {
+      .fam-cell, .ean-hide { display: none; }
+      main { padding: 8px 12px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Bandit SAV — Restock à venir</h1>
+    <div class="subtitle">Recherche un produit pour savoir quand il revient en stock. Info mise à jour en continu depuis les BDC en cours.</div>
+  </header>
+  <main>
+    <div id="kpiRow" class="kpi-row"></div>
+    <div class="filters">
+      <input type="search" id="q" placeholder="Rechercher par SKU, nom ou EAN…" autofocus>
+      <select id="filter">
+        <option value="all">Tous les produits</option>
+        <option value="rupture" selected>En rupture uniquement</option>
+        <option value="rupture_with_restock">Rupture avec restock à venir</option>
+        <option value="with_restock">Avec restock dans 60j</option>
+        <option value="rupture_no_restock">Rupture SANS restock</option>
+      </select>
+      <span class="last-sync" id="lastSyncInfo"></span>
+      <button class="refresh-btn" id="btnRefresh">↻ Actualiser</button>
+    </div>
+    <div id="content" class="loading">Chargement…</div>
+  </main>
+  <script>
+    let DATA = null;
+
+    async function load() {
+      const content = document.getElementById('content');
+      content.className = 'loading';
+      content.textContent = 'Chargement…';
+      try {
+        const res = await fetch('/api/sav/restock', { credentials: 'same-origin' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        DATA = await res.json();
+        renderKpis();
+        renderTable();
+      } catch (err) {
+        content.className = 'empty-state';
+        content.textContent = 'Erreur : ' + err.message;
+      }
+    }
+
+    function renderKpis() {
+      const el = document.getElementById('kpiRow');
+      el.innerHTML = `
+        <div class="kpi"><div class="label">Total SKU actifs</div><div class="value">${DATA.total}</div></div>
+        <div class="kpi rupture"><div class="label">En rupture</div><div class="value">${DATA.en_rupture}</div></div>
+        <div class="kpi restock"><div class="label">Avec restock 60j</div><div class="value">${DATA.avec_restock}</div></div>
+      `;
+      const lastSync = document.getElementById('lastSyncInfo');
+      lastSync.textContent = 'Data au ' + new Date(DATA.today).toLocaleString('fr-FR', { timeZone: 'Europe/Paris' });
+    }
+
+    function renderTable() {
+      const q = document.getElementById('q').value.trim().toLowerCase();
+      const filter = document.getElementById('filter').value;
+      const filtered = DATA.items.filter(i => {
+        if (filter === 'rupture' && i.stock_actuel !== 0) return false;
+        if (filter === 'rupture_with_restock' && (i.stock_actuel !== 0 || !i.prochain_restock)) return false;
+        if (filter === 'with_restock' && i.restock_total_60j <= 0) return false;
+        if (filter === 'rupture_no_restock' && (i.stock_actuel !== 0 || i.prochain_restock)) return false;
+        if (q) {
+          const hay = (i.sku + ' ' + (i.nom || '') + ' ' + (i.ean_13 || '')).toLowerCase();
+          if (!hay.includes(q)) return false;
+        }
+        return true;
+      });
+      const container = document.getElementById('content');
+      container.className = '';
+      if (filtered.length === 0) {
+        container.className = 'empty-state';
+        container.textContent = 'Aucun SKU ne correspond aux filtres.';
+        return;
+      }
+      const rows = filtered.map(i => {
+        const stockClass = i.stock_actuel === 0 ? 'rupture' : (i.stock_actuel < 20 ? 'faible' : 'ok');
+        let restockCell;
+        if (i.prochain_restock) {
+          const d = new Date(i.prochain_restock.date);
+          const dateStr = d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
+          restockCell = `<div class="date">${dateStr}</div><div class="qte">${i.prochain_restock.qte} unités (${i.prochain_restock.bdc})</div>`;
+        } else {
+          restockCell = '<span class="no">Aucun restock planifié</span>';
+        }
+        return `
+          <tr>
+            <td><div class="thumb">${i.image_url ? `<img src="${escapeAttr(i.image_url)}" loading="lazy">` : ''}</div></td>
+            <td class="sku-cell">
+              <div class="sku-code">${escapeHtml(i.sku)}</div>
+              <div class="sku-nom">${escapeHtml(i.nom || '')}</div>
+              ${i.ean_13 ? `<div class="sku-ean ean-hide">${escapeHtml(i.ean_13)}</div>` : ''}
+            </td>
+            <td class="fam-cell">${escapeHtml(i.famille || '')} / ${escapeHtml(i.animal || '')}</td>
+            <td class="stock ${stockClass}">${i.stock_actuel}</td>
+            <td class="restock-cell">${restockCell}</td>
+            <td class="restock-cell">${i.restock_total_60j > 0 ? `<strong>${i.restock_total_60j}</strong> u <span style="color:#6b7280;font-size:11px;">(${i.bdc_en_cours_count} BDC)</span>` : '<span style="color:#9ca3af;">—</span>'}</td>
+          </tr>`;
+      }).join('');
+      container.innerHTML = `
+        <div style="margin-bottom:8px;color:#6b7280;font-size:12px;">${filtered.length} SKU affichés sur ${DATA.total}</div>
+        <table>
+          <thead>
+            <tr>
+              <th></th>
+              <th>SKU / Nom</th>
+              <th>Famille</th>
+              <th style="text-align:right;">Stock actuel</th>
+              <th style="text-align:right;">Prochain restock</th>
+              <th style="text-align:right;">Total 60j</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    }
+
+    function escapeHtml(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+    function escapeAttr(s) { return escapeHtml(s).replace(/"/g, '&quot;'); }
+
+    document.getElementById('q').addEventListener('input', () => DATA && renderTable());
+    document.getElementById('filter').addEventListener('change', () => DATA && renderTable());
+    document.getElementById('btnRefresh').addEventListener('click', load);
+
+    load();
+  </script>
+</body>
+</html>
