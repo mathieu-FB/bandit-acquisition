@@ -186,6 +186,10 @@
     <!-- Catalogue — vue plate de tous les produits -->
     <section id="tab-catalogue" hidden>
       <div id="catalogueKpiRow" class="kpi-row"></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:8px;">
+        <div id="stockLastSyncInfo" style="font-size:12px;color:var(--muted);">Chargement dernière sync stock…</div>
+        <button id="btnRefreshStock" class="action-btn" style="background:#065f46;color:#fff;border-color:#065f46;">🔄 Rafraîchir stock depuis Shopify</button>
+      </div>
       <div class="filters">
         <input type="search" id="cataSearchInput" placeholder="Rechercher SKU, nom, EAN…">
         <span class="filter-label">Famille</span>
@@ -1809,6 +1813,8 @@
     async function loadCatalogue() {
       const container = document.getElementById('catalogueContent');
       container.innerHTML = '<div class="loading">Chargement…</div>';
+      // Load "last sync stock" info in parallel
+      loadLastStockSync();
       try {
         // includeOk=1 pour tout charger, quel que soit le niveau
         const res = await fetch('/api/stock/alertes/enriched?includeOk=1', { credentials: 'same-origin' });
@@ -1829,6 +1835,61 @@
         container.innerHTML = `<div class="empty-state">Erreur : ${err.message}</div>`;
       }
     }
+
+    // Convertit un timestamp ms en "il y a Xh Ym" ou "il y a Xj"
+    function timeAgo(ts) {
+      if (!ts) return 'jamais';
+      const diff = Date.now() - ts;
+      if (diff < 0) return 'à l\'instant';
+      const min = Math.floor(diff / 60000);
+      if (min < 1) return 'à l\'instant';
+      if (min < 60) return `il y a ${min} min`;
+      const h = Math.floor(min / 60);
+      if (h < 24) return `il y a ${h}h${min % 60 > 0 ? ` ${min % 60}min` : ''}`;
+      const j = Math.floor(h / 24);
+      return `il y a ${j}j${h % 24 > 0 ? ` ${h % 24}h` : ''}`;
+    }
+
+    async function loadLastStockSync() {
+      const el = document.getElementById('stockLastSyncInfo');
+      try {
+        const res = await fetch('/api/stock/sync-log?type=shopify_stock&limit=1', { credentials: 'same-origin' });
+        const data = await res.json();
+        const last = data.items && data.items[0];
+        if (!last) { el.innerHTML = '<span style="color:var(--rupture);">⚠ Aucun sync stock jamais effectué</span>'; return; }
+        const cls = last.status === 'ok' ? '' : (last.status === 'running' ? 'style="color:var(--acmd);"' : 'style="color:var(--rupture);"');
+        const statusLabel = last.status === 'ok' ? '✓ OK' : (last.status === 'running' ? '⟳ en cours' : `⚠ ${last.status}`);
+        const ts = last.finished_at || last.started_at;
+        const abs = new Date(ts).toLocaleString('fr-FR', { timeZone: 'Europe/Paris', hour: '2-digit', minute: '2-digit', day: '2-digit', month: '2-digit' });
+        el.innerHTML = `Dernière sync stock : <strong ${cls}>${timeAgo(ts)}</strong> (${abs}) · ${statusLabel}`;
+      } catch (err) {
+        el.textContent = 'Impossible de charger la dernière sync';
+      }
+    }
+
+    document.getElementById('btnRefreshStock').addEventListener('click', async () => {
+      const btn = document.getElementById('btnRefreshStock');
+      const orig = btn.innerHTML;
+      btn.disabled = true;
+      btn.innerHTML = '⟳ Sync en cours…';
+      try {
+        const res = await fetch('/api/stock/sync-shopify?type=stock', { method: 'POST', credentials: 'same-origin' });
+        const data = await res.json();
+        if (!res.ok) {
+          alert(`Erreur sync stock: ${data.error}`);
+        } else {
+          const parts = [`${data.updated} SKU updatés`];
+          if (data.itemsWithoutInventoryLevel > 0) parts.push(`${data.itemsWithoutInventoryLevel} sans record location`);
+          alert(`✓ Sync stock OK — ${parts.join(', ')}. Rechargement du catalogue…`);
+          loadCatalogue();
+        }
+      } catch (err) {
+        alert(`Erreur: ${err.message}`);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = orig;
+      }
+    });
 
     function renderCatalogueKpis() {
       const b = CATA_DATA.byNiveau;

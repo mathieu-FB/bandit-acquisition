@@ -4439,6 +4439,39 @@ cron.schedule('1 0 * * *', async () => {
 //   top 30 SKU actionnables).
 // ============================================================
 
+// Sync stock quotidien à 7h00 Paris (juste avant les alertes 8h)
+// → garantit que le moteur travaille avec le stock du matin.
+cron.schedule('0 7 * * *', async () => {
+  console.log('[Cron] Triggering stock sync (Shopify inventory)...');
+  try {
+    // Skip si un sync stock est déjà en cours (protection anti-double)
+    if (stockDb.countRunningSync('shopify_stock') > 0) {
+      console.log('[Cron] Stock sync skipped — already running.');
+      return;
+    }
+    const stats = await stockSync.syncShopifyStock();
+    console.log(`[Cron] Stock sync done: ${stats.updated} SKU updated (${stats.itemsWithoutInventoryLevel || 0} sans record location).`);
+  } catch (err) {
+    console.error('[Cron] Stock sync failed:', err.message);
+  }
+}, { timezone: 'Europe/Paris' });
+
+// Sync variants hebdomadaire dimanche 6h00 Paris — capte les nouveaux SKU,
+// les changements de tag Shopify (dont disable_BIS), les updates d'image/title.
+cron.schedule('0 6 * * 0', async () => {
+  console.log('[Cron] Triggering weekly variants sync...');
+  try {
+    if (stockDb.countRunningSync('shopify_variants') > 0) {
+      console.log('[Cron] Variants sync skipped — already running.');
+      return;
+    }
+    const stats = await stockSync.syncShopifyVariants();
+    console.log(`[Cron] Variants sync done: ${stats.updated} variants mapped, ${stats.bisDisabledCount || 0} tagués disable_BIS.`);
+  } catch (err) {
+    console.error('[Cron] Variants sync failed:', err.message);
+  }
+}, { timezone: 'Europe/Paris' });
+
 cron.schedule('0 8 * * 1-6', async () => {
   console.log('[Cron] Triggering stock daily alerts...');
   try {
