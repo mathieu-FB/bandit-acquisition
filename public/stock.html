@@ -300,8 +300,6 @@
               <button class="action-btn" id="btnUploadXlsx">Importer xlsx</button>
               <input type="file" id="importXlsxInput" accept=".xlsx" hidden>
               <button class="action-btn" id="btnPrefillFromEngine">Pré-remplir depuis propositions</button>
-              <button class="action-btn" id="btnUploadCsvDistributeur" style="background:#fef3c7;color:#92400e;border-color:#fcd34d;" title="Import CSV de commande QUE Bandit reçoit d'un distributeur B2B (ex: ELVETIS). La qté sortira du stock à la date de livraison → augmente les besoins.">📥 Importer commande distributeur (CSV)</button>
-              <input type="file" id="importCsvFournInput" accept=".csv" hidden>
             </div>
           </div>
           <div style="padding:16px 18px;">
@@ -374,7 +372,7 @@
       <!-- Commandes distributeurs (que Bandit REÇOIT de ses distributeurs B2B) -->
       <section id="subtab-distributeurs" hidden>
         <div style="background:#fef3c7;padding:12px 16px;border-radius:8px;margin-bottom:12px;font-size:13px;">
-          <strong>Commandes distributeurs</strong> — Commandes B2B que Bandit reçoit (ELVETIS, Zooplus, etc). Les qtés SORTENT du stock à la date de livraison prévue et augmentent automatiquement les besoins en réappro.
+          <strong>Commandes distributeurs</strong> — Commandes B2B que Bandit reçoit (ELVETIS, Zooplus, etc). Les qtés SORTENT du stock à la date de livraison prévue et augmentent automatiquement les besoins en réappro. Une commande peut contenir des SKU de plusieurs fournisseurs.
         </div>
         <div class="filters">
           <input type="search" id="cdSearchInput" placeholder="Rechercher n° ou distributeur…">
@@ -386,6 +384,8 @@
             <option value="annulee">Annulées</option>
           </select>
           <button class="reset-btn" id="btnReloadCd">Actualiser</button>
+          <button id="btnImportCd" style="background:#b45309;color:#fff;border:none;padding:7px 14px;border-radius:6px;font-size:13px;cursor:pointer;margin-left:auto;">📥 Importer nouvelle commande (CSV)</button>
+          <input type="file" id="importCsvFournInput" accept=".csv" hidden>
         </div>
         <div id="cdContent" class="loading">Chargement…</div>
       </section>
@@ -1031,8 +1031,8 @@
       renderNewBdcLines();
     });
 
-    // Import CSV commande distributeur (format ELVETIS et similaires) — sortie de stock
-    document.getElementById('btnUploadCsvDistributeur').addEventListener('click', () => {
+    // Import CSV commande distributeur (bouton dans sous-onglet Commandes distributeurs)
+    document.getElementById('btnImportCd').addEventListener('click', () => {
       document.getElementById('importCsvFournInput').click();
     });
     document.getElementById('importCsvFournInput').addEventListener('change', async e => {
@@ -1130,9 +1130,8 @@
       if (!res.ok) { alert(`Erreur création: ${data.error}`); return; }
       alert(`✓ Commande distributeur ${data.numero_interne} créée avec ${data.lignes_creees} lignes${data.lignes_rejetees.length ? ` · ${data.lignes_rejetees.length} rejetés` : ''}`);
       document.getElementById('modal').classList.remove('active');
-      // Switch vers l'onglet "Commandes distributeurs"
-      const btn = document.querySelector('#tab-bdc .subtab-btn[data-subtab="distributeurs"]');
-      if (btn) btn.click();
+      // Recharge la liste (on est déjà sur le sous-onglet distributeurs)
+      loadCommandesDistributeur();
     }
 
     // Import xlsx
