@@ -242,10 +242,11 @@ function forecastPerSku({ sku, ref, previsions, saisonaliteByFamille, famillesPa
 
 // ------------------------------------------------------------
 // Daily projection over 365 days.
-// Input: stock_dispo, monthlyForecast rows, list of en-cours BDC lignes.
-// Returns: array of { day (ms), stock, ins (BDC arrivals) }.
+// Input: stock_dispo, monthlyForecast rows, list of en-cours BDC lignes,
+// list of commandes distributeur "à livrer" (sorties futures fermes).
+// Returns: array of { day (ms), stock, ins (BDC arrivals), outCd (distributeur) }.
 // ------------------------------------------------------------
-function projectStockDaily({ stockInitial, monthlyForecast, enCoursLignes, today, horizonJours = DEFAULTS.horizonJours }) {
+function projectStockDaily({ stockInitial, monthlyForecast, enCoursLignes, commandesDistribLignes = [], today, horizonJours = DEFAULTS.horizonJours }) {
   // Daily demand: monthly demand / days in that month.
   const dailyDemandByYm = {};
   for (const row of monthlyForecast) {
@@ -262,6 +263,21 @@ function projectStockDaily({ stockInitial, monthlyForecast, enCoursLignes, today
     if (qty <= 0) continue;
     arrivalsByDay[etaDay] = (arrivalsByDay[etaDay] || 0) + qty;
   }
+  // Sorties fermes : commandes distributeur "à livrer" à leur date_livraison_prevue.
+  // Elles s'AJOUTENT à la demande forecast normale (car les distributeurs B2B
+  // n'apparaissent pas dans les ventes Shopify historiques).
+  const cdOutByDay = {};
+  for (const line of commandesDistribLignes) {
+    if (!line.date_livraison_prevue) continue;
+    const dt = new Date(line.date_livraison_prevue);
+    const livDay = Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate());
+    // Si la date de livraison est passée, on la place aujourd'hui (dette qui devient
+    // immédiatement due — évite de perdre la sortie).
+    const effectiveDay = livDay < today ? today : livDay;
+    const qty = Math.max(0, (line.qte_commandee || 0) - (line.qte_livree || 0));
+    if (qty <= 0) continue;
+    cdOutByDay[effectiveDay] = (cdOutByDay[effectiveDay] || 0) + qty;
+  }
   const daily = [];
   let stock = stockInitial;
   let dateRuptureEstimee = null;
@@ -272,9 +288,11 @@ function projectStockDaily({ stockInitial, monthlyForecast, enCoursLignes, today
     const { year, month } = ymFromUTC(day);
     const ym = `${year}-${String(month).padStart(2, '0')}`;
     const demandeJour = dailyDemandByYm[ym] || 0;
+    const cdOut = cdOutByDay[day] || 0;
     stock -= demandeJour;
+    stock -= cdOut;
     if (dateRuptureEstimee === null && stock <= 0) dateRuptureEstimee = day;
-    daily.push({ day, ins: arrivals, out: Number(demandeJour.toFixed(3)), stock: Number(stock.toFixed(2)) });
+    daily.push({ day, ins: arrivals, out: Number(demandeJour.toFixed(3)), outCd: cdOut, stock: Number(stock.toFixed(2)) });
   }
   return { daily, dateRuptureEstimee };
 }
@@ -299,14 +317,8 @@ function computeNiveau({ ref, dateRuptureEstimee, today, leadTimeJours, couvertu
 // Demand window: today → today + lead_time + couverture_visee.
 // En-cours utiles = BDC lignes dont l'ETA arrive DANS la fenêtre.
 // ------------------------------------------------------------
-function computeProposition({ ref, famParam, monthlyForecast, stockActuel, enCoursLignes, today, leadTimeJours, couvertureViseeJours, niveau }) {
-  // Horizon de calcul de la QUANTITÉ à commander :
-  // - Pour un niveau actionable (RUPTURE / CRITIQUE / URGENT / A_COMMANDER),
-  //   on vise à avoir `couverture` jours de stock APRÈS RÉCEPTION → horizon =
-  //   lead + 2 × couverture. Sinon on tomberait à 0 pile à réception + couverture,
-  //   ce qui est trop juste (pas de temps pour re-commander).
-  // - Pour un niveau OK, on garde l'horizon court (lead + couverture) pour ne
-  //   pas proposer inutilement (la proposition sera 0 la plupart du temps).
+function computeProposition({ ref, famParam, monthlyForecast, stockActuel, enCoursLignes, commandesDistribLignes = [], today, leadTimeJours, couvertureViseeJours, niveau }) {
+  // Horizon de calcul de la QUANTITÉ à commander (voir docstring dans runForSku).
   const isActionable = ['RUPTURE', 'CRITIQUE', 'URGENT', 'A_COMMANDER'].includes(niveau);
   const horizonJours = isActionable
     ? leadTimeJours + couvertureViseeJours * 2
@@ -324,7 +336,7 @@ function computeProposition({ ref, famParam, monthlyForecast, stockActuel, enCou
     const { year, month } = ymFromUTC(day);
     demandeFenetre += dailyDemandByYm[`${year}-${String(month).padStart(2, '0')}`] || 0;
   }
-  // En-cours utiles — those with ETA ≤ endWindow.
+  // En-cours utiles — those with ETA ≤ endWindow (BDC fournisseur qui arriveront à temps).
   let enCoursUtiles = 0;
   for (const line of enCoursLignes) {
     if (!line.date_eta) continue;
@@ -332,7 +344,19 @@ function computeProposition({ ref, famParam, monthlyForecast, stockActuel, enCou
     if (etaDay > endWindow) continue;
     enCoursUtiles += Math.max(0, (line.qte_commandee || 0) - (line.qte_recue || 0));
   }
-  const brut = Math.max(0, demandeFenetre - stockActuel - enCoursUtiles);
+  // Sorties distributeur dans la fenêtre : commandes B2B "à livrer" dont
+  // date_livraison_prevue tombe avant endWindow. S'AJOUTENT à demandeFenetre car
+  // les distributeurs n'apparaissent pas dans le forecast Shopify.
+  let sortiesDistribFenetre = 0;
+  for (const line of commandesDistribLignes) {
+    if (!line.date_livraison_prevue) continue;
+    const dt = new Date(line.date_livraison_prevue);
+    const livDay = Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate());
+    if (livDay > endWindow) continue; // livraison au-delà de la fenêtre : pas d'impact ici
+    sortiesDistribFenetre += Math.max(0, (line.qte_commandee || 0) - (line.qte_livree || 0));
+  }
+  const demandeFenetreTotale = demandeFenetre + sortiesDistribFenetre;
+  const brut = Math.max(0, demandeFenetreTotale - stockActuel - enCoursUtiles);
   // MOQ / PCB — cascade : override SKU (si > 1) → param famille → défaut 1.
   // Un SKU avec moq/colisage à 1 (défaut du schéma) est considéré comme "pas
   // d'override", on retombe alors sur la valeur famille si définie.
@@ -349,6 +373,8 @@ function computeProposition({ ref, famParam, monthlyForecast, stockActuel, enCou
   const montant = pa != null ? Number((qte * pa).toFixed(2)) : null;
   return {
     demandeFenetre: Number(demandeFenetre.toFixed(2)),
+    sortiesDistribFenetre: Number(sortiesDistribFenetre.toFixed(2)),
+    demandeFenetreTotale: Number(demandeFenetreTotale.toFixed(2)),
     stockActuel,
     enCoursUtiles,
     brut: Number(brut.toFixed(2)),
@@ -369,6 +395,9 @@ function computeProposition({ ref, famParam, monthlyForecast, stockActuel, enCou
 function runForSku({ sku, ref, previsions, saisonaliteByFamille, famillesParam, stockActuel, today }) {
   const skuPrev = previsions || {};
   const enCoursLignes = stockDb.getEnCoursForSku(sku);
+  // Commandes distributeur B2B "à livrer" — sorties futures fermes qui
+  // s'ajoutent à la demande forecast (non couvertes par les ventes Shopify).
+  const commandesDistribLignes = stockDb.getCommandesDistributeurALivrerForSku(sku);
   const leadTimeJours = ref.lead_time_jours != null ? ref.lead_time_jours : DEFAULTS.leadTimeJours;
   // Priorité : param famille (défini dans stock_parametres_famille) → xlsx → défaut global.
   // Le param famille override la matrice pour permettre au user de recalibrer par famille sans
@@ -391,6 +420,7 @@ function runForSku({ sku, ref, previsions, saisonaliteByFamille, famillesParam, 
     stockInitial: stockActuel,
     monthlyForecast: forecast.rows,
     enCoursLignes,
+    commandesDistribLignes,
     today,
     horizonJours: DEFAULTS.horizonJours,
   });
@@ -408,6 +438,7 @@ function runForSku({ sku, ref, previsions, saisonaliteByFamille, famillesParam, 
         ref, famParam,
         monthlyForecast: forecast.rows,
         stockActuel, enCoursLignes,
+        commandesDistribLignes,
         today, leadTimeJours, couvertureViseeJours,
         niveau,
       });
@@ -442,6 +473,14 @@ function runForSku({ sku, ref, previsions, saisonaliteByFamille, famillesParam, 
       bdc: l.numero, statut: l.statut, sku: l.sku,
       qte_commandee: l.qte_commandee, qte_recue: l.qte_recue,
       date_eta: l.date_eta ? iso(l.date_eta) : null,
+    })),
+    commandesDistribLignes: commandesDistribLignes.map(l => ({
+      commande: l.numero_interne,
+      distributeur: l.distributeur_nom,
+      statut: l.statut,
+      qte_commandee: l.qte_commandee,
+      qte_livree: l.qte_livree,
+      date_livraison_prevue: l.date_livraison_prevue ? iso(l.date_livraison_prevue) : null,
     })),
   };
 }

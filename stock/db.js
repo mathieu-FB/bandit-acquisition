@@ -143,6 +143,40 @@ CREATE TABLE IF NOT EXISTS stock_bdc_lignes (
 CREATE INDEX IF NOT EXISTS idx_stock_bdc_lignes_bdc ON stock_bdc_lignes(bdc_id);
 CREATE INDEX IF NOT EXISTS idx_stock_bdc_lignes_sku ON stock_bdc_lignes(sku);
 
+-- Commandes distributeur = commandes que Bandit REÇOIT de ses distributeurs B2B
+-- (ex: ELVETIS, Zooplus, etc). Ces qtés SORTENT du stock à la date_livraison_prevue
+-- → augmentent les besoins en stock (contraire des BDC fournisseur qui les réduisent).
+CREATE TABLE IF NOT EXISTS stock_commandes_distributeur (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  numero_interne TEXT UNIQUE,
+  distributeur_nom TEXT NOT NULL,
+  numero_externe TEXT,
+  date_creation INTEGER,
+  date_reception_commande INTEGER,
+  date_livraison_prevue INTEGER,
+  date_livraison_reelle INTEGER,
+  statut TEXT DEFAULT 'a_livrer',
+  notes TEXT,
+  montant_total REAL DEFAULT 0,
+  updated_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_stock_cd_statut ON stock_commandes_distributeur(statut);
+CREATE INDEX IF NOT EXISTS idx_stock_cd_livraison ON stock_commandes_distributeur(date_livraison_prevue);
+CREATE INDEX IF NOT EXISTS idx_stock_cd_distributeur ON stock_commandes_distributeur(distributeur_nom);
+
+CREATE TABLE IF NOT EXISTS stock_commandes_distributeur_lignes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  commande_id INTEGER NOT NULL,
+  sku TEXT NOT NULL,
+  qte_commandee INTEGER NOT NULL,
+  qte_livree INTEGER DEFAULT 0,
+  pv_unitaire REAL,
+  devise TEXT DEFAULT 'EUR',
+  FOREIGN KEY (commande_id) REFERENCES stock_commandes_distributeur(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_stock_cd_lignes_cmd ON stock_commandes_distributeur_lignes(commande_id);
+CREATE INDEX IF NOT EXISTS idx_stock_cd_lignes_sku ON stock_commandes_distributeur_lignes(sku);
+
 CREATE TABLE IF NOT EXISTS stock_alertes_etat (
   sku TEXT PRIMARY KEY,
   niveau TEXT,
@@ -785,6 +819,114 @@ function listBdcEnCours() { return listBdcByStatut(BDC_STATUTS_EN_COURS); }
 function getBdcLignes(bdc_id) { return stmts.selectBdcLignesForBdc.all(bdc_id); }
 function getEnCoursForSku(sku) { return stmts.selectBdcLignesForSku.all(sku); }
 
+// ------------------------ Commandes distributeur ------------------------
+// Commandes que Bandit REÇOIT de ses distributeurs B2B (ELVETIS, Zooplus, ...).
+// Ces qtés SORTENT du stock à date_livraison_prevue → augmentent les besoins.
+
+const CD_STATUTS = ['a_livrer', 'livree', 'annulee'];
+const CD_STATUTS_A_LIVRER = ['a_livrer']; // participent aux sorties futures du moteur
+
+function nextCommandeDistributeurNumero(year = new Date().getFullYear()) {
+  const like = `CD-${year}-%`;
+  const row = db.prepare(`SELECT MAX(numero_interne) AS max_num FROM stock_commandes_distributeur WHERE numero_interne LIKE ?`).get(like);
+  const max = row && row.max_num ? row.max_num : null;
+  let n = 1;
+  if (max) {
+    const m = max.match(/-(\d+)$/);
+    if (m) n = parseInt(m[1], 10) + 1;
+  }
+  return `CD-${year}-${String(n).padStart(3, '0')}`;
+}
+
+function createCommandeDistributeur({ distributeur_nom, numero_externe = null, date_reception_commande = null, date_livraison_prevue = null, statut = 'a_livrer', notes = null, lignes = [] }) {
+  if (!distributeur_nom) throw new Error('distributeur_nom requis');
+  if (!Array.isArray(lignes) || lignes.length === 0) throw new Error('Au moins une ligne requise');
+  const now = Date.now();
+  const numero_interne = nextCommandeDistributeurNumero();
+  const montant_total = lignes.reduce((s, l) => s + (l.qte_commandee || 0) * (l.pv_unitaire || 0), 0);
+  let cdId;
+  const tx = db.transaction(() => {
+    const info = db.prepare(`
+      INSERT INTO stock_commandes_distributeur (
+        numero_interne, distributeur_nom, numero_externe,
+        date_creation, date_reception_commande, date_livraison_prevue, date_livraison_reelle,
+        statut, notes, montant_total, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)
+    `).run(numero_interne, distributeur_nom, numero_externe, now, date_reception_commande, date_livraison_prevue, statut, notes, montant_total, now);
+    cdId = info.lastInsertRowid;
+    const insertLigne = db.prepare(`
+      INSERT INTO stock_commandes_distributeur_lignes (commande_id, sku, qte_commandee, qte_livree, pv_unitaire, devise)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    lignes.forEach(l => insertLigne.run(cdId, l.sku, l.qte_commandee, l.qte_livree || 0, l.pv_unitaire ?? null, l.devise || 'EUR'));
+  });
+  tx();
+  return { id: cdId, numero_interne };
+}
+
+function getCommandeDistributeur(id) {
+  return db.prepare(`SELECT * FROM stock_commandes_distributeur WHERE id = ?`).get(id) || null;
+}
+function getCommandeDistributeurLignes(commande_id) {
+  return db.prepare(`SELECT * FROM stock_commandes_distributeur_lignes WHERE commande_id = ?`).all(commande_id);
+}
+function listCommandesDistributeur() {
+  return db.prepare(`SELECT * FROM stock_commandes_distributeur ORDER BY COALESCE(date_livraison_prevue, date_creation) DESC`).all();
+}
+function listCommandesDistributeurByStatut(statuts) {
+  const list = Array.isArray(statuts) ? statuts : [statuts];
+  const placeholders = list.map(() => '?').join(',');
+  return db.prepare(`SELECT * FROM stock_commandes_distributeur WHERE statut IN (${placeholders}) ORDER BY COALESCE(date_livraison_prevue, date_creation) ASC`).all(...list);
+}
+// Retourne, pour un SKU donné, TOUTES les lignes de commandes distributeur "à livrer".
+// Utilisé par le moteur pour calculer les sorties futures et augmenter les besoins.
+function getCommandesDistributeurALivrerForSku(sku) {
+  return db.prepare(`
+    SELECT l.*, c.numero_interne, c.distributeur_nom, c.date_livraison_prevue, c.statut
+      FROM stock_commandes_distributeur_lignes l
+      JOIN stock_commandes_distributeur c ON c.id = l.commande_id
+     WHERE l.sku = ? AND c.statut = 'a_livrer'
+  `).all(sku);
+}
+function updateCommandeDistributeurMeta(id, patch) {
+  const cur = getCommandeDistributeur(id);
+  if (!cur) throw new Error(`Commande distributeur introuvable: ${id}`);
+  const now = Date.now();
+  db.prepare(`
+    UPDATE stock_commandes_distributeur SET
+      distributeur_nom = ?,
+      numero_externe = ?,
+      date_reception_commande = ?,
+      date_livraison_prevue = ?,
+      date_livraison_reelle = ?,
+      statut = ?,
+      notes = ?,
+      updated_at = ?
+    WHERE id = ?
+  `).run(
+    patch.distributeur_nom ?? cur.distributeur_nom,
+    'numero_externe' in patch ? patch.numero_externe : cur.numero_externe,
+    'date_reception_commande' in patch ? patch.date_reception_commande : cur.date_reception_commande,
+    'date_livraison_prevue' in patch ? patch.date_livraison_prevue : cur.date_livraison_prevue,
+    'date_livraison_reelle' in patch ? patch.date_livraison_reelle : cur.date_livraison_reelle,
+    patch.statut ?? cur.statut,
+    'notes' in patch ? patch.notes : cur.notes,
+    now, id
+  );
+}
+function marquerCommandeDistributeurLivree(id, dateLivraison = null) {
+  const cur = getCommandeDistributeur(id);
+  if (!cur) throw new Error(`Commande distributeur introuvable: ${id}`);
+  const now = Date.now();
+  const tx = db.transaction(() => {
+    // Set qte_livree = qte_commandee pour toutes les lignes
+    db.prepare(`UPDATE stock_commandes_distributeur_lignes SET qte_livree = qte_commandee WHERE commande_id = ?`).run(id);
+    db.prepare(`UPDATE stock_commandes_distributeur SET statut = 'livree', date_livraison_reelle = ?, updated_at = ? WHERE id = ?`)
+      .run(dateLivraison || now, now, id);
+  });
+  tx();
+}
+
 // ------------------------ Alertes ------------------------
 function upsertAlertesEtatBulk(rows) {
   if (!Array.isArray(rows) || rows.length === 0) return 0;
@@ -894,6 +1036,11 @@ module.exports = {
   BDC_STATUTS, BDC_STATUTS_EN_COURS,
   createBdc, updateBdcMeta, replaceBdcLignes, getBdc, getBdcByNumero, listBdc, listBdcByStatut, listBdcEnCours,
   getBdcLignes, getEnCoursForSku, nextBdcNumero,
+  // commandes distributeur
+  CD_STATUTS, CD_STATUTS_A_LIVRER,
+  createCommandeDistributeur, getCommandeDistributeur, getCommandeDistributeurLignes,
+  listCommandesDistributeur, listCommandesDistributeurByStatut, getCommandesDistributeurALivrerForSku,
+  updateCommandeDistributeurMeta, marquerCommandeDistributeurLivree, nextCommandeDistributeurNumero,
   // alertes
   upsertAlertesEtatBulk, listAllAlertes, listAlertesByNiveau,
   // parametres globaux

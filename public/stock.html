@@ -245,10 +245,11 @@
       </div>
     </section>
     <section id="tab-bdc" hidden>
-      <nav class="subtab-nav" style="display:flex;gap:4px;margin-bottom:16px;background:var(--card-bg);border:1px solid var(--border);border-radius:10px;padding:6px;">
+      <nav class="subtab-nav" style="display:flex;gap:4px;margin-bottom:16px;background:var(--card-bg);border:1px solid var(--border);border-radius:10px;padding:6px;flex-wrap:wrap;">
         <button class="subtab-btn active" data-subtab="nouveau">Nouvelle commande</button>
         <button class="subtab-btn" data-subtab="en-cours">BDC en cours</button>
-        <button class="subtab-btn" data-subtab="historique">Historique</button>
+        <button class="subtab-btn" data-subtab="historique">Historique BDC</button>
+        <button class="subtab-btn" data-subtab="distributeurs" style="background:#fef3c7;color:#92400e;">Commandes distributeurs</button>
         <button class="subtab-btn" data-subtab="assignations">Assignations SKU</button>
       </nav>
 
@@ -299,7 +300,7 @@
               <button class="action-btn" id="btnUploadXlsx">Importer xlsx</button>
               <input type="file" id="importXlsxInput" accept=".xlsx" hidden>
               <button class="action-btn" id="btnPrefillFromEngine">Pré-remplir depuis propositions</button>
-              <button class="action-btn" id="btnUploadCsvFournisseur" style="background:#dbeafe;color:#1e40af;border-color:#93c5fd;">📄 Importer CSV fournisseur</button>
+              <button class="action-btn" id="btnUploadCsvDistributeur" style="background:#fef3c7;color:#92400e;border-color:#fcd34d;" title="Import CSV de commande QUE Bandit reçoit d'un distributeur B2B (ex: ELVETIS). La qté sortira du stock à la date de livraison → augmente les besoins.">📥 Importer commande distributeur (CSV)</button>
               <input type="file" id="importCsvFournInput" accept=".csv" hidden>
             </div>
           </div>
@@ -368,6 +369,25 @@
           <button class="reset-btn" id="btnReloadHisto">Actualiser</button>
         </div>
         <div id="bdcHistoContent" class="loading">Chargement…</div>
+      </section>
+
+      <!-- Commandes distributeurs (que Bandit REÇOIT de ses distributeurs B2B) -->
+      <section id="subtab-distributeurs" hidden>
+        <div style="background:#fef3c7;padding:12px 16px;border-radius:8px;margin-bottom:12px;font-size:13px;">
+          <strong>Commandes distributeurs</strong> — Commandes B2B que Bandit reçoit (ELVETIS, Zooplus, etc). Les qtés SORTENT du stock à la date de livraison prévue et augmentent automatiquement les besoins en réappro.
+        </div>
+        <div class="filters">
+          <input type="search" id="cdSearchInput" placeholder="Rechercher n° ou distributeur…">
+          <span class="filter-label">Statut</span>
+          <select id="cdStatutFilter">
+            <option value="a_livrer">À livrer (actives)</option>
+            <option value="a_livrer,livree,annulee">Toutes</option>
+            <option value="livree">Livrées</option>
+            <option value="annulee">Annulées</option>
+          </select>
+          <button class="reset-btn" id="btnReloadCd">Actualiser</button>
+        </div>
+        <div id="cdContent" class="loading">Chargement…</div>
       </section>
 
       <!-- Assignations SKU -->
@@ -825,13 +845,14 @@
         document.querySelectorAll('#tab-bdc .subtab-btn').forEach(x => x.classList.remove('active'));
         b.classList.add('active');
         const sub = b.dataset.subtab;
-        ['nouveau', 'en-cours', 'historique', 'assignations'].forEach(t => {
+        ['nouveau', 'en-cours', 'historique', 'distributeurs', 'assignations'].forEach(t => {
           const el = document.getElementById(`subtab-${t}`);
           if (el) el.hidden = (t !== sub);
         });
         if (sub === 'en-cours') loadBdcEnCours();
         if (sub === 'historique') loadBdcHistorique();
         if (sub === 'nouveau') loadFournisseurs();
+        if (sub === 'distributeurs') loadCommandesDistributeur();
         if (sub === 'assignations') loadAssignations();
       });
     });
@@ -1010,8 +1031,8 @@
       renderNewBdcLines();
     });
 
-    // Import CSV fournisseur (format ELVETIS et similaires)
-    document.getElementById('btnUploadCsvFournisseur').addEventListener('click', () => {
+    // Import CSV commande distributeur (format ELVETIS et similaires) — sortie de stock
+    document.getElementById('btnUploadCsvDistributeur').addEventListener('click', () => {
       document.getElementById('importCsvFournInput').click();
     });
     document.getElementById('importCsvFournInput').addEventListener('change', async e => {
@@ -1023,32 +1044,29 @@
       const data = await res.json();
       e.target.value = '';
       if (!res.ok) { alert(`Erreur parse CSV: ${data.error}`); return; }
-      openCsvFournisseurPreviewModal(data, file.name);
+      openCsvDistributeurPreviewModal(data, file.name);
     });
 
-    function openCsvFournisseurPreviewModal(data, fileName) {
+    function openCsvDistributeurPreviewModal(data, fileName) {
       const modal = document.getElementById('modal');
       const body = document.getElementById('modalBody');
-      document.getElementById('modalTitle').textContent = `Import CSV — ${fileName}`;
+      document.getElementById('modalTitle').textContent = `Import commande distributeur — ${fileName}`;
       modal.classList.add('active');
-      const rows = data.rows.map((r, i) => `
+      const rows = data.rows.map((r) => `
         <tr style="${r.in_referentiel ? '' : 'background:#fee2e2;'}">
           <td style="font-family:monospace;font-size:12px;">${escapeHtml(r.sku)}</td>
           <td style="font-size:12px;">${escapeHtml(r.nom_ref || r.nom_csv || '—')}</td>
           <td style="font-family:monospace;font-size:11px;color:var(--muted);">${escapeHtml(r.ean_csv || '')}</td>
           <td style="text-align:right;">${r.qte_commandee}</td>
-          <td style="text-align:right;">${r.pa_unitaire != null ? fmtEur(r.pa_unitaire) : '—'}</td>
-          <td style="text-align:right;">${r.pa_unitaire != null ? fmtEur(r.qte_commandee * r.pa_unitaire) : '—'}</td>
           <td>${r.in_referentiel ? '<span class="badge ok">OK</span>' : '<span class="badge rupture">Inconnu</span>'}</td>
         </tr>`).join('');
       const metrics = [
-        { l: 'Fournisseur détecté', v: data.fournisseur_nom || '<em>?</em>' },
-        { l: 'N° commande', v: data.numero_commande || '<em>—</em>' },
-        { l: 'Date envoi', v: data.date_envoi || '<em>—</em>' },
+        { l: 'Distributeur détecté', v: data.fournisseur_nom || '<em>?</em>' },
+        { l: 'N° cmd distributeur', v: data.numero_commande || '<em>—</em>' },
+        { l: 'Date réception cmd', v: data.date_envoi || '<em>—</em>' },
         { l: 'Lignes détectées', v: data.rows_count },
         { l: 'SKU reconnus', v: `${data.matched_count} / ${data.rows_count}` },
-        { l: 'Total qté', v: fmtInt(data.total_qte) },
-        { l: 'Total montant', v: data.total_montant ? fmtEur(data.total_montant) : '—' },
+        { l: 'Total qté à livrer', v: fmtInt(data.total_qte) },
       ];
       const warningsBlock = (data.warnings || []).length > 0
         ? `<div style="background:#fef3c7;padding:10px;border-radius:6px;margin-bottom:12px;font-size:12px;">
@@ -1056,60 +1074,65 @@
             <ul style="margin:6px 0 0 20px;padding:0;">${data.warnings.slice(0, 5).map(w => `<li>${escapeHtml(w)}</li>`).join('')}</ul>
             ${data.warnings.length > 5 ? `<div style="margin-top:4px;color:var(--muted);">+ ${data.warnings.length - 5} autres...</div>` : ''}
           </div>` : '';
+      const dtDefaut = new Date(Date.now() + 21 * 86400 * 1000).toISOString().slice(0, 10);
       body.innerHTML = `
+        <div style="background:#fef3c7;padding:12px;border-radius:6px;margin-bottom:14px;font-size:13px;">
+          <strong>ℹ️ Commande DISTRIBUTEUR</strong> — cette qté va <strong>SORTIR</strong> du stock à la date de livraison prévue, ce qui va <strong>AUGMENTER les besoins</strong> pour cette famille de SKU. Le moteur ajustera automatiquement les propositions de commande fournisseur en conséquence.
+        </div>
         <div class="metrics">${metrics.map(m => `<div class="metric"><div class="lbl">${m.l}</div><div class="val">${m.v}</div></div>`).join('')}</div>
         ${warningsBlock}
-        <h4>Lignes (${data.rows_count})</h4>
+        <h4>Lignes à livrer (${data.rows_count})</h4>
         <table class="forecast-table">
-          <thead><tr><th>SKU</th><th>Nom</th><th>EAN</th><th>Qté</th><th>PA</th><th>Total</th><th>Statut</th></tr></thead>
+          <thead><tr><th>SKU</th><th>Nom</th><th>EAN</th><th>Qté à livrer</th><th>Statut</th></tr></thead>
           <tbody>${rows}</tbody>
         </table>
         <div style="margin-top:16px;background:#f9fafb;padding:12px;border-radius:6px;border:1px solid var(--border);">
-          <div style="font-size:12px;font-weight:600;margin-bottom:8px;">Options de création du BDC</div>
+          <div style="font-size:12px;font-weight:600;margin-bottom:8px;">Options de création</div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-            <label>Nom fournisseur (éditable) <input type="text" id="csvFournNom" value="${escapeAttr(data.fournisseur_nom || '')}"></label>
-            <label>Date ETA (à réception) <input type="date" id="csvBdcEta"></label>
+            <label>Nom distributeur (éditable) <input type="text" id="csvDistribNom" value="${escapeAttr(data.fournisseur_nom || '')}"></label>
+            <label>Date livraison prévue <input type="date" id="csvDistribLivDate" value="${dtDefaut}"></label>
           </div>
-          <label style="margin-top:8px;display:block;">Notes <input type="text" id="csvBdcNotes" value="${escapeAttr(data.numero_commande ? `Import CSV — n° fournisseur : ${data.numero_commande}` : 'Import CSV fournisseur')}"></label>
+          <label style="margin-top:8px;display:block;">Notes <input type="text" id="csvDistribNotes" value="${escapeAttr(data.numero_commande ? `Import CSV — n° distributeur : ${data.numero_commande}` : 'Import CSV distributeur')}"></label>
         </div>
         <div style="display:flex;gap:8px;margin-top:16px;">
-          <button onclick='confirmCsvFournisseurImport(${JSON.stringify(data).replace(/'/g, "&#39;")})' style="background:#065f46;">Créer BDC (statut envoyé)</button>
+          <button onclick='confirmCsvDistributeurImport(${JSON.stringify(data).replace(/'/g, "&#39;")})' style="background:#b45309;">Créer commande distributeur (statut à livrer)</button>
           <button class="action-btn" onclick="document.getElementById('modal').classList.remove('active')">Annuler</button>
         </div>
-        <p style="margin-top:10px;font-size:11px;color:var(--muted);">Les SKU inconnus du référentiel (en rouge) seront rejetés à la création. Fournisseur créé automatiquement si nouveau nom.</p>`;
+        <p style="margin-top:10px;font-size:11px;color:var(--muted);">Les SKU inconnus du référentiel (en rouge) seront rejetés à la création. Consulte l'onglet "Commandes distributeurs" pour marquer la livraison plus tard.</p>`;
     }
 
-    async function confirmCsvFournisseurImport(parsedData) {
-      const fournNom = document.getElementById('csvFournNom').value.trim();
-      if (!fournNom) { alert('Nom fournisseur requis'); return; }
-      const etaVal = document.getElementById('csvBdcEta').value;
-      const notes = document.getElementById('csvBdcNotes').value.trim();
+    async function confirmCsvDistributeurImport(parsedData) {
+      const distribNom = document.getElementById('csvDistribNom').value.trim();
+      if (!distribNom) { alert('Nom distributeur requis'); return; }
+      const livDate = document.getElementById('csvDistribLivDate').value;
+      const notes = document.getElementById('csvDistribNotes').value.trim();
       const validLignes = parsedData.rows.filter(r => r.in_referentiel).map(r => ({
         sku: r.sku,
         qte_commandee: r.qte_commandee,
-        pa_unitaire: r.pa_unitaire,
+        pv_unitaire: null,
       }));
       if (validLignes.length === 0) { alert('Aucune ligne valide à créer.'); return; }
       const payload = {
-        fournisseur_nom: fournNom,
-        numero_commande: parsedData.numero_commande,
-        date_envoi: parsedData.date_envoi,
-        date_eta: etaVal || null,
+        distributeur_nom: distribNom,
+        numero_externe: parsedData.numero_commande,
+        date_reception_commande: parsedData.date_envoi,
+        date_livraison_prevue: livDate || null,
         notes,
         lignes: validLignes,
       };
-      const res = await fetch('/api/stock/bdc/create-from-csv', {
+      const res = await fetch('/api/stock/commandes-distributeur/create-from-csv', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
         body: JSON.stringify(payload),
       });
       const data = await res.json();
-      if (!res.ok) { alert(`Erreur création BDC: ${data.error}`); return; }
-      alert(`✓ BDC ${data.bdc_numero} créé avec ${data.lignes_creees} lignes${data.lignes_rejetees.length ? ` · ${data.lignes_rejetees.length} rejetés` : ''}${data.fournisseur_created ? '\n(fournisseur "' + data.fournisseur_nom + '" créé automatiquement)' : ''}`);
+      if (!res.ok) { alert(`Erreur création: ${data.error}`); return; }
+      alert(`✓ Commande distributeur ${data.numero_interne} créée avec ${data.lignes_creees} lignes${data.lignes_rejetees.length ? ` · ${data.lignes_rejetees.length} rejetés` : ''}`);
       document.getElementById('modal').classList.remove('active');
-      // Reload la liste BDC en cours
-      document.querySelector('#tab-bdc .subtab-btn[data-subtab="en-cours"]').click();
+      // Switch vers l'onglet "Commandes distributeurs"
+      const btn = document.querySelector('#tab-bdc .subtab-btn[data-subtab="distributeurs"]');
+      if (btn) btn.click();
     }
 
     // Import xlsx
@@ -1403,6 +1426,162 @@
 
     // Load fournisseurs on start
     loadFournisseurs();
+
+    // ============================================================
+    // BDC — Sub-tab "Commandes distributeurs" (que Bandit reçoit)
+    // ============================================================
+
+    const CD_STATUT_LABELS = { a_livrer: 'À livrer', livree: 'Livrée', annulee: 'Annulée' };
+    const CD_STATUT_CLS = { a_livrer: 'critique', livree: 'ok', annulee: 'dm' };
+
+    async function loadCommandesDistributeur() {
+      const container = document.getElementById('cdContent');
+      container.innerHTML = '<div class="loading">Chargement…</div>';
+      const statuts = document.getElementById('cdStatutFilter').value;
+      const res = await fetch(`/api/stock/commandes-distributeur?statuts=${statuts}`, { credentials: 'same-origin' });
+      const data = await res.json();
+      if (!res.ok) { container.innerHTML = `<div class="empty-state">Erreur : ${data.error}</div>`; return; }
+      renderCdTable(data.items || []);
+    }
+
+    function renderCdTable(items) {
+      const container = document.getElementById('cdContent');
+      const q = (document.getElementById('cdSearchInput').value || '').trim().toLowerCase();
+      const filtered = q
+        ? items.filter(c => (c.numero_interne || '').toLowerCase().includes(q) || (c.distributeur_nom || '').toLowerCase().includes(q) || (c.numero_externe || '').toLowerCase().includes(q))
+        : items;
+      if (filtered.length === 0) {
+        container.innerHTML = '<div class="empty-state">Aucune commande distributeur à afficher.</div>';
+        return;
+      }
+      const rows = filtered.map(c => `
+        <tr>
+          <td><strong>${escapeHtml(c.numero_interne)}</strong>${c.numero_externe ? `<div style="font-size:11px;color:var(--muted);">${escapeHtml(c.numero_externe)}</div>` : ''}</td>
+          <td>${escapeHtml(c.distributeur_nom)}</td>
+          <td>${fmtDate(c.date_reception_commande ? new Date(c.date_reception_commande).toISOString() : null)}</td>
+          <td>${fmtDate(c.date_livraison_prevue ? new Date(c.date_livraison_prevue).toISOString() : null)}</td>
+          <td>${fmtDate(c.date_livraison_reelle ? new Date(c.date_livraison_reelle).toISOString() : null)}</td>
+          <td><span class="badge ${CD_STATUT_CLS[c.statut] || 'dm'}">${CD_STATUT_LABELS[c.statut] || c.statut}</span></td>
+          <td style="text-align:right;">${c.nb_lignes}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;">${c.total_qte_commandee}${c.total_qte_livree > 0 && c.total_qte_livree < c.total_qte_commandee ? ` <span style="color:var(--muted);font-size:11px;">(${c.total_qte_livree} livrés)</span>` : ''}</td>
+          <td>
+            <button class="action-btn" onclick="openCdDetail(${c.id})">Voir</button>
+            ${c.statut === 'a_livrer' ? `<button class="action-btn" style="background:var(--ok-bg);color:var(--ok);border-color:var(--ok);" onclick="marquerCdLivree(${c.id})">✓ Livrée</button>` : ''}
+            ${c.statut === 'a_livrer' ? `<button class="action-btn" style="color:var(--rupture);" onclick="annulerCd(${c.id})">Annuler</button>` : ''}
+          </td>
+        </tr>`).join('');
+      container.innerHTML = `
+        <div class="group">
+          <table>
+            <thead>
+              <tr>
+                <th>N° interne</th>
+                <th>Distributeur</th>
+                <th>Réception cmd</th>
+                <th>Livraison prévue</th>
+                <th>Livraison réelle</th>
+                <th>Statut</th>
+                <th style="text-align:right;">Lignes</th>
+                <th style="text-align:right;">Qté</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>`;
+    }
+
+    document.getElementById('cdSearchInput').addEventListener('input', loadCommandesDistributeur);
+    document.getElementById('cdStatutFilter').addEventListener('change', loadCommandesDistributeur);
+    document.getElementById('btnReloadCd').addEventListener('click', loadCommandesDistributeur);
+
+    async function openCdDetail(id) {
+      const modal = document.getElementById('modal');
+      const body = document.getElementById('modalBody');
+      document.getElementById('modalTitle').textContent = `Commande distributeur #${id}`;
+      body.innerHTML = '<div class="loading">Chargement…</div>';
+      modal.classList.add('active');
+      const res = await fetch(`/api/stock/commandes-distributeur/${id}`, { credentials: 'same-origin' });
+      const c = await res.json();
+      if (!res.ok) { body.innerHTML = `<div class="empty-state">Erreur : ${c.error}</div>`; return; }
+      document.getElementById('modalTitle').textContent = `${c.numero_interne} — ${c.distributeur_nom}`;
+      const metrics = [
+        { l: 'Statut', v: `<span class="badge ${CD_STATUT_CLS[c.statut] || 'dm'}">${CD_STATUT_LABELS[c.statut] || c.statut}</span>` },
+        { l: 'N° externe', v: c.numero_externe || '—' },
+        { l: 'Créée', v: fmtDate(c.date_creation ? new Date(c.date_creation).toISOString() : null) },
+        { l: 'Réception cmd', v: fmtDate(c.date_reception_commande ? new Date(c.date_reception_commande).toISOString() : null) },
+        { l: 'Livraison prévue', v: fmtDate(c.date_livraison_prevue ? new Date(c.date_livraison_prevue).toISOString() : null) },
+        { l: 'Livraison réelle', v: fmtDate(c.date_livraison_reelle ? new Date(c.date_livraison_reelle).toISOString() : null) },
+        { l: 'Lignes / Qté', v: `${c.nb_lignes} · ${c.total_qte_commandee} u` },
+      ];
+      const rows = c.lignes.map(l => `
+        <tr>
+          <td style="font-family:monospace;font-size:11px;">${escapeHtml(l.sku)}</td>
+          <td>${escapeHtml(l.nom_court || '—')}</td>
+          <td style="font-family:monospace;font-size:11px;color:var(--muted);">${escapeHtml(l.ean_13 || '')}</td>
+          <td style="text-align:right;">${l.qte_commandee}</td>
+          <td style="text-align:right;">${l.qte_livree || 0}</td>
+        </tr>`).join('');
+      body.innerHTML = `
+        <div class="metrics">${metrics.map(m => `<div class="metric"><div class="lbl">${m.l}</div><div class="val">${m.v}</div></div>`).join('')}</div>
+        ${c.notes ? `<div style="margin-bottom:12px;background:#fef3c7;padding:10px;border-radius:6px;font-size:13px;">📝 ${escapeHtml(c.notes)}</div>` : ''}
+        <h4>Lignes</h4>
+        <table class="forecast-table">
+          <thead><tr><th>SKU</th><th>Nom</th><th>EAN</th><th>Commandé</th><th>Livré</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+        <div style="margin-top:16px;background:#f9fafb;padding:12px;border-radius:6px;border:1px solid var(--border);">
+          <div style="font-size:12px;font-weight:600;margin-bottom:8px;">Modifier</div>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+            <label>Date livraison prévue <input type="date" id="cdEditLivDate" value="${c.date_livraison_prevue ? new Date(c.date_livraison_prevue).toISOString().slice(0,10) : ''}"></label>
+            <label>Statut <select id="cdEditStatut">
+              <option value="a_livrer"${c.statut==='a_livrer'?' selected':''}>À livrer</option>
+              <option value="livree"${c.statut==='livree'?' selected':''}>Livrée</option>
+              <option value="annulee"${c.statut==='annulee'?' selected':''}>Annulée</option>
+            </select></label>
+          </div>
+          <label style="margin-top:8px;display:block;">Notes <input type="text" id="cdEditNotes" value="${escapeAttr(c.notes || '')}"></label>
+          <div style="display:flex;gap:8px;margin-top:12px;">
+            <button onclick="saveCdEdit(${c.id})">Enregistrer</button>
+            ${c.statut === 'a_livrer' ? `<button class="action-btn" style="background:var(--ok-bg);color:var(--ok);" onclick="marquerCdLivree(${c.id})">✓ Marquer livrée (aujourd'hui)</button>` : ''}
+          </div>
+        </div>`;
+    }
+
+    async function saveCdEdit(id) {
+      const payload = {
+        date_livraison_prevue: document.getElementById('cdEditLivDate').value || null,
+        statut: document.getElementById('cdEditStatut').value,
+        notes: document.getElementById('cdEditNotes').value.trim() || null,
+      };
+      const res = await fetch(`/api/stock/commandes-distributeur/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) { alert(`Erreur: ${data.error}`); return; }
+      document.getElementById('modal').classList.remove('active');
+      loadCommandesDistributeur();
+    }
+
+    async function marquerCdLivree(id) {
+      if (!confirm('Marquer cette commande comme livrée aujourd\'hui ? (Les qté_livrée passeront à qté_commandée)')) return;
+      const res = await fetch(`/api/stock/commandes-distributeur/${id}/marquer-livree`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({}) });
+      const data = await res.json();
+      if (!res.ok) { alert(`Erreur: ${data.error}`); return; }
+      document.getElementById('modal').classList.remove('active');
+      loadCommandesDistributeur();
+    }
+
+    async function annulerCd(id) {
+      if (!confirm('Annuler cette commande distributeur ? (elle ne sera plus prise en compte par le moteur)')) return;
+      const res = await fetch(`/api/stock/commandes-distributeur/${id}/annuler`, { method: 'POST', credentials: 'same-origin' });
+      const data = await res.json();
+      if (!res.ok) { alert(`Erreur: ${data.error}`); return; }
+      loadCommandesDistributeur();
+    }
 
     // ============================================================
     // BDC — Sub-tab "Assignations SKU"

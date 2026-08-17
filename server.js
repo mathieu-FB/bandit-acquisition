@@ -6257,28 +6257,20 @@ app.post('/api/stock/bdc/parse-csv-fournisseur', stockUpload.single('csv'), (req
   }
 });
 
-// Étape 2 : confirm — crée le fournisseur (si nouveau) puis le BDC (statut envoye).
-// Body: { fournisseur_nom, numero_commande?, date_envoi?, date_eta?, notes?, lignes: [{sku, qte_commandee, pa_unitaire?}] }
-app.post('/api/stock/bdc/create-from-csv', express.json({ limit: '2mb' }), async (req, res) => {
+// Étape 2 : confirm — crée une COMMANDE DISTRIBUTEUR (statut a_livrer).
+// Une commande distributeur = commande QUE Bandit REÇOIT d'un distributeur B2B
+// (ex: ELVETIS). La qté SORT du stock à date_livraison_prevue → AUGMENTE les
+// besoins en stock (contraire d'un BDC fournisseur).
+// Body: { distributeur_nom, numero_externe?, date_reception_commande?, date_livraison_prevue?, notes?, lignes: [{sku, qte_commandee, pv_unitaire?}] }
+app.post('/api/stock/commandes-distributeur/create-from-csv', express.json({ limit: '2mb' }), async (req, res) => {
   if (!requireAdmin(req, res)) return;
   try {
     const body = req.body || {};
-    const fournisseurNom = body.fournisseur_nom ? String(body.fournisseur_nom).trim() : '';
-    if (!fournisseurNom) return res.status(400).json({ error: 'fournisseur_nom requis' });
+    const distributeurNom = body.distributeur_nom ? String(body.distributeur_nom).trim() : '';
+    if (!distributeurNom) return res.status(400).json({ error: 'distributeur_nom requis' });
     if (!Array.isArray(body.lignes) || body.lignes.length === 0) {
       return res.status(400).json({ error: 'Au moins une ligne requise' });
     }
-    // Trouve ou crée le fournisseur (matching nom insensible à la casse).
-    let fournisseur = stockDb.listFournisseurs().find(f => f.nom.toLowerCase() === fournisseurNom.toLowerCase());
-    if (!fournisseur) {
-      const id = stockDb.upsertFournisseur({
-        nom: fournisseurNom,
-        devise: body.devise || 'EUR',
-        incoterm: body.incoterm || 'EXW',
-      });
-      fournisseur = stockDb.getFournisseurById(id);
-    }
-    // Filtre : ne garder que les SKU du référentiel (les autres sont rejetés côté BDC)
     const lignesValides = [];
     const rejetes = [];
     for (const l of body.lignes) {
@@ -6291,36 +6283,133 @@ app.post('/api/stock/bdc/create-from-csv', express.json({ limit: '2mb' }), async
       lignesValides.push({
         sku,
         qte_commandee: qte,
-        qte_recue: 0,
-        pa_unitaire: l.pa_unitaire != null ? Number(l.pa_unitaire) : (ref.pa_vs != null ? ref.pa_vs : null),
-        devise: body.devise || fournisseur.devise || 'EUR',
+        qte_livree: 0,
+        pv_unitaire: l.pv_unitaire != null ? Number(l.pv_unitaire) : null,
+        devise: body.devise || 'EUR',
       });
     }
     if (lignesValides.length === 0) {
       return res.status(400).json({ error: 'Aucune ligne valide après filtrage', rejetes });
     }
-    // Crée le BDC en statut "envoye" (l'import CSV représente une commande DÉJÀ passée).
-    const created = stockDb.createBdc({
-      fournisseur_id: fournisseur.id,
-      statut: 'envoye',
-      date_envoi: body.date_envoi ? new Date(body.date_envoi).getTime() : Date.now(),
-      date_eta: body.date_eta ? new Date(body.date_eta).getTime() : null,
-      notes: body.notes || (body.numero_commande ? `Import CSV — n° fournisseur : ${body.numero_commande}` : 'Import CSV fournisseur'),
-      devise: body.devise || fournisseur.devise || 'EUR',
+    const created = stockDb.createCommandeDistributeur({
+      distributeur_nom: distributeurNom,
+      numero_externe: body.numero_externe || null,
+      date_reception_commande: body.date_reception_commande ? new Date(body.date_reception_commande).getTime() : Date.now(),
+      date_livraison_prevue: body.date_livraison_prevue ? new Date(body.date_livraison_prevue).getTime() : null,
+      statut: 'a_livrer',
+      notes: body.notes || (body.numero_externe ? `Import CSV — n° distributeur : ${body.numero_externe}` : 'Import CSV distributeur'),
       lignes: lignesValides,
     });
     res.json({
       ok: true,
-      bdc_id: created.id,
-      bdc_numero: created.numero,
-      fournisseur_id: fournisseur.id,
-      fournisseur_nom: fournisseur.nom,
-      fournisseur_created: !fournisseur.updated_at || fournisseur.updated_at > Date.now() - 5000,
+      commande_id: created.id,
+      numero_interne: created.numero_interne,
+      distributeur_nom: distributeurNom,
       lignes_creees: lignesValides.length,
       lignes_rejetees: rejetes,
     });
   } catch (err) {
-    console.error('[Stock] create BDC from CSV error:', err.message);
+    console.error('[Stock] create commande distributeur from CSV error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---- Commandes distributeur CRUD ----
+
+// Liste (filtres statut optionnels)
+app.get('/api/stock/commandes-distributeur', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const statuts = req.query.statuts ? String(req.query.statuts).split(',').map(s => s.trim()).filter(Boolean) : null;
+    const items = statuts ? stockDb.listCommandesDistributeurByStatut(statuts) : stockDb.listCommandesDistributeur();
+    const enriched = items.map(c => {
+      const lignes = stockDb.getCommandeDistributeurLignes(c.id);
+      return {
+        ...c,
+        nb_lignes: lignes.length,
+        total_qte_commandee: lignes.reduce((s, l) => s + (l.qte_commandee || 0), 0),
+        total_qte_livree: lignes.reduce((s, l) => s + (l.qte_livree || 0), 0),
+      };
+    });
+    res.json({ total: enriched.length, items: enriched });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Détail enrichi (avec lignes + info référentiel)
+app.get('/api/stock/commandes-distributeur/:id', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const cmd = stockDb.getCommandeDistributeur(Number(req.params.id));
+    if (!cmd) return res.status(404).json({ error: 'Commande introuvable' });
+    const lignes = stockDb.getCommandeDistributeurLignes(cmd.id).map(l => {
+      const ref = stockDb.getReferentielSku(l.sku);
+      return {
+        ...l,
+        nom_court: ref ? ref.nom_court : null,
+        ean_13: ref ? ref.ean_13 : null,
+        image_url: ref ? ref.image_url : null,
+      };
+    });
+    res.json({
+      ...cmd,
+      lignes,
+      nb_lignes: lignes.length,
+      total_qte_commandee: lignes.reduce((s, l) => s + (l.qte_commandee || 0), 0),
+      total_qte_livree: lignes.reduce((s, l) => s + (l.qte_livree || 0), 0),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Update meta (statut, dates, notes)
+app.put('/api/stock/commandes-distributeur/:id', express.json(), (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const id = Number(req.params.id);
+    const cur = stockDb.getCommandeDistributeur(id);
+    if (!cur) return res.status(404).json({ error: 'Commande introuvable' });
+    const body = req.body || {};
+    const patch = {};
+    if (body.distributeur_nom !== undefined) patch.distributeur_nom = String(body.distributeur_nom).trim();
+    if (body.numero_externe !== undefined) patch.numero_externe = body.numero_externe;
+    if (body.date_reception_commande !== undefined) patch.date_reception_commande = body.date_reception_commande ? new Date(body.date_reception_commande).getTime() : null;
+    if (body.date_livraison_prevue !== undefined) patch.date_livraison_prevue = body.date_livraison_prevue ? new Date(body.date_livraison_prevue).getTime() : null;
+    if (body.date_livraison_reelle !== undefined) patch.date_livraison_reelle = body.date_livraison_reelle ? new Date(body.date_livraison_reelle).getTime() : null;
+    if (body.statut !== undefined) {
+      if (!stockDb.CD_STATUTS.includes(body.statut)) return res.status(400).json({ error: `Statut invalide: ${body.statut}` });
+      patch.statut = body.statut;
+    }
+    if (body.notes !== undefined) patch.notes = body.notes;
+    stockDb.updateCommandeDistributeurMeta(id, patch);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Marquer comme livrée (statut -> livree, qte_livree = qte_commandee sur toutes les lignes)
+app.post('/api/stock/commandes-distributeur/:id/marquer-livree', express.json(), (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const id = Number(req.params.id);
+    const dateLiv = req.body && req.body.date_livraison_reelle ? new Date(req.body.date_livraison_reelle).getTime() : null;
+    stockDb.marquerCommandeDistributeurLivree(id, dateLiv);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Annuler
+app.post('/api/stock/commandes-distributeur/:id/annuler', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    stockDb.updateCommandeDistributeurMeta(Number(req.params.id), { statut: 'annulee' });
+    res.json({ ok: true });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
