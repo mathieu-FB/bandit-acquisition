@@ -6239,6 +6239,36 @@ app.post('/api/stock/bdc/preview-eta', express.json(), (req, res) => {
   }
 });
 
+// ---- Documents joints aux BDC : BL xlsx (global) + carton marks .doc (par ligne) ----
+const stockBdcDocs = require('./stock/bdc-documents');
+
+app.get('/api/stock/bdc/:id/bl-xlsx', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const { buffer, filename } = stockBdcDocs.generateBlXlsx(Number(req.params.id));
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(buffer);
+  } catch (err) {
+    console.error('[Stock] BL xlsx error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/stock/bdc/lignes/:id/carton-marks-doc', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const { html, filename } = stockBdcDocs.generateCartonMarksDoc(Number(req.params.id));
+    // Content-Type application/msword pour ouverture native dans Word/LibreOffice.
+    res.setHeader('Content-Type', 'application/msword');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(html);
+  } catch (err) {
+    console.error('[Stock] Carton marks error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Édition d'une ligne BDC — override date_eta ou qte non livrable par le fournisseur.
 // Body: { date_eta_ligne?: 'YYYY-MM-DD' | null, qte_annulee_fournisseur?: number }
 app.put('/api/stock/bdc/lignes/:id', express.json(), (req, res) => {

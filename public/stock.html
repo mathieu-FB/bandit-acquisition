@@ -1404,10 +1404,10 @@
               : (l.date_eta_ligne ? fmtDate(new Date(l.date_eta_ligne).toISOString()) : '<span style="color:var(--muted);">—</span>')
             }</td>
             <td style="text-align:right;">${l.pa_unitaire != null ? fmtEur(l.pa_unitaire) : '—'}</td>
-            <td>${editable
-              ? `<button class="action-btn" onclick="saveBdcLigneEdit(${l.id}, ${b.id})" style="padding:3px 8px;font-size:11px;">💾</button>`
-              : ''
-            }</td>
+            <td style="white-space:nowrap;">
+              ${editable ? `<button class="action-btn" onclick="saveBdcLigneEdit(${l.id}, ${b.id})" style="padding:3px 8px;font-size:11px;" title="Sauvegarder les overrides">💾</button>` : ''}
+              <button class="action-btn" onclick="downloadCartonMarks(${l.id})" style="padding:3px 8px;font-size:11px;background:#fef3c7;color:#92400e;border-color:#fcd34d;" title="Télécharger carton marks (Word)">📄</button>
+            </td>
           </tr>`;
       }).join('');
       body.innerHTML = `
@@ -1421,12 +1421,16 @@
         </table>
         <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;">
           <button class="action-btn" onclick="downloadBdcXlsx(${b.id})">Télécharger xlsx</button>
+          <button class="action-btn" onclick="downloadBdcBl(${b.id})" style="background:#dcfce7;color:#166534;border-color:#86efac;" title="Excel 2 colonnes : SKU + qté, sans en-tête">📋 BL xlsx</button>
           ${editable ? `<button class="action-btn" onclick="recomputeBdcEta(${b.id})" style="background:#dbeafe;color:#1e40af;border-color:#93c5fd;">🔄 Recalculer ETA</button>` : ''}
           ${['envoye','confirme','expedie'].includes(b.statut) ? `<button class="action-btn" onclick="openReceptionModal(${b.id})" style="background:var(--ok-bg);color:var(--ok);">Réceptionner</button>` : ''}
           ${['brouillon','envoye','confirme','expedie'].includes(b.statut) ? `<button class="action-btn" onclick="annulerBdc(${b.id})" style="color:var(--rupture);">Annuler ce BDC</button>` : ''}
           ${['brouillon','envoye','confirme','expedie'].includes(b.statut) ? `<button class="action-btn" onclick="changeStatut(${b.id})">Changer statut</button>` : ''}
         </div>`;
     }
+
+    function downloadBdcBl(id) { window.location.href = `/api/stock/bdc/${id}/bl-xlsx`; }
+    function downloadCartonMarks(ligneId) { window.location.href = `/api/stock/bdc/lignes/${ligneId}/carton-marks-doc`; }
 
     async function recomputeBdcEta(bdcId) {
       // Preview d'abord (sans apply) pour permettre confirmation avec le detail.
