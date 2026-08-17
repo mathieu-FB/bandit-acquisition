@@ -318,11 +318,12 @@ function computeNiveau({ ref, dateRuptureEstimee, today, leadTimeJours, couvertu
 // En-cours utiles = BDC lignes dont l'ETA arrive DANS la fenêtre.
 // ------------------------------------------------------------
 function computeProposition({ ref, famParam, monthlyForecast, stockActuel, enCoursLignes, commandesDistribLignes = [], today, leadTimeJours, couvertureViseeJours, niveau }) {
-  // Horizon de calcul de la QUANTITÉ à commander (voir docstring dans runForSku).
+  // Horizon = lead + couverture (approche classique de gestion de stock).
+  // Ne pas doubler la couverture, car sur lead long (90-120j) ça donne des
+  // fenêtres > 1 an qui incluent des pics saisonniers absurdes (le user
+  // ne commandera pas 1 an à l'avance).
   const isActionable = ['RUPTURE', 'CRITIQUE', 'URGENT', 'A_COMMANDER'].includes(niveau);
-  const horizonJours = isActionable
-    ? leadTimeJours + couvertureViseeJours * 2
-    : leadTimeJours + couvertureViseeJours;
+  const horizonJours = leadTimeJours + couvertureViseeJours;
   const endWindow = addDaysUTC(today, horizonJours);
   // Sum of daily demand between today and endWindow.
   let demandeFenetre = 0;
@@ -335,6 +336,15 @@ function computeProposition({ ref, famParam, monthlyForecast, stockActuel, enCou
     const day = addDaysUTC(today, i);
     const { year, month } = ymFromUTC(day);
     demandeFenetre += dailyDemandByYm[`${year}-${String(month).padStart(2, '0')}`] || 0;
+  }
+  // Demande sur UNIQUEMENT la couverture (sans lead) — utilisée comme
+  // plancher pour garantir un minimum de 1 cycle de couverture quand
+  // le niveau est actionable (évite qte = 0 pile à l'entrée en A_COMMANDER).
+  let demandeSurCouverture = 0;
+  for (let i = 0; i < couvertureViseeJours; i++) {
+    const day = addDaysUTC(today, i);
+    const { year, month } = ymFromUTC(day);
+    demandeSurCouverture += dailyDemandByYm[`${year}-${String(month).padStart(2, '0')}`] || 0;
   }
   // En-cours utiles — those with ETA ≤ endWindow (BDC fournisseur qui arriveront à temps).
   let enCoursUtiles = 0;
@@ -352,11 +362,19 @@ function computeProposition({ ref, famParam, monthlyForecast, stockActuel, enCou
     if (!line.date_livraison_prevue) continue;
     const dt = new Date(line.date_livraison_prevue);
     const livDay = Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate());
-    if (livDay > endWindow) continue; // livraison au-delà de la fenêtre : pas d'impact ici
+    if (livDay > endWindow) continue;
     sortiesDistribFenetre += Math.max(0, (line.qte_commandee || 0) - (line.qte_livree || 0));
   }
   const demandeFenetreTotale = demandeFenetre + sortiesDistribFenetre;
-  const brut = Math.max(0, demandeFenetreTotale - stockActuel - enCoursUtiles);
+  let brut = Math.max(0, demandeFenetreTotale - stockActuel - enCoursUtiles);
+  // Plancher pour les niveaux actionable : commander au moins 1 cycle de
+  // couverture, pour éviter qte = 0 quand stock actuel est pile suffisant
+  // pour la fenêtre lead+couverture.
+  let brutPlancher = null;
+  if (isActionable && brut < demandeSurCouverture) {
+    brutPlancher = Math.ceil(demandeSurCouverture);
+    brut = brutPlancher;
+  }
   // MOQ / PCB — cascade : override SKU (si > 1) → param famille → défaut 1.
   // Un SKU avec moq/colisage à 1 (défaut du schéma) est considéré comme "pas
   // d'override", on retombe alors sur la valeur famille si définie.
@@ -373,11 +391,13 @@ function computeProposition({ ref, famParam, monthlyForecast, stockActuel, enCou
   const montant = pa != null ? Number((qte * pa).toFixed(2)) : null;
   return {
     demandeFenetre: Number(demandeFenetre.toFixed(2)),
+    demandeSurCouverture: Number(demandeSurCouverture.toFixed(2)),
     sortiesDistribFenetre: Number(sortiesDistribFenetre.toFixed(2)),
     demandeFenetreTotale: Number(demandeFenetreTotale.toFixed(2)),
     stockActuel,
     enCoursUtiles,
     brut: Number(brut.toFixed(2)),
+    brutPlancher, // non-null si le plancher a forcé le brut
     colisage, moq,
     colisageSource, moqSource,
     qte,
