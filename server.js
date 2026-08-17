@@ -6060,16 +6060,10 @@ app.get('/api/stock/bdc', (req, res) => {
   }
 });
 
-app.get('/api/stock/bdc/:id', (req, res) => {
-  if (!requireAdmin(req, res)) return;
-  try {
-    const bdc = stockDb.getBdc(Number(req.params.id));
-    if (!bdc) return res.status(404).json({ error: 'BDC introuvable' });
-    res.json(enrichBdc(bdc));
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+// IMPORTANT: la route GET /api/stock/bdc/:id (à paramètre id) doit être
+// déclarée APRÈS toutes les routes GET /api/stock/bdc/<segment-statique>
+// (template-xlsx, propositions-xlsx) sinon Express matche :id = "template-xlsx"
+// et renvoie 404 BDC. Cette route est déplacée plus bas dans le fichier.
 
 // Création — { fournisseur_id, statut?, date_eta?, notes?, lignes: [{sku, qte_commandee, pa_unitaire?, devise?}] }
 app.post('/api/stock/bdc', express.json(), (req, res) => {
@@ -6398,6 +6392,19 @@ app.get('/api/stock/bdc/propositions-xlsx', (req, res) => {
     res.send(buffer);
   } catch (err) {
     console.error('[Stock] propositions xlsx error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Route déplacée depuis plus haut : DOIT être après les routes statiques
+// (template-xlsx, propositions-xlsx) pour ne pas capturer leurs segments comme :id.
+app.get('/api/stock/bdc/:id', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const bdc = stockDb.getBdc(Number(req.params.id));
+    if (!bdc) return res.status(404).json({ error: 'BDC introuvable' });
+    res.json(enrichBdc(bdc));
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
