@@ -6176,6 +6176,69 @@ app.put('/api/stock/bdc/:id/lignes', express.json(), (req, res) => {
   }
 });
 
+// Calcule une ETA suggérée pour un BDC = date_reference + max(lead_time_jours) des SKU.
+// Deux modes d'appel :
+// - Body { lignes: [{sku, ...}], date_reference?: ISO }  → preview côté "Nouvelle commande"
+// - Body { bdc_id: N, apply?: 1 }                        → preview + option d'appliquer sur un BDC existant
+app.post('/api/stock/bdc/preview-eta', express.json(), (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const body = req.body || {};
+    let lignes = [];
+    let dateReference = body.date_reference ? new Date(body.date_reference).getTime() : Date.now();
+    let bdc = null;
+
+    if (body.bdc_id) {
+      bdc = stockDb.getBdc(Number(body.bdc_id));
+      if (!bdc) return res.status(404).json({ error: 'BDC introuvable' });
+      lignes = stockDb.getBdcLignes(bdc.id);
+      // Priorité pour date_reference : date_envoi si envoyée, sinon date_creation
+      dateReference = bdc.date_envoi || bdc.date_creation || Date.now();
+    } else if (Array.isArray(body.lignes)) {
+      lignes = body.lignes;
+    } else {
+      return res.status(400).json({ error: 'Body requis : { bdc_id } ou { lignes: [...] }' });
+    }
+
+    if (lignes.length === 0) {
+      return res.json({ suggested_eta: null, max_lead_time_days: null, per_sku: [], reason: 'aucune ligne' });
+    }
+
+    const perSku = [];
+    let maxLead = 0;
+    for (const l of lignes) {
+      const sku = String(l.sku || '').trim();
+      if (!sku) continue;
+      const ref = stockDb.getReferentielSku(sku);
+      if (!ref) { perSku.push({ sku, lead_time_jours: null, source: 'sku_inconnu' }); continue; }
+      // Priorité : ref.lead_time_jours (matrice) — sinon défaut moteur 60j.
+      const lead = ref.lead_time_jours != null ? ref.lead_time_jours : 60;
+      perSku.push({ sku, lead_time_jours: lead, source: ref.lead_time_jours != null ? 'matrice' : 'defaut_60j' });
+      if (lead > maxLead) maxLead = lead;
+    }
+
+    const suggestedEtaMs = dateReference + maxLead * 86400 * 1000;
+    let applied = false;
+    if (bdc && body.apply === 1) {
+      stockDb.updateBdcMeta(bdc.id, { date_eta: suggestedEtaMs });
+      applied = true;
+    }
+
+    res.json({
+      suggested_eta: new Date(suggestedEtaMs).toISOString(),
+      suggested_eta_ms: suggestedEtaMs,
+      date_reference: new Date(dateReference).toISOString(),
+      date_reference_source: bdc ? (bdc.date_envoi ? 'bdc.date_envoi' : 'bdc.date_creation') : (body.date_reference ? 'body.date_reference' : 'now'),
+      max_lead_time_days: maxLead,
+      per_sku: perSku,
+      applied,
+    });
+  } catch (err) {
+    console.error('[Stock] preview-eta error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Édition d'une ligne BDC — override date_eta ou qte non livrable par le fournisseur.
 // Body: { date_eta_ligne?: 'YYYY-MM-DD' | null, qte_annulee_fournisseur?: number }
 app.put('/api/stock/bdc/lignes/:id', express.json(), (req, res) => {

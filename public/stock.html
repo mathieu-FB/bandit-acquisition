@@ -329,7 +329,7 @@
             </table>
             <button class="action-btn" id="btnAddLine" style="margin-top:10px;">+ Ajouter une ligne</button>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px;">
-              <label>Date ETA <input type="date" id="newBdcEta"></label>
+              <label>Date ETA <input type="date" id="newBdcEta"><span id="newBdcEtaHint" style="display:block;font-size:11px;color:var(--muted);margin-top:2px;">Calculée auto : aujourd'hui + max(lead time SKU)</span></label>
               <label>Notes <input type="text" id="newBdcNotes" placeholder="Notes libres sur cette commande"></label>
             </div>
             <div style="display:flex;gap:8px;margin-top:16px;">
@@ -1012,6 +1012,40 @@
       const fourn = currentFournisseur();
       const dev = fourn ? fourn.devise : 'EUR';
       document.getElementById('newBdcTotalMontant').textContent = new Intl.NumberFormat('fr-FR', { style: 'currency', currency: dev, maximumFractionDigits: 0 }).format(total);
+      // Recalcul ETA suggérée dès qu'on a au moins 1 SKU valide.
+      // Flag userEtaEdited : si le user a modifié manuellement, on n'écrase pas.
+      recomputeEtaFromLines();
+    }
+
+    let NEW_BDC_USER_EDITED_ETA = false;
+    document.getElementById('newBdcEta').addEventListener('change', () => { NEW_BDC_USER_EDITED_ETA = true; });
+
+    async function recomputeEtaFromLines() {
+      const validLignes = NEW_BDC_LINES.filter(l => l.sku && l.qte_commandee > 0);
+      const hint = document.getElementById('newBdcEtaHint');
+      const etaInput = document.getElementById('newBdcEta');
+      if (validLignes.length === 0) {
+        hint.textContent = 'Ajoute des lignes pour calculer l\'ETA suggérée';
+        return;
+      }
+      try {
+        const res = await fetch('/api/stock/bdc/preview-eta', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({ lignes: validLignes.map(l => ({ sku: l.sku, qte_commandee: l.qte_commandee })) }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.suggested_eta) {
+          hint.textContent = data.error || 'ETA non calculable';
+          return;
+        }
+        const iso = data.suggested_eta.slice(0, 10);
+        hint.innerHTML = `<span style="color:var(--acmd);">ETA suggérée : <strong>${fmtDate(data.suggested_eta)}</strong></span> (aujourd'hui + max lead ${data.max_lead_time_days} j)`;
+        if (!NEW_BDC_USER_EDITED_ETA) {
+          etaInput.value = iso;
+        }
+      } catch (err) { /* silent */ }
     }
 
     document.getElementById('btnAddLine').addEventListener('click', () => addLine());
@@ -1216,6 +1250,7 @@
       showMsg(`✓ BDC créé: ${data.numero}`, 'success');
       // Reset form
       NEW_BDC_LINES = [];
+      NEW_BDC_USER_EDITED_ETA = false;
       renderNewBdcLines();
       document.getElementById('newBdcEta').value = '';
       document.getElementById('newBdcNotes').value = '';
@@ -1370,10 +1405,37 @@
         </table>
         <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;">
           <button class="action-btn" onclick="downloadBdcXlsx(${b.id})">Télécharger xlsx</button>
+          ${editable ? `<button class="action-btn" onclick="recomputeBdcEta(${b.id})" style="background:#dbeafe;color:#1e40af;border-color:#93c5fd;">🔄 Recalculer ETA</button>` : ''}
           ${['envoye','confirme','expedie'].includes(b.statut) ? `<button class="action-btn" onclick="openReceptionModal(${b.id})" style="background:var(--ok-bg);color:var(--ok);">Réceptionner</button>` : ''}
           ${['brouillon','envoye','confirme','expedie'].includes(b.statut) ? `<button class="action-btn" onclick="annulerBdc(${b.id})" style="color:var(--rupture);">Annuler ce BDC</button>` : ''}
           ${['brouillon','envoye','confirme','expedie'].includes(b.statut) ? `<button class="action-btn" onclick="changeStatut(${b.id})">Changer statut</button>` : ''}
         </div>`;
+    }
+
+    async function recomputeBdcEta(bdcId) {
+      // Preview d'abord (sans apply) pour permettre confirmation avec le detail.
+      let res = await fetch('/api/stock/bdc/preview-eta', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ bdc_id: bdcId }),
+      });
+      let data = await res.json();
+      if (!res.ok) { alert(`Erreur preview ETA: ${data.error}`); return; }
+      if (!data.suggested_eta) { alert('Impossible de calculer une ETA (lignes vides ?).'); return; }
+      const suggeree = fmtDate(data.suggested_eta);
+      const dateRefStr = fmtDate(data.date_reference);
+      const msg = `ETA suggérée : ${suggeree}\n\n= ${dateRefStr} (${data.date_reference_source}) + ${data.max_lead_time_days} j (max lead time)\n\nAppliquer sur ce BDC ?`;
+      if (!confirm(msg)) return;
+      res = await fetch('/api/stock/bdc/preview-eta', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ bdc_id: bdcId, apply: 1 }),
+      });
+      data = await res.json();
+      if (!res.ok) { alert(`Erreur: ${data.error}`); return; }
+      openBdcDetail(bdcId);
     }
 
     async function saveBdcLigneEdit(ligneId, bdcId) {
