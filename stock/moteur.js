@@ -484,6 +484,21 @@ function runForSku({ sku, ref, previsions, saisonaliteByFamille, famillesParam, 
   const complet = paKnown && shopifyKnown;
 
   const forecast = forecastPerSku({ sku, ref, previsions: skuPrev, saisonaliteByFamille, famillesParam, today });
+  // Enrichit chaque row du forecast avec la sortie distributeur du même mois
+  // (utile pour visualiser dans la table "Prévision mensuelle" du modal SKU).
+  const distribByYm = {};
+  for (const line of commandesDistribLignes) {
+    if (!line.date_livraison_prevue) continue;
+    const dt = new Date(line.date_livraison_prevue);
+    const ym = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}`;
+    const qty = Math.max(0, (line.qte_commandee || 0) - (line.qte_livree || 0));
+    if (qty <= 0) continue;
+    distribByYm[ym] = (distribByYm[ym] || 0) + qty;
+  }
+  forecast.rows.forEach(r => {
+    r.distributeur = distribByYm[r.ym] || 0;
+    r.demande_totale = Number((r.demande + r.distributeur).toFixed(2));
+  });
   const projection = projectStockDaily({
     stockInitial: stockActuel,
     monthlyForecast: forecast.rows,

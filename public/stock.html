@@ -787,21 +787,37 @@
         { l: 'Sécurité', v: d.coeffSecurite },
         { l: 'Proposition', v: `${fmtInt(p.qte)} u · ${fmtEur(p.montant)}` },
       ];
-      const forecastRows = (d.monthlyForecast || []).map(m => `
+      const hasDistrib = (d.monthlyForecast || []).some(m => (m.distributeur || 0) > 0);
+      const forecastRows = (d.monthlyForecast || []).map(m => {
+        const distrib = m.distributeur || 0;
+        const total = m.demande_totale != null ? m.demande_totale : m.demande;
+        return `
         <tr>
           <td>${m.ym}</td>
           <td>${fmtInt(m.base_n_1)}</td>
           <td>${m.coeff_sais.toFixed(2)}</td>
           <td>${m.coeff_tend.toFixed(2)}</td>
           <td>${m.coeff_sec.toFixed(2)}</td>
-          <td><strong>${fmtInt(m.demande)}</strong></td>
-        </tr>`).join('');
+          <td>${fmtInt(m.demande)}</td>
+          ${hasDistrib ? `<td style="color:${distrib > 0 ? '#b45309' : 'var(--muted)'};">${distrib > 0 ? '+' + fmtInt(distrib) : '—'}</td>` : ''}
+          ${hasDistrib ? `<td><strong>${fmtInt(total)}</strong></td>` : `<td><strong>${fmtInt(m.demande)}</strong></td>`}
+        </tr>`;
+      }).join('');
+      const totForecast = (d.monthlyForecast || []).reduce((s, m) => s + (m.demande || 0), 0);
+      const totDistrib = (d.monthlyForecast || []).reduce((s, m) => s + (m.distributeur || 0), 0);
+      const totFooter = hasDistrib
+        ? `<tr style="border-top:2px solid var(--border);font-weight:600;">
+             <td colspan="5" style="text-align:right;padding:8px;">Total 12 mois</td>
+             <td>${fmtInt(totForecast)}</td>
+             <td style="color:#b45309;">+${fmtInt(totDistrib)}</td>
+             <td><strong>${fmtInt(totForecast + totDistrib)}</strong></td>
+           </tr>` : '';
       return `
         <div class="metrics">${metrics.map(m => `<div class="metric"><div class="lbl">${m.l}</div><div class="val">${m.v}</div></div>`).join('')}</div>
-        <h4>Prévision mensuelle (12 mois)</h4>
+        <h4>Prévision mensuelle (12 mois)${hasDistrib ? ' — <span style="color:#b45309;font-size:12px;font-weight:normal;">colonne "Distrib." = sorties commandes distributeurs B2B</span>' : ''}</h4>
         <table class="forecast-table">
-          <thead><tr><th>Mois</th><th>Base N-1</th><th>Sais</th><th>Tend</th><th>Séc</th><th>Demande</th></tr></thead>
-          <tbody>${forecastRows}</tbody>
+          <thead><tr><th>Mois</th><th>Base N-1</th><th>Sais</th><th>Tend</th><th>Séc</th><th>Forecast</th>${hasDistrib ? '<th style="color:#b45309;">Distrib.</th>' : ''}<th>Total</th></tr></thead>
+          <tbody>${forecastRows}${totFooter}</tbody>
         </table>
         ${p.qte > 0 ? `
           <h4>Détail proposition</h4>
