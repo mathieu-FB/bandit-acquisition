@@ -210,6 +210,26 @@ function deriveTendanceCoeff(previsions, today, opts = {}) {
 // Per-SKU monthly forecast — next 12 months starting from today.
 // Returns [{ ym, year, month, base_n_1, coeff_sais, coeff_tend, coeff_sec, demande }]
 // ------------------------------------------------------------
+function computeRecentMonthlyAverage(previsions, today, nbMois = 6) {
+  // Moyenne des ventes des `nbMois` derniers mois complets (mois courant exclu).
+  // Utilisée comme fallback pour base_N-1 = 0 (SKU récents / relancés).
+  const d = new Date(today);
+  const y0 = d.getUTCFullYear();
+  const m0 = d.getUTCMonth() + 1;
+  let sum = 0, count = 0;
+  for (let i = 1; i <= nbMois; i++) {
+    let y = y0, m = m0 - i;
+    while (m <= 0) { m += 12; y -= 1; }
+    const ym = `${y}-${String(m).padStart(2, '0')}`;
+    const v = previsions[ym];
+    if (v != null && v.qty > 0) {
+      sum += v.qty;
+      count++;
+    }
+  }
+  return count > 0 ? sum / count : 0;
+}
+
 function forecastPerSku({ sku, ref, previsions, saisonaliteByFamille, famillesParam, today }) {
   const familleKey = `${ref.famille}|${ref.animal}`;
   const saisonalite = saisonaliteByFamille[familleKey] || {};
@@ -217,6 +237,9 @@ function forecastPerSku({ sku, ref, previsions, saisonaliteByFamille, famillesPa
   const coeffSec = famParam.coeff_securite != null ? famParam.coeff_securite : DEFAULTS.coeffSecurite;
   const overrideSais = famParam.coeff_saisonnalite || null;
   const tendance = deriveTendanceCoeff(previsions, today);
+  // Fallback pour base_N-1 = 0 : moyenne des ventes récentes (6 derniers mois).
+  // Utile pour les SKU nouveaux / relancés qui n'ont pas d'historique N-1.
+  const recentAvg = computeRecentMonthlyAverage(previsions, today, 6);
   const rows = [];
   const d = new Date(today);
   for (let i = 0; i < 12; i++) {
@@ -224,20 +247,38 @@ function forecastPerSku({ sku, ref, previsions, saisonaliteByFamille, famillesPa
     const y = cursor.getUTCFullYear();
     const m = cursor.getUTCMonth() + 1;
     const ymRef = `${y - 1}-${String(m).padStart(2, '0')}`;
-    const baseN1 = previsions[ymRef] ? previsions[ymRef].qty : 0;
+    const baseN1Raw = previsions[ymRef] ? previsions[ymRef].qty : 0;
+    // Si pas d'historique N-1 mais des ventes récentes, on utilise la moyenne
+    // récente comme base. Le coeff_tendance est mis à 1.0 dans ce cas car
+    // il n'est pas calculable (pas de N-1 pour comparer).
+    let baseN1, baseSource, coeffTend;
+    if (baseN1Raw > 0) {
+      baseN1 = baseN1Raw;
+      baseSource = 'n_1';
+      coeffTend = tendance.coeff;
+    } else if (recentAvg > 0) {
+      baseN1 = recentAvg;
+      baseSource = 'moyenne_recente_6m';
+      coeffTend = 1.0; // pas de comparaison N-1 possible
+    } else {
+      baseN1 = 0;
+      baseSource = 'zero';
+      coeffTend = tendance.coeff;
+    }
     const coeffSais = (overrideSais && overrideSais[m] != null) ? overrideSais[m] : (saisonalite[m] != null ? saisonalite[m] : 1.0);
-    const demande = baseN1 * coeffSais * tendance.coeff * coeffSec;
+    const demande = baseN1 * coeffSais * coeffTend * coeffSec;
     rows.push({
       ym: `${y}-${String(m).padStart(2, '0')}`,
       year: y, month: m,
       base_n_1: baseN1,
+      base_source: baseSource,
       coeff_sais: coeffSais,
-      coeff_tend: tendance.coeff,
+      coeff_tend: coeffTend,
       coeff_sec: coeffSec,
       demande: Math.max(0, Number(demande.toFixed(2))),
     });
   }
-  return { rows, tendance, coeffSec };
+  return { rows, tendance, coeffSec, recentAvg: Number(recentAvg.toFixed(2)) };
 }
 
 // ------------------------------------------------------------
