@@ -206,6 +206,48 @@ CREATE TABLE IF NOT EXISTS stock_sync_log (
 );
 CREATE INDEX IF NOT EXISTS idx_stock_sync_log_started ON stock_sync_log(started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_stock_sync_log_type ON stock_sync_log(type, started_at DESC);
+
+-- Cache persistant des commandes Shopify (source de vérité pour les prévisions).
+-- Peuplé par sync incrémental (updated_at_min = watermark - 7j) et full sync (créé_at range).
+-- excluded=1 → la commande ne compte pas dans les moyennes/tendances du forecast (ex: implantation B2B).
+-- excluded_manual: null = pas d'override, 1 = force exclusion, 0 = force inclusion malgré tag.
+CREATE TABLE IF NOT EXISTS stock_shopify_orders (
+  shopify_order_id TEXT PRIMARY KEY,
+  order_name TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER,
+  source_name TEXT,
+  financial_status TEXT,
+  tags TEXT,
+  excluded INTEGER DEFAULT 0,
+  exclusion_motif TEXT,
+  exclusion_source TEXT,
+  excluded_manual INTEGER,
+  synced_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_stock_orders_created ON stock_shopify_orders(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_stock_orders_excluded ON stock_shopify_orders(excluded);
+
+CREATE TABLE IF NOT EXISTS stock_shopify_order_lines (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  shopify_order_id TEXT NOT NULL,
+  line_item_id TEXT NOT NULL,
+  sku TEXT NOT NULL,
+  gross_qty INTEGER DEFAULT 0,
+  refunded_qty INTEGER DEFAULT 0,
+  UNIQUE(shopify_order_id, line_item_id),
+  FOREIGN KEY (shopify_order_id) REFERENCES stock_shopify_orders(shopify_order_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_stock_order_lines_sku ON stock_shopify_order_lines(sku);
+CREATE INDEX IF NOT EXISTS idx_stock_order_lines_order ON stock_shopify_order_lines(shopify_order_id);
+
+-- Watermark par type de sync pour permettre le mode incrémental (fetch depuis last_incremental_at - safety window).
+CREATE TABLE IF NOT EXISTS stock_sync_watermark (
+  sync_type TEXT PRIMARY KEY,
+  last_incremental_at INTEGER,
+  last_full_sync_at INTEGER,
+  updated_at INTEGER
+);
 `;
 
 // ------------------------------------------------------------
@@ -1036,6 +1078,215 @@ function cleanupStaleSyncLog(maxAgeMinutes = 15) {
   return info.changes;
 }
 
+// ------------------------ Shopify orders cache ------------------------
+// Tags qui déclenchent l'auto-exclusion (case-insensitive, match sur tag exact).
+// Étendre ce set si de nouveaux motifs B2B/hors-trend apparaissent.
+const AUTO_EXCLUDE_TAGS = new Set(['implantation']);
+
+function hasAutoExcludeTag(tagsStr) {
+  if (!tagsStr) return null;
+  const tags = String(tagsStr).split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
+  for (const t of tags) {
+    if (AUTO_EXCLUDE_TAGS.has(t)) return t;
+  }
+  return null;
+}
+
+// Upsert d'un lot de commandes Shopify. Chaque item : { shopify_order_id, order_name,
+// created_at (ms), updated_at (ms), source_name, financial_status, tags, lines: [...] }
+// Applique automatiquement excluded=1 si tag AUTO_EXCLUDE présent (sauf si excluded_manual=0).
+function upsertShopifyOrdersBulk(orders) {
+  if (!Array.isArray(orders) || orders.length === 0) return { orders: 0, lines: 0 };
+  const now = Date.now();
+  let orderCount = 0, lineCount = 0;
+  const insertOrder = db.prepare(`
+    INSERT INTO stock_shopify_orders (
+      shopify_order_id, order_name, created_at, updated_at, source_name, financial_status,
+      tags, excluded, exclusion_motif, exclusion_source, excluded_manual, synced_at
+    ) VALUES (
+      @shopify_order_id, @order_name, @created_at, @updated_at, @source_name, @financial_status,
+      @tags, @excluded, @exclusion_motif, @exclusion_source, @excluded_manual, @synced_at
+    )
+    ON CONFLICT(shopify_order_id) DO UPDATE SET
+      order_name = excluded.order_name,
+      updated_at = excluded.updated_at,
+      source_name = excluded.source_name,
+      financial_status = excluded.financial_status,
+      tags = excluded.tags,
+      excluded = excluded.excluded,
+      exclusion_motif = excluded.exclusion_motif,
+      exclusion_source = excluded.exclusion_source,
+      synced_at = excluded.synced_at
+  `);
+  const selectManual = db.prepare(`SELECT excluded_manual FROM stock_shopify_orders WHERE shopify_order_id = ?`);
+  const deleteLines = db.prepare(`DELETE FROM stock_shopify_order_lines WHERE shopify_order_id = ?`);
+  const insertLine = db.prepare(`
+    INSERT INTO stock_shopify_order_lines (shopify_order_id, line_item_id, sku, gross_qty, refunded_qty)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(shopify_order_id, line_item_id) DO UPDATE SET
+      sku = excluded.sku,
+      gross_qty = excluded.gross_qty,
+      refunded_qty = excluded.refunded_qty
+  `);
+
+  const tx = db.transaction((items) => {
+    for (const o of items) {
+      // Respect d'un override manuel existant (excluded_manual) : on ne l'écrase pas.
+      const existing = selectManual.get(o.shopify_order_id);
+      const manual = existing && existing.excluded_manual != null ? existing.excluded_manual : null;
+      const autoTag = hasAutoExcludeTag(o.tags);
+      let excluded, motif, source;
+      if (manual === 1) { excluded = 1; motif = 'manuel'; source = 'manual'; }
+      else if (manual === 0) { excluded = 0; motif = null; source = 'manual_include'; }
+      else if (autoTag) { excluded = 1; motif = `tag:${autoTag}`; source = 'auto_tag'; }
+      else { excluded = 0; motif = null; source = null; }
+
+      insertOrder.run({
+        shopify_order_id: o.shopify_order_id,
+        order_name: o.order_name || null,
+        created_at: o.created_at,
+        updated_at: o.updated_at || o.created_at,
+        source_name: o.source_name || null,
+        financial_status: o.financial_status || null,
+        tags: o.tags || null,
+        excluded,
+        exclusion_motif: motif,
+        exclusion_source: source,
+        excluded_manual: manual,
+        synced_at: now,
+      });
+      orderCount++;
+
+      // Replace lines pour cet order (Shopify peut avoir refund → refunded_qty change).
+      deleteLines.run(o.shopify_order_id);
+      for (const l of o.lines || []) {
+        if (!l.sku) continue;
+        insertLine.run(o.shopify_order_id, String(l.line_item_id), String(l.sku).trim(), l.gross_qty || 0, l.refunded_qty || 0);
+        lineCount++;
+      }
+    }
+  });
+  tx(orders);
+  return { orders: orderCount, lines: lineCount };
+}
+
+// Recompute stock_previsions_mensuelles depuis stock_shopify_orders + stock_shopify_order_lines.
+// N'inclut que les orders excluded=0 et les SKU du référentiel.
+// Écrase toutes les lignes is_estimated=0 pour les (sku, ym) présents dans les orders.
+// Retourne { previsionsUpserted, skusMatched, monthsCovered }.
+function recomputePrevisionsMensuellesFromOrders() {
+  const now = Date.now();
+  // Aggregate net_qty par (sku, année, mois) sur orders non exclus.
+  const rows = db.prepare(`
+    SELECT l.sku,
+           CAST(strftime('%Y', datetime(o.created_at/1000, 'unixepoch')) AS INTEGER) AS annee,
+           CAST(strftime('%m', datetime(o.created_at/1000, 'unixepoch')) AS INTEGER) AS mois,
+           SUM(MAX(0, l.gross_qty - l.refunded_qty)) AS ventes_reelles
+      FROM stock_shopify_order_lines l
+      JOIN stock_shopify_orders o ON o.shopify_order_id = l.shopify_order_id
+     WHERE o.excluded = 0
+     GROUP BY l.sku, annee, mois
+  `).all();
+
+  let previsionsUpserted = 0, skusMatched = 0, skusUnmatched = 0;
+  const monthsCovered = new Set();
+  const skusSeen = new Set();
+  const upsert = stmts.upsertPrevisionMensuelle;
+  const tx = db.transaction((items) => {
+    for (const r of items) {
+      if (!stmts.selectReferentielSku.get(r.sku)) { skusUnmatched++; continue; }
+      if (!skusSeen.has(r.sku)) { skusSeen.add(r.sku); skusMatched++; }
+      monthsCovered.add(`${r.annee}-${String(r.mois).padStart(2,'0')}`);
+      upsert.run({
+        sku: r.sku,
+        annee: r.annee,
+        mois: r.mois,
+        ventes_reelles: r.ventes_reelles || 0,
+        is_estimated: 0,
+        now,
+      });
+      previsionsUpserted++;
+    }
+  });
+  tx(rows);
+  return { previsionsUpserted, skusMatched, skusUnmatched, monthsCovered: Array.from(monthsCovered).sort() };
+}
+
+// Liste les orders (avec lignes) pour un SKU, sur une plage donnée.
+// Utilisé par l'UI pour proposer les flags manuels.
+function listOrdersForSku(sku, { fromMs = null, toMs = null, limit = 100 } = {}) {
+  const wheres = ['l.sku = ?'];
+  const params = [sku];
+  if (fromMs) { wheres.push('o.created_at >= ?'); params.push(fromMs); }
+  if (toMs) { wheres.push('o.created_at <= ?'); params.push(toMs); }
+  const rows = db.prepare(`
+    SELECT o.shopify_order_id, o.order_name, o.created_at, o.source_name, o.financial_status,
+           o.tags, o.excluded, o.exclusion_motif, o.exclusion_source, o.excluded_manual,
+           l.gross_qty, l.refunded_qty,
+           MAX(0, l.gross_qty - l.refunded_qty) AS net_qty
+      FROM stock_shopify_order_lines l
+      JOIN stock_shopify_orders o ON o.shopify_order_id = l.shopify_order_id
+     WHERE ${wheres.join(' AND ')}
+     ORDER BY o.created_at DESC
+     LIMIT ?
+  `).all(...params, limit);
+  return rows;
+}
+
+// Force manuellement l'exclusion (excluded_manual=1) ou l'inclusion (=0) d'un order.
+// null = retire l'override manuel. Recalcule immédiatement `excluded` en tenant compte du tag.
+function setOrderExclusionManual(shopifyOrderId, manual) {
+  if (![null, 0, 1].includes(manual)) throw new Error(`manual doit être null, 0 ou 1 (reçu: ${manual})`);
+  const cur = db.prepare(`SELECT tags FROM stock_shopify_orders WHERE shopify_order_id = ?`).get(shopifyOrderId);
+  if (!cur) throw new Error(`Commande introuvable: ${shopifyOrderId}`);
+  const autoTag = hasAutoExcludeTag(cur.tags);
+  let excluded, motif, source;
+  if (manual === 1) { excluded = 1; motif = 'manuel'; source = 'manual'; }
+  else if (manual === 0) { excluded = 0; motif = null; source = 'manual_include'; }
+  else if (autoTag) { excluded = 1; motif = `tag:${autoTag}`; source = 'auto_tag'; }
+  else { excluded = 0; motif = null; source = null; }
+  db.prepare(`
+    UPDATE stock_shopify_orders SET
+      excluded_manual = ?, excluded = ?, exclusion_motif = ?, exclusion_source = ?
+    WHERE shopify_order_id = ?
+  `).run(manual, excluded, motif, source, shopifyOrderId);
+  return { shopify_order_id: shopifyOrderId, excluded, excluded_manual: manual, exclusion_motif: motif, exclusion_source: source };
+}
+
+// Stats globales exclusions (pour affichage & sync log).
+function countOrdersExcluded() {
+  return db.prepare(`
+    SELECT
+      COUNT(*) AS total,
+      SUM(CASE WHEN excluded = 1 THEN 1 ELSE 0 END) AS excluded,
+      SUM(CASE WHEN excluded = 1 AND exclusion_source = 'auto_tag' THEN 1 ELSE 0 END) AS auto_tag,
+      SUM(CASE WHEN excluded_manual IS NOT NULL THEN 1 ELSE 0 END) AS manual_overrides
+    FROM stock_shopify_orders
+  `).get();
+}
+
+// ------------------------ Sync watermark ------------------------
+function getSyncWatermark(syncType) {
+  return db.prepare(`SELECT * FROM stock_sync_watermark WHERE sync_type = ?`).get(syncType) || null;
+}
+function setSyncWatermark(syncType, { last_incremental_at = null, last_full_sync_at = null } = {}) {
+  const now = Date.now();
+  const cur = getSyncWatermark(syncType);
+  const next = {
+    last_incremental_at: last_incremental_at != null ? last_incremental_at : (cur ? cur.last_incremental_at : null),
+    last_full_sync_at: last_full_sync_at != null ? last_full_sync_at : (cur ? cur.last_full_sync_at : null),
+  };
+  db.prepare(`
+    INSERT INTO stock_sync_watermark (sync_type, last_incremental_at, last_full_sync_at, updated_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(sync_type) DO UPDATE SET
+      last_incremental_at = excluded.last_incremental_at,
+      last_full_sync_at = excluded.last_full_sync_at,
+      updated_at = excluded.updated_at
+  `).run(syncType, next.last_incremental_at, next.last_full_sync_at, now);
+  return getSyncWatermark(syncType);
+}
+
 // ------------------------ Diagnostics ------------------------
 function stats() {
   return {
@@ -1049,6 +1300,8 @@ function stats() {
     alertes: db.prepare(`SELECT COUNT(*) AS n FROM stock_alertes_etat`).get().n,
     parametresGlobaux: db.prepare(`SELECT COUNT(*) AS n FROM stock_parametres_globaux`).get().n,
     syncLog: db.prepare(`SELECT COUNT(*) AS n FROM stock_sync_log`).get().n,
+    shopifyOrders: db.prepare(`SELECT COUNT(*) AS n FROM stock_shopify_orders`).get().n,
+    shopifyOrdersExcluded: db.prepare(`SELECT COUNT(*) AS n FROM stock_shopify_orders WHERE excluded = 1`).get().n,
   };
 }
 
@@ -1085,6 +1338,12 @@ module.exports = {
   setParametreGlobal, getParametreGlobal, listParametresGlobaux,
   // sync log
   startSync, finishSync, listRecentSyncLog, listRecentSyncLogByType, countRunningSync, cleanupStaleSyncLog,
+  // shopify orders cache + exclusions
+  AUTO_EXCLUDE_TAGS, hasAutoExcludeTag,
+  upsertShopifyOrdersBulk, recomputePrevisionsMensuellesFromOrders,
+  listOrdersForSku, setOrderExclusionManual, countOrdersExcluded,
+  // sync watermark
+  getSyncWatermark, setSyncWatermark,
   // diagnostics
   stats,
 };

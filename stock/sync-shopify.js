@@ -325,8 +325,23 @@ async function debugSourcesForSku({ sku, fromYearMonth, toYearMonth }) {
 }
 
 // ------------------------------------------------------------
-// 3. Monthly sales sync (backfill or refresh a range)
+// 3. Monthly sales sync
+//
+// Deux modes :
+//  - full     : re-fetch complet sur [fromYearMonth, toYearMonth]. Nécessaire
+//               au premier sync et en fallback hebdo (rattrape refunds tardifs
+//               en dehors de la fenêtre incrémentale).
+//  - incremental : fetch uniquement les orders updated_at ≥ (last_incremental_at
+//               - INCREMENTAL_SAFETY_WINDOW_MS). Rapide, à lancer quotidiennement.
+//               Ne modifie que les orders qui ont bougé (created OU refund/edit).
+//
+// Les commandes sont persistées dans stock_shopify_orders + stock_shopify_order_lines.
+// Après upsert, on recompute stock_previsions_mensuelles depuis la table orders
+// (exclusion des orders excluded=1 → auto-tag "implantation" ou override manuel).
 // ------------------------------------------------------------
+
+const INCREMENTAL_SAFETY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7j : rattrape refunds/edits tardifs
+
 function parseYearMonth(ym) {
   const m = String(ym).match(/^(\d{4})-(\d{1,2})$/);
   if (!m) throw new Error(`Format attendu YYYY-MM, reçu: ${ym}`);
@@ -336,90 +351,150 @@ function parseYearMonth(ym) {
   return { year: y, month: mo };
 }
 
-async function syncShopifyMonthlySales({ fromYearMonth, toYearMonth, onProgress } = {}) {
+// Transforme une commande Shopify raw → payload upsertShopifyOrdersBulk.
+function mapShopifyOrder(order) {
+  const refundedByLI = {};
+  for (const ref of order.refunds || []) {
+    for (const rli of ref.refund_line_items || []) {
+      refundedByLI[rli.line_item_id] = (refundedByLI[rli.line_item_id] || 0) + (rli.quantity || 0);
+    }
+  }
+  const lines = [];
+  for (const li of order.line_items || []) {
+    if (!li.sku) continue;
+    const sku = String(li.sku).trim();
+    if (!sku) continue;
+    lines.push({
+      line_item_id: li.id,
+      sku,
+      gross_qty: li.quantity || 0,
+      refunded_qty: refundedByLI[li.id] || 0,
+    });
+  }
+  return {
+    shopify_order_id: String(order.id),
+    order_name: order.name || null,
+    created_at: new Date(order.created_at).getTime(),
+    updated_at: order.updated_at ? new Date(order.updated_at).getTime() : null,
+    source_name: order.source_name || null,
+    financial_status: order.financial_status || null,
+    tags: order.tags || null,
+    lines,
+  };
+}
+
+async function syncShopifyMonthlySales({ mode = 'full', fromYearMonth, toYearMonth, onProgress } = {}) {
+  // Log type unique 'shopify_sales' quel que soit le mode → simplifie le check
+  // concurrent et l'affichage dans /api/stock/sync-log. Le mode est dans le
+  // JSON `message` du log.
   const logId = stockDb.startSync('shopify_sales');
+  const startMs = Date.now();
   try {
-    if (!fromYearMonth || !toYearMonth) throw new Error('fromYearMonth et toYearMonth requis (YYYY-MM)');
-    const from = parseYearMonth(fromYearMonth);
-    const to = parseYearMonth(toYearMonth);
-    const startISO = new Date(Date.UTC(from.year, from.month - 1, 1)).toISOString();
-    const endISO = new Date(Date.UTC(to.year, to.month, 1)).toISOString();
+    let startISO, endISO, rangeLabel;
+    if (mode === 'incremental') {
+      const wm = stockDb.getSyncWatermark('shopify_sales');
+      if (!wm || !wm.last_incremental_at) {
+        throw new Error("Aucun watermark existant : lance d'abord un sync full pour initialiser (ex: /api/stock/sync-shopify?type=sales&mode=full&from=YYYY-MM&to=YYYY-MM).");
+      }
+      const since = wm.last_incremental_at - INCREMENTAL_SAFETY_WINDOW_MS;
+      startISO = new Date(since).toISOString();
+      endISO = new Date(startMs).toISOString();
+      rangeLabel = `updated_at ≥ ${startISO} (watermark ${new Date(wm.last_incremental_at).toISOString()} - 7j)`;
+    } else if (mode === 'full') {
+      if (!fromYearMonth || !toYearMonth) throw new Error('fromYearMonth et toYearMonth requis pour mode=full (YYYY-MM)');
+      const from = parseYearMonth(fromYearMonth);
+      const to = parseYearMonth(toYearMonth);
+      startISO = new Date(Date.UTC(from.year, from.month - 1, 1)).toISOString();
+      endISO = new Date(Date.UTC(to.year, to.month, 1)).toISOString();
+      rangeLabel = `created_at [${fromYearMonth} → ${toYearMonth}]`;
+    } else {
+      throw new Error(`mode invalide: ${mode} (attendu: full | incremental)`);
+    }
 
     const excludedSources = loadStockExcludedSources();
 
-    // aggregates[sku][ym] = net units
-    const aggregates = {};
-    // sourceUsage[source] = { orders, netUnits } — for observability in the sync log.
+    let pages = 0, ordersSeen = 0, ordersKept = 0, ordersExcludedSource = 0;
+    const batch = [];
+    const flushBatchSize = 500;
+    let ordersUpserted = 0, linesUpserted = 0;
     const sourceUsage = {};
-    let pages = 0, ordersSeen = 0, ordersKept = 0, ordersExcluded = 0, lineItemsProcessed = 0;
 
-    const startUrl = `${shopifyBase()}/orders.json?` + new URLSearchParams({
-      created_at_min: startISO,
-      created_at_max: endISO,
+    // Params : full = created_at_min/max, incremental = updated_at_min/max.
+    const paramsObj = {
       status: 'any',
       limit: '250',
-      fields: 'id,name,created_at,source_name,line_items,refunds,financial_status',
-    }).toString();
+      fields: 'id,name,created_at,updated_at,source_name,line_items,refunds,financial_status,tags',
+    };
+    if (mode === 'incremental') {
+      paramsObj.updated_at_min = startISO;
+      paramsObj.updated_at_max = endISO;
+    } else {
+      paramsObj.created_at_min = startISO;
+      paramsObj.created_at_max = endISO;
+    }
+    const startUrl = `${shopifyBase()}/orders.json?` + new URLSearchParams(paramsObj).toString();
 
     for await (const data of paginate(startUrl)) {
       pages++;
       for (const order of data.orders || []) {
         ordersSeen++;
         const src = order.source_name || '(null)';
-        if (excludedSources.has(src)) { ordersExcluded++; continue; }
+        // La deny-list "excludedSources" reste appliquée : ces canaux n'entrent
+        // même pas dans la table orders (ex: Amazon FBA avec logistique séparée).
+        if (excludedSources.has(src)) { ordersExcludedSource++; continue; }
         ordersKept++;
-        const dt = new Date(order.created_at);
-        const y = dt.getUTCFullYear();
-        const m = dt.getUTCMonth() + 1;
-        const ym = `${y}-${String(m).padStart(2, '0')}`;
-        const refundedByLI = {};
-        for (const ref of order.refunds || []) {
-          for (const rli of ref.refund_line_items || []) {
-            refundedByLI[rli.line_item_id] = (refundedByLI[rli.line_item_id] || 0) + (rli.quantity || 0);
-          }
-        }
         if (!sourceUsage[src]) sourceUsage[src] = { orders: 0, netUnits: 0 };
         sourceUsage[src].orders += 1;
-        for (const li of order.line_items || []) {
-          lineItemsProcessed++;
-          if (!li.sku) continue;
-          const sku = String(li.sku).trim();
-          if (!sku) continue;
-          const netQty = Math.max(0, (li.quantity || 0) - (refundedByLI[li.id] || 0));
-          if (netQty <= 0) continue;
-          sourceUsage[src].netUnits += netQty;
-          if (!aggregates[sku]) aggregates[sku] = {};
-          aggregates[sku][ym] = (aggregates[sku][ym] || 0) + netQty;
+        const mapped = mapShopifyOrder(order);
+        for (const l of mapped.lines) {
+          sourceUsage[src].netUnits += Math.max(0, l.gross_qty - l.refunded_qty);
         }
+        batch.push(mapped);
+      }
+      if (batch.length >= flushBatchSize) {
+        const r = stockDb.upsertShopifyOrdersBulk(batch);
+        ordersUpserted += r.orders;
+        linesUpserted += r.lines;
+        batch.length = 0;
       }
       if (onProgress) onProgress({ pages, ordersSeen, ordersKept });
     }
-
-    const rows = [];
-    let skusMatched = 0, skusUnmatched = 0;
-    for (const [sku, byMonth] of Object.entries(aggregates)) {
-      if (!stockDb.getReferentielSku(sku)) { skusUnmatched++; continue; }
-      skusMatched++;
-      for (const [ym, qty] of Object.entries(byMonth)) {
-        const [yy, mm] = ym.split('-').map(Number);
-        rows.push({ sku, annee: yy, mois: mm, ventes_reelles: qty, is_estimated: 0 });
-      }
+    if (batch.length) {
+      const r = stockDb.upsertShopifyOrdersBulk(batch);
+      ordersUpserted += r.orders;
+      linesUpserted += r.lines;
     }
-    stockDb.upsertPrevisionsMensuellesBulk(rows);
 
-    // Compact source usage for the sync log message (top 10 by netUnits).
+    // Recompute previsions mensuelles depuis les orders persistés (excluded=0 seulement).
+    const recompute = stockDb.recomputePrevisionsMensuellesFromOrders();
+
+    // Update watermark.
+    stockDb.setSyncWatermark('shopify_sales', {
+      last_incremental_at: startMs,
+      last_full_sync_at: mode === 'full' ? startMs : undefined,
+    });
+
+    // Compact source usage pour le log (top 10 by netUnits).
     const topSources = Object.entries(sourceUsage)
       .map(([src, agg]) => ({ src, ...agg }))
       .sort((a, b) => b.netUnits - a.netUnits)
       .slice(0, 10);
 
+    const exclusionStats = stockDb.countOrdersExcluded();
+
     const stats = {
-      range: `${fromYearMonth} → ${toYearMonth}`,
-      pages, ordersSeen, ordersKept, ordersExcluded,
-      lineItemsProcessed,
-      skusMatched, skusUnmatched,
-      previsionsUpserted: rows.length,
-      excludedSources: Array.from(excludedSources),
+      mode,
+      range: rangeLabel,
+      pages, ordersSeen, ordersKept, ordersExcludedSource,
+      ordersUpserted, linesUpserted,
+      previsionsRecompute: {
+        previsionsUpserted: recompute.previsionsUpserted,
+        skusMatched: recompute.skusMatched,
+        skusUnmatched: recompute.skusUnmatched,
+        monthsCovered: recompute.monthsCovered.length,
+      },
+      exclusionStats,
+      excludedSourcesFilter: Array.from(excludedSources),
       topSources,
     };
     stockDb.finishSync(logId, { status: 'ok', message: JSON.stringify(stats) });
@@ -479,4 +554,5 @@ module.exports = {
   loadStockExcludedSources,
   ALLOWED_SOURCES,
   API_VERSION,
+  INCREMENTAL_SAFETY_WINDOW_MS,
 };

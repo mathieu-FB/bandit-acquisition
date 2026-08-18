@@ -694,9 +694,11 @@
           <nav class="modal-tabs">
             <button class="modal-tab active" data-mtab="overview">Vue d'ensemble</button>
             <button class="modal-tab" data-mtab="historique" data-sku="${escapeAttr(sku)}">Historique ventes</button>
+            <button class="modal-tab" data-mtab="commandes" data-sku="${escapeAttr(sku)}">Commandes (flag implantation)</button>
           </nav>
           <div id="mtab-overview">${renderDetail(d)}</div>
           <div id="mtab-historique" hidden><div class="loading">Chargement…</div></div>
+          <div id="mtab-commandes" hidden><div class="loading">Chargement…</div></div>
         `;
         body.querySelectorAll('.modal-tab').forEach(t => {
           t.addEventListener('click', async () => {
@@ -705,9 +707,14 @@
             const target = t.dataset.mtab;
             document.getElementById('mtab-overview').hidden = (target !== 'overview');
             document.getElementById('mtab-historique').hidden = (target !== 'historique');
+            document.getElementById('mtab-commandes').hidden = (target !== 'commandes');
             if (target === 'historique') {
               const skuArg = t.dataset.sku;
               if (skuArg) await renderVentesHistorique(skuArg);
+            }
+            if (target === 'commandes') {
+              const skuArg = t.dataset.sku;
+              if (skuArg) await renderCommandesForSku(skuArg);
             }
           });
         });
@@ -770,6 +777,111 @@
             <thead><tr><th>Mois</th><th style="text-align:right;">Ventes</th><th>Source</th></tr></thead>
             <tbody>${rows}</tbody>
           </table>`;
+      } catch (err) {
+        container.innerHTML = `<div class="empty-state">Erreur : ${err.message}</div>`;
+      }
+    }
+
+    // Commandes Shopify pour un SKU : liste + flag/unflag pour exclusion du forecast.
+    // Les commandes taggées "implantation" côté Shopify sont auto-exclues (badge orange).
+    // Override manuel possible : forcer exclusion (🚫) ou forcer inclusion (✅) — ce dernier
+    // annule l'auto-exclusion par tag si besoin.
+    async function renderCommandesForSku(sku) {
+      const container = document.getElementById('mtab-commandes');
+      container.innerHTML = '<div class="loading">Chargement…</div>';
+      try {
+        const res = await fetch(`/api/stock/orders?sku=${encodeURIComponent(sku)}&limit=200`, { credentials: 'same-origin' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const d = await res.json();
+        if (!d.items || d.items.length === 0) {
+          container.innerHTML = `<div class="empty-state">Aucune commande Shopify persistée pour ce SKU. Lance un sync depuis <a href="/stock-admin.html">/stock-admin.html</a> ou attends le sync incrémental quotidien (6h30).</div>`;
+          return;
+        }
+        const totalNet = d.items.reduce((s, i) => s + (i.net_qty || 0), 0);
+        const excludedNet = d.items.filter(i => i.excluded).reduce((s, i) => s + (i.net_qty || 0), 0);
+        const excludedCount = d.items.filter(i => i.excluded).length;
+        const rows = d.items.map(i => {
+          const dt = new Date(i.created_at);
+          const dtStr = dt.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: '2-digit' });
+          let statusCell;
+          if (i.excluded) {
+            const badgeColor = i.exclusion_source === 'auto_tag' ? '#b45309' : '#991b1b';
+            statusCell = `<span style="color:${badgeColor};font-weight:600;">🚫 exclu</span><div style="font-size:10px;color:var(--muted);">${escapeHtml(i.exclusion_motif || '')}</div>`;
+          } else if (i.exclusion_source === 'manual_include') {
+            statusCell = `<span style="color:#065f46;font-weight:600;">✅ inclus (forcé)</span>`;
+          } else {
+            statusCell = `<span style="color:var(--muted);">inclus</span>`;
+          }
+          const tagsBadge = i.tags
+            ? String(i.tags).split(',').map(t => `<span style="display:inline-block;background:#f3f4f6;color:#6b7280;padding:1px 6px;border-radius:3px;font-size:10px;margin:1px 2px 1px 0;">${escapeHtml(t.trim())}</span>`).join('')
+            : '<span style="color:var(--muted);font-size:10px;">—</span>';
+          // Actions : 3 boutons pour cycler entre les états
+          const btnExclude = i.excluded_manual === 1
+            ? `<button disabled style="opacity:0.4;padding:3px 6px;font-size:11px;">🚫</button>`
+            : `<button data-oid="${escapeAttr(i.shopify_order_id)}" data-manual="1" class="order-flag-btn" title="Forcer l'exclusion" style="padding:3px 6px;font-size:11px;background:#fef3c7;border:1px solid #f59e0b;border-radius:4px;cursor:pointer;">🚫</button>`;
+          const btnInclude = i.excluded_manual === 0
+            ? `<button disabled style="opacity:0.4;padding:3px 6px;font-size:11px;">✅</button>`
+            : `<button data-oid="${escapeAttr(i.shopify_order_id)}" data-manual="0" class="order-flag-btn" title="Forcer l'inclusion (annule auto-tag)" style="padding:3px 6px;font-size:11px;background:#d1fae5;border:1px solid #10b981;border-radius:4px;cursor:pointer;">✅</button>`;
+          const btnReset = i.excluded_manual == null
+            ? `<button disabled style="opacity:0.4;padding:3px 6px;font-size:11px;">↺</button>`
+            : `<button data-oid="${escapeAttr(i.shopify_order_id)}" data-manual="null" class="order-flag-btn" title="Retirer l'override manuel (retour comportement auto)" style="padding:3px 6px;font-size:11px;background:#f3f4f6;border:1px solid #d1d5db;border-radius:4px;cursor:pointer;">↺</button>`;
+          return `
+            <tr>
+              <td>${dtStr}</td>
+              <td style="font-family:monospace;font-size:12px;">${escapeHtml(i.order_name || i.shopify_order_id)}</td>
+              <td style="text-align:right;font-weight:600;">${fmtInt(i.net_qty)}${i.refunded_qty > 0 ? ` <span style="color:var(--muted);font-size:10px;">(-${i.refunded_qty})</span>` : ''}</td>
+              <td>${tagsBadge}</td>
+              <td>${statusCell}</td>
+              <td style="white-space:nowrap;">${btnExclude} ${btnInclude} ${btnReset}</td>
+            </tr>`;
+        }).join('');
+        container.innerHTML = `
+          <div class="metrics">
+            <div class="metric"><div class="lbl">Commandes affichées</div><div class="val">${d.items.length}</div></div>
+            <div class="metric"><div class="lbl">Net unités total</div><div class="val">${fmtInt(totalNet)}</div></div>
+            <div class="metric"><div class="lbl">Exclues (forecast)</div><div class="val" style="color:#b45309;">${excludedCount} · ${fmtInt(excludedNet)} u</div></div>
+          </div>
+          <p style="font-size:11px;color:var(--muted);margin:8px 0 12px;">
+            Les commandes taggées <strong>implantation</strong> côté Shopify sont auto-exclues du calcul de tendance (elles restent des sorties stock réelles).
+            Tu peux forcer l'exclusion 🚫 ou l'inclusion ✅ manuellement. ↺ retire l'override et revient au comportement automatique.
+            Un changement recalcule immédiatement les prévisions mensuelles.
+          </p>
+          <table class="forecast-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>N° commande</th>
+                <th style="text-align:right;">Net qté</th>
+                <th>Tags Shopify</th>
+                <th>Statut forecast</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>`;
+        container.querySelectorAll('.order-flag-btn').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const oid = btn.dataset.oid;
+            const raw = btn.dataset.manual;
+            const manual = raw === 'null' ? null : Number(raw);
+            btn.disabled = true;
+            btn.textContent = '…';
+            try {
+              const r = await fetch(`/api/stock/orders/${encodeURIComponent(oid)}/exclude`, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ manual }),
+              });
+              if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || `HTTP ${r.status}`);
+              // Recharge la liste (état bouton + previsions recalculées côté serveur).
+              await renderCommandesForSku(sku);
+            } catch (err) {
+              alert('Erreur : ' + err.message);
+              await renderCommandesForSku(sku);
+            }
+          });
+        });
       } catch (err) {
         container.innerHTML = `<div class="empty-state">Erreur : ${err.message}</div>`;
       }

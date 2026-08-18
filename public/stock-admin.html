@@ -63,11 +63,13 @@
 
     <div class="card">
       <h2>3 · Sync Shopify</h2>
-      <p>Dans cet ordre : <strong>variants</strong> (mappe SKU → variant/inventory_item/image), puis <strong>stock</strong> (location 82726682960), puis <strong>sales</strong> (backfill 24 mois — job long, poll les logs).</p>
+      <p>Dans cet ordre : <strong>variants</strong> (mappe SKU → variant/inventory_item/image), puis <strong>stock</strong> (location 82726682960), puis <strong>sales</strong>. Sync sales : <strong>incremental</strong> (rapide, updated_at ≥ watermark − 7j) tourne quotidien à 6h30 · <strong>full</strong> (24 mois) tourne hebdo dimanche 4h. Le sync sales persiste les orders dans <code>stock_shopify_orders</code> et recompute les prévisions en excluant les commandes taggées <code>implantation</code>.</p>
       <div class="row">
         <button data-action="/api/stock/sync-shopify?type=variants">Sync variants</button>
         <button data-action="/api/stock/sync-shopify?type=stock">Sync stock</button>
-        <button data-action="/api/stock/sync-shopify?type=sales&fromYM=2024-07&toYM=2026-07">Sync sales (24 mois)</button>
+        <button data-action="/api/stock/sync-shopify?type=sales&mode=incremental">Sync sales incrémental</button>
+        <button data-action="/api/stock/sync-shopify?type=sales&mode=full&fromYM=2024-08&toYM=2026-08">Sync sales full (24 mois)</button>
+        <button class="secondary" data-action="/api/stock/orders/watermark">Voir watermark</button>
       </div>
     </div>
 

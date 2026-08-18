@@ -4499,30 +4499,34 @@ cron.schedule('0 6 * * 0', async () => {
   }
 }, { timezone: 'Europe/Paris' });
 
-// Sync sales INCRÉMENTAL quotidien à 6h30 Paris (3 mois glissants).
-// Capte les ventes récentes + refunds tardifs sans refaire tout l'historique.
-// Rapide (30 sec à 2 min selon volume).
+// Sync sales INCRÉMENTAL quotidien à 6h30 Paris.
+// mode=incremental : fetch les orders updated_at ≥ watermark - 7j (fenêtre
+// safety pour rattraper refunds/edits tardifs). Rapide (typiquement < 30 sec)
+// grâce au cache persistant stock_shopify_orders. Recompute automatiquement
+// stock_previsions_mensuelles depuis les orders non exclus.
+// Si aucun watermark : skip (le premier run doit être un full sync manuel).
 cron.schedule('30 6 * * *', async () => {
-  console.log('[Cron] Triggering incremental sales sync (3 months)...');
+  console.log('[Cron] Triggering incremental sales sync (7d rolling)...');
   try {
     if (stockDb.countRunningSync('shopify_sales') > 0) {
       console.log('[Cron] Sales sync skipped — already running.');
       return;
     }
-    const now = new Date();
-    const from = new Date(now.getFullYear(), now.getMonth() - 2, 1);
-    const fromYM = `${from.getFullYear()}-${String(from.getMonth() + 1).padStart(2, '0')}`;
-    const toYM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const stats = await stockSync.syncShopifyMonthlySales({ fromYearMonth: fromYM, toYearMonth: toYM });
-    console.log(`[Cron] Incremental sales done: ${fromYM}→${toYM} · ${stats.ordersKept} orders · ${stats.previsionsUpserted} previsions.`);
+    const wm = stockDb.getSyncWatermark('shopify_sales');
+    if (!wm || !wm.last_incremental_at) {
+      console.log('[Cron] Incremental sales skipped — no watermark yet. Run a full sync first via /api/stock/sync-shopify?type=sales&mode=full&fromYM=YYYY-MM&toYM=YYYY-MM');
+      return;
+    }
+    const stats = await stockSync.syncShopifyMonthlySales({ mode: 'incremental' });
+    console.log(`[Cron] Incremental sales done: ${stats.ordersKept} orders · ${stats.previsionsRecompute.previsionsUpserted} previsions recomputed · ${stats.exclusionStats.excluded} orders excluded (${stats.exclusionStats.auto_tag} auto-tag).`);
   } catch (err) {
     console.error('[Cron] Incremental sales sync failed:', err.message);
   }
 }, { timezone: 'Europe/Paris' });
 
-// Sync sales COMPLET hebdo dimanche 4h00 Paris (24 mois).
-// Rafraîchit tout l'historique pour corriger d'éventuelles dérives.
-// Job long (2-24 min), tourné la nuit quand personne n'utilise.
+// Sync sales FULL hebdo dimanche 4h00 Paris (24 mois).
+// Rafraîchit tout l'historique — catch refunds hors fenêtre 7j et sécurise
+// la cohérence des ventes historiques. Job plus long (quelques min).
 cron.schedule('0 4 * * 0', async () => {
   console.log('[Cron] Triggering full sales sync (24 months)...');
   try {
@@ -4534,8 +4538,8 @@ cron.schedule('0 4 * * 0', async () => {
     const from = new Date(now.getFullYear() - 2, now.getMonth() + 1, 1);
     const fromYM = `${from.getFullYear()}-${String(from.getMonth() + 1).padStart(2, '0')}`;
     const toYM = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-    const stats = await stockSync.syncShopifyMonthlySales({ fromYearMonth: fromYM, toYearMonth: toYM });
-    console.log(`[Cron] Full sales done: ${fromYM}→${toYM} · ${stats.ordersKept} orders · ${stats.previsionsUpserted} previsions.`);
+    const stats = await stockSync.syncShopifyMonthlySales({ mode: 'full', fromYearMonth: fromYM, toYearMonth: toYM });
+    console.log(`[Cron] Full sales done: ${fromYM}→${toYM} · ${stats.ordersKept} orders · ${stats.previsionsRecompute.previsionsUpserted} previsions · ${stats.exclusionStats.excluded} excluded.`);
   } catch (err) {
     console.error('[Cron] Full sales sync failed:', err.message);
   }
@@ -5607,22 +5611,30 @@ async function handleSyncShopify(req, res) {
       return res.json({ type, ...stats });
     }
     if (type === 'sales') {
+      // mode = 'full' (défaut, avec fromYM/toYM) ou 'incremental' (updated_at ≥ watermark - 7j)
+      const mode = String(req.query.mode || 'full').toLowerCase();
+      if (mode !== 'full' && mode !== 'incremental') {
+        return res.status(400).json({ error: 'mode invalide (attendu: full | incremental)' });
+      }
       const fromYearMonth = String(req.query.fromYM || '');
       const toYearMonth = String(req.query.toYM || '');
-      if (!fromYearMonth || !toYearMonth) {
-        return res.status(400).json({ error: 'fromYM et toYM requis (format YYYY-MM)' });
+      if (mode === 'full' && (!fromYearMonth || !toYearMonth)) {
+        return res.status(400).json({ error: 'fromYM et toYM requis pour mode=full (format YYYY-MM)' });
       }
       // Long-running: fire-and-forget, client polls /api/stock/sync-log
       setImmediate(async () => {
         try {
-          await stockSync.syncShopifyMonthlySales({ fromYearMonth, toYearMonth });
+          await stockSync.syncShopifyMonthlySales({ mode, fromYearMonth, toYearMonth });
         } catch (err) {
-          console.error('[Stock] sales sync error:', err.message);
+          console.error(`[Stock] sales sync (${mode}) error:`, err.message);
         }
       });
       return res.status(202).json({
         accepted: true,
-        message: `Sync ventes ${fromYearMonth} → ${toYearMonth} démarré en arrière-plan. Poll /api/stock/sync-log?type=shopify_sales pour l'avancement.`,
+        mode,
+        message: mode === 'incremental'
+          ? `Sync ventes incrémental démarré (7j rolling depuis watermark). Poll /api/stock/sync-log?type=shopify_sales`
+          : `Sync ventes full ${fromYearMonth} → ${toYearMonth} démarré. Poll /api/stock/sync-log?type=shopify_sales`,
       });
     }
     return res.status(400).json({ error: 'type invalide (attendu: variants | stock | sales)' });
@@ -5648,6 +5660,60 @@ function handleCleanupStale(req, res) {
 }
 app.post('/api/stock/sync-log/cleanup-stale', handleCleanupStale);
 app.get('/api/stock/sync-log/cleanup-stale', handleCleanupStale);
+
+// ---- Commandes Shopify (orders cache) : list par SKU + gestion exclusions manuelles ----
+//
+// GET /api/stock/orders?sku=X&fromMs=...&toMs=...&limit=100
+//   → liste les orders (persistés) pour un SKU, avec flag excluded + motif.
+// POST /api/stock/orders/:orderId/exclude   { manual: 1 | 0 | null }
+//   → force l'exclusion (1) ou l'inclusion (0), ou retire l'override (null).
+// GET /api/stock/orders/watermark  → statut du watermark shopify_sales.
+
+app.get('/api/stock/orders', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const sku = String(req.query.sku || '').trim();
+    if (!sku) return res.status(400).json({ error: 'sku requis' });
+    const fromMs = req.query.fromMs ? Number(req.query.fromMs) : null;
+    const toMs = req.query.toMs ? Number(req.query.toMs) : null;
+    const limit = Math.max(1, Math.min(500, parseInt(req.query.limit || '100', 10)));
+    const items = stockDb.listOrdersForSku(sku, { fromMs, toMs, limit });
+    res.json({ sku, total: items.length, items });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/stock/orders/:orderId/exclude', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const orderId = String(req.params.orderId);
+    const raw = req.body && 'manual' in req.body ? req.body.manual : undefined;
+    let manual;
+    if (raw === null || raw === 'null') manual = null;
+    else if (raw === 1 || raw === '1' || raw === true) manual = 1;
+    else if (raw === 0 || raw === '0' || raw === false) manual = 0;
+    else return res.status(400).json({ error: 'manual doit être 1, 0 ou null' });
+    const result = stockDb.setOrderExclusionManual(orderId, manual);
+    // Recompute previsions immédiatement (exclusion / réinclusion) pour que
+    // le forecast reflète le changement sans attendre le prochain sync.
+    const recompute = stockDb.recomputePrevisionsMensuellesFromOrders();
+    res.json({ ok: true, ...result, recompute });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.get('/api/stock/orders/watermark', (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const wm = stockDb.getSyncWatermark('shopify_sales');
+    const stats = stockDb.countOrdersExcluded();
+    res.json({ watermark: wm, orders: stats, autoExcludeTags: Array.from(stockDb.AUTO_EXCLUDE_TAGS) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // File complétude
 app.get('/api/stock/completude', (req, res) => {
