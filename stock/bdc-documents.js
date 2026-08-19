@@ -17,20 +17,27 @@ const fs = require('fs');
 const path = require('path');
 const stockDb = require('./db');
 
-// Logo Bandit noir — chargé une seule fois puis converti en data URI pour être
-// embarqué inline dans le .doc (self-contained, pas de fetch réseau depuis
-// Word). SVG mieux qu'un PNG car vectoriel = pas de perte à l'impression.
+// Logo Bandit — chargé une seule fois puis converti en data URI base64.
+// PNG (pas SVG) : Word .doc HTML supporte les PNG en data URI depuis 2007
+// alors qu'il traite les SVG comme des "images liées" impossibles à afficher.
+// Cherche dans public/img/ (asset historique) avec fallback stock/assets/.
 let LOGO_BANDIT_DATA_URI = null;
 function getBanditLogoDataUri() {
   if (LOGO_BANDIT_DATA_URI !== null) return LOGO_BANDIT_DATA_URI;
-  try {
-    const svg = fs.readFileSync(path.join(__dirname, 'assets', 'logo-bandit-black.svg'), 'utf8');
-    const b64 = Buffer.from(svg, 'utf8').toString('base64');
-    LOGO_BANDIT_DATA_URI = `data:image/svg+xml;base64,${b64}`;
-  } catch (err) {
-    console.warn('[BDC docs] Logo Bandit introuvable :', err.message);
-    LOGO_BANDIT_DATA_URI = '';
+  const candidates = [
+    path.join(__dirname, '..', 'public', 'img', 'logo-bandit.png'),
+    path.join(__dirname, 'assets', 'logo-bandit-black.png'),
+  ];
+  for (const p of candidates) {
+    try {
+      const bin = fs.readFileSync(p);
+      const b64 = bin.toString('base64');
+      LOGO_BANDIT_DATA_URI = `data:image/png;base64,${b64}`;
+      return LOGO_BANDIT_DATA_URI;
+    } catch (_) { /* try next */ }
   }
+  console.warn('[BDC docs] Logo Bandit PNG introuvable dans public/img ni stock/assets — fallback texte.');
+  LOGO_BANDIT_DATA_URI = '';
   return LOGO_BANDIT_DATA_URI;
 }
 
@@ -180,66 +187,89 @@ function generateCartonMarksDoc(ligneId) {
 
   const productName = ref.nom_court || ref.nom_long || ref.sku;
   const barcodeHtml = ref.ean_13
-    ? ean13BarsHtml(ref.ean_13, { moduleWidth: 2, height: 60, fontSize: 11 })
+    ? ean13BarsHtml(ref.ean_13, { moduleWidth: 2, height: 55, fontSize: 10 })
     : '<div style="color:red;font-size:11pt;">EAN 13 manquant dans le référentiel</div>';
   const productImageUrl = ref.image_url || null;
-  // Image produit : width EN PX ABSOLU pour tenir dans la colonne droite (280px).
-  // Word ignore souvent max-width en CSS → on force width= attribut HTML.
+  // Image produit : Word ignore width sans height quand l'image source a un
+  // aspect ratio étiré → force width ET height explicitement (perte d'aspect
+  // ratio assumée pour une vignette de référence). Attribut HTML + style CSS
+  // pour couvrir tous les modes de rendu Word.
   const productImageHtml = productImageUrl
-    ? `<img src="${escapeAttr(productImageUrl)}" width="240" style="width:240px;height:auto;display:block;margin:0 auto;" alt="${escapeAttr(productName)}">`
-    : '<div style="width:240px;height:180px;background:#f3f3f3;color:#999;font-size:10pt;text-align:center;line-height:180px;margin:0 auto;">image non disponible</div>';
+    ? `<img src="${escapeAttr(productImageUrl)}" width="200" height="200" style="width:200px;height:200px;display:block;margin:0 auto;" alt="${escapeAttr(productName)}">`
+    : '<div style="width:200px;height:200px;background:#f3f3f3;color:#999;font-size:10pt;text-align:center;line-height:200px;margin:0 auto;">image non dispo</div>';
 
-  // Logo Bandit (SVG en base64 data URI) — width fixe en px pour rendu Word.
+  // Logo Bandit (PNG en base64 data URI) — width fixe pour rendu Word.
+  // Ratio original 1263×522 ≈ 2.42:1 → logo 180×74 pour le header.
   const logoDataUri = getBanditLogoDataUri();
   const logoHeaderHtml = logoDataUri
-    ? `<img src="${escapeAttr(logoDataUri)}" width="200" style="width:200px;height:auto;display:block;margin:0 auto;" alt="Bandit">`
-    : '<div style="font-family:cursive;font-size:32pt;font-weight:bold;">Bandit</div>';
-  // Petit logo Bandit sous le barcode (30px), utilisé à droite du SKU
+    ? `<img src="${escapeAttr(logoDataUri)}" width="180" height="74" style="width:180px;height:74px;display:block;margin:0 auto;" alt="Bandit">`
+    : '<div style="font-family:cursive;font-size:28pt;font-weight:bold;">Bandit</div>';
+  // Petit logo sous barcode — 80×33 (même ratio).
   const logoSmallHtml = logoDataUri
-    ? `<img src="${escapeAttr(logoDataUri)}" width="70" style="width:70px;height:auto;vertical-align:middle;" alt="Bandit">`
-    : '<span style="font-family:cursive;font-size:14pt;font-style:italic;">Bandit</span>';
+    ? `<img src="${escapeAttr(logoDataUri)}" width="80" height="33" style="width:80px;height:33px;vertical-align:middle;" alt="Bandit">`
+    : '<span style="font-family:cursive;font-size:12pt;font-style:italic;">Bandit</span>';
 
   // Surlignage jaune façon Word (background sur span). Les valeurs "XX" sont
   // sélectionnables → fournisseur peut cliquer-remplacer dans Word.
   const fillMark = (txt) => `<span style="background:#FFEB3B;padding:1pt 4pt;font-weight:600;">${escapeHtml(txt)}</span>`;
 
-  // Layout 2 colonnes robuste sous Word :
-  //   - <table> avec width="720" en pixels ABSOLU (Word ignore les %)
-  //   - table-layout: fixed → force les largeurs déclarées
-  //   - <td> avec width en px absolu + attribut HTML `width` (fallback Word)
-  //   - Page A4 ≈ 794 px de large, marges 30px → ~730 px utiles.
+  // Layout LANDSCAPE (A4 paysage : 29.7cm × 21cm) pour maximiser l'espace
+  // horizontal et faire tenir le tout sur 1 page.
   //
-  // Colonne gauche : 400 px (nom produit qui peut être long, ne wrap plus)
-  // Colonne droite : 300 px (image 240 + barcode ~200 rentrent)
+  // Zone utile ≈ 27cm × 19cm avec marges 1.5cm.
+  // À 96dpi cela fait ≈ 1020 × 720 pixels utiles.
+  //
+  // Layout :
+  //   - <table> width=980px, table-layout:fixed
+  //   - Colonne gauche 550 px : nom produit + SKU/CIP + fields à remplir
+  //   - Colonne droite 430 px : image 200×200 + barcode + SKU/logo Bandit
+  //   - Footer : "CARTON No. XX / XX" en 30pt centré
+  //
+  // Landscape via @page mso-page-orientation:landscape + wrapping div
+  // WordSection1. Recette éprouvée pour Word .doc HTML.
 
   const html = `<!DOCTYPE html>
 <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
 <head>
   <meta charset="UTF-8">
   <title>Carton marks — ${escapeHtml(ligne.sku)}</title>
-  <!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom></w:WordDocument></xml><![endif]-->
+  <!--[if gte mso 9]><xml>
+    <w:WordDocument>
+      <w:View>Print</w:View>
+      <w:Zoom>100</w:Zoom>
+    </w:WordDocument>
+  </xml><![endif]-->
   <style>
-    body { font-family: Arial, Helvetica, sans-serif; margin: 20px 30px; font-size: 14pt; }
-    .brand-header { text-align: center; margin: 0 0 20px; }
-    .prod-name { font-size: 24pt; font-weight: 500; text-align: center; margin: 20px 0 20px; letter-spacing: 1pt; line-height: 1.1; }
-    .sku-line, .cip-line { font-size: 18pt; text-align: center; margin: 8px 0; letter-spacing: 1pt; white-space: nowrap; }
-    .fields { margin-top: 30px; font-size: 14pt; text-align: center; }
-    .fields .row { margin: 12px 0; white-space: nowrap; }
+    @page WordSection1 {
+      size: 29.7cm 21.0cm;
+      mso-page-orientation: landscape;
+      margin: 1.2cm 1.5cm 1.2cm 1.5cm;
+      mso-header-margin: 1cm;
+      mso-footer-margin: 1cm;
+    }
+    div.WordSection1 { page: WordSection1; }
+    body { font-family: Arial, Helvetica, sans-serif; margin: 0; font-size: 13pt; }
+    .brand-header { text-align: center; margin: 0 0 12px; }
+    .prod-name { font-size: 22pt; font-weight: 500; text-align: center; margin: 10px 0 14px; letter-spacing: 1pt; line-height: 1.1; }
+    .sku-line, .cip-line { font-size: 16pt; text-align: center; margin: 6px 0; letter-spacing: 1pt; white-space: nowrap; }
+    .fields { margin-top: 20px; font-size: 13pt; text-align: center; }
+    .fields .row { margin: 8px 0; white-space: nowrap; }
     .fields .lbl { font-weight: 600; }
-    .prod-photo-wrap { text-align: center; padding-top: 5px; }
-    .prod-photo-caption { font-size: 11pt; text-align: center; margin-top: 4px; margin-bottom: 14px; font-weight: 500; }
+    .prod-photo-wrap { text-align: center; padding-top: 2px; }
+    .prod-photo-caption { font-size: 10pt; text-align: center; margin-top: 3px; margin-bottom: 8px; font-weight: 500; }
     .barcode-wrap { text-align: center; margin: 4px 0; }
-    .carton-no { text-align: center; font-size: 30pt; font-weight: bold; margin: 40px 0 15px; letter-spacing: 2pt; }
-    .footer { margin-top: 25px; font-size: 9pt; color: #888; text-align: center; border-top: 1px solid #ccc; padding-top: 8px; }
+    .carton-no { text-align: center; font-size: 28pt; font-weight: bold; margin: 25px 0 8px; letter-spacing: 2pt; }
+    .footer { margin-top: 10px; font-size: 8.5pt; color: #888; text-align: center; border-top: 1px solid #ccc; padding-top: 5px; }
   </style>
 </head>
 <body>
+<div class="WordSection1">
 
   <div class="brand-header">${logoHeaderHtml}</div>
 
-  <table cellspacing="0" cellpadding="0" border="0" width="720" style="width:720px;table-layout:fixed;border-collapse:collapse;margin:0 auto;">
+  <table cellspacing="0" cellpadding="0" border="0" width="980" style="width:980px;table-layout:fixed;border-collapse:collapse;margin:0 auto;">
     <tr>
-      <td width="400" valign="top" style="width:400px;vertical-align:top;padding:0 20px 0 10px;">
+      <td width="550" valign="top" style="width:550px;vertical-align:top;padding:0 20px;">
         <div class="prod-name">${escapeHtml(productName).toUpperCase()}</div>
         <div class="sku-line">SKU : ${escapeHtml(ref.sku)}</div>
         <div class="cip-line">CIP : ${escapeHtml(ref.cip || '—')}</div>
@@ -252,15 +282,15 @@ function generateCartonMarksDoc(ligneId) {
         </div>
       </td>
 
-      <td width="300" valign="top" style="width:300px;vertical-align:top;padding:0 10px 0 20px;">
+      <td width="430" valign="top" style="width:430px;vertical-align:top;padding:0 20px;">
         <div class="prod-photo-wrap">${productImageHtml}</div>
         <div class="prod-photo-caption">${escapeHtml(productName)}</div>
 
         <div class="barcode-wrap">${barcodeHtml}</div>
 
-        <table cellspacing="0" cellpadding="0" border="0" width="280" style="width:280px;margin:14px auto 0;">
+        <table cellspacing="0" cellpadding="0" border="0" width="280" style="width:280px;margin:8px auto 0;">
           <tr>
-            <td width="140" style="width:140px;font-family:'Courier New',monospace;font-size:11pt;text-align:left;vertical-align:middle;">${escapeHtml(ref.sku)}</td>
+            <td width="140" style="width:140px;font-family:'Courier New',monospace;font-size:10pt;text-align:left;vertical-align:middle;">${escapeHtml(ref.sku)}</td>
             <td width="140" style="width:140px;text-align:right;vertical-align:middle;">${logoSmallHtml}</td>
           </tr>
         </table>
@@ -274,6 +304,7 @@ function generateCartonMarksDoc(ligneId) {
     ${bdc ? `BDC ${escapeHtml(bdc.numero)} · ` : ''}Généré le ${new Date().toLocaleDateString('fr-FR')} · Merci d'imprimer et d'apposer sur chaque carton
   </div>
 
+</div>
 </body>
 </html>`;
 
