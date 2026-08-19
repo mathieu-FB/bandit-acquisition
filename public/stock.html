@@ -944,8 +944,38 @@
              <td style="color:#b45309;">+${fmtInt(totDistrib)}</td>
              <td><strong>${fmtInt(totForecast + totDistrib)}</strong></td>
            </tr>` : '';
+      // Warning DATA ⚠ : précise quel champ manque + comment corriger.
+      // Le moteur remplit `d.missing` avec la liste des champs vides
+      // (pa, shopify_variant_id, shopify_inventory_item_id).
+      const MISSING_LABELS = {
+        'pa (prix achat vs/dernier)': {
+          label: 'Prix d\'achat manquant (pa_vs / pa_dernier)',
+          fix: 'renseigne le PA dans la matrice xlsx colonne PA, puis relance "Seed matrice" depuis /stock-admin.html',
+        },
+        'shopify_variant_id': {
+          label: 'Aucun variant Shopify mappé',
+          fix: 'le SKU du référentiel ne correspond à aucun variant Shopify — soit le SKU n\'existe pas dans Shopify (produit non vendu online), soit le sync variants n\'a pas trouvé le match. Vérifie côté Shopify que le SKU est bien saisi tel quel, puis relance "Sync variants".',
+        },
+        'shopify_inventory_item_id': {
+          label: 'Aucun inventory_item Shopify',
+          fix: 'même cause : le sync variants n\'a pas trouvé le variant. Cf ci-dessus.',
+        },
+      };
+      const missingWarn = !d.complet && d.missing && d.missing.length > 0
+        ? `<div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;padding:10px 12px;margin:8px 0 14px;font-size:12px;line-height:1.5;">
+            <strong style="color:#92400e;">⚠ Niveau DATA — pourquoi ?</strong><br>
+            Le moteur ne calcule pas de proposition tant que ces champs manquent :
+            <ul style="margin:6px 0 0 18px;padding:0;">
+              ${d.missing.map(m => {
+                const meta = MISSING_LABELS[m] || { label: m, fix: '' };
+                return `<li><strong>${escapeHtml(meta.label)}</strong>${meta.fix ? ` — <span style="color:var(--muted);">${escapeHtml(meta.fix)}</span>` : ''}</li>`;
+              }).join('')}
+            </ul>
+          </div>`
+        : '';
       return `
         <div class="metrics">${metrics.map(m => `<div class="metric"><div class="lbl">${m.l}</div><div class="val">${m.v}</div></div>`).join('')}</div>
+        ${missingWarn}
         <h4>Prévision mensuelle (12 mois)${hasDistrib ? ' — <span style="color:#b45309;font-size:12px;font-weight:normal;">colonne "Distrib." = sorties commandes distributeurs B2B</span>' : ''}</h4>
         ${sourceWarn}
         <table class="forecast-table">

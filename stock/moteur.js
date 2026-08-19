@@ -503,6 +503,11 @@ function runForSku({ sku, ref, previsions, saisonaliteByFamille, famillesParam, 
   const paKnown = ref.pa_vs != null || ref.pa_dernier != null;
   const shopifyKnown = !!ref.shopify_variant_id && !!ref.shopify_inventory_item_id;
   const complet = paKnown && shopifyKnown;
+  // Détail précis de ce qui manque — remonté à l'UI pour aider le user à agir.
+  const missing = [];
+  if (!paKnown) missing.push('pa (prix achat vs/dernier)');
+  if (!ref.shopify_variant_id) missing.push('shopify_variant_id');
+  if (!ref.shopify_inventory_item_id) missing.push('shopify_inventory_item_id');
 
   const forecast = forecastPerSku({ sku, ref, previsions: skuPrev, saisonaliteByFamille, famillesParam, today });
   // Enrichit chaque row du forecast avec la sortie distributeur du même mois
@@ -555,12 +560,13 @@ function runForSku({ sku, ref, previsions, saisonaliteByFamille, famillesParam, 
   if (proposition && proposition.qte > 0) {
     messageParts.push(`Proposition: ${proposition.qte} unités${proposition.montant != null ? ` (${proposition.montant.toFixed(2)} €)` : ''}`);
   }
-  if (!complet) messageParts.push('Données incomplètes (PA ou Shopify manquant)');
+  if (!complet) messageParts.push(`Données incomplètes : ${missing.join(', ')}`);
 
   return {
     sku,
     niveau,
     complet,
+    missing,
     leadTimeJours,
     couvertureViseeJours,
     couvertureViseeSource,
