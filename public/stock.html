@@ -616,8 +616,31 @@
       }
 
       container.innerHTML = filtered.map(g => {
-        const canCreateBdc = !!g.fournisseur_id && g.items.some(i => (i.proposition_qte || 0) > 0);
+        const actionableItems = g.items.filter(i => (i.proposition_qte || 0) > 0);
+        const canCreateBdc = !!g.fournisseur_id && actionableItems.length > 0;
         const rows = g.items.map(i => renderRow(i)).join('');
+        // Payload minimal pour préremplir la Nouvelle commande — sérialisé en
+        // attribut data pour éviter d'échapper des quotes dans du JSON inline.
+        const bdcPayload = canCreateBdc
+          ? {
+              fournisseur_id: g.fournisseur_id,
+              fournisseur_nom: g.fournisseur_nom,
+              lignes: actionableItems.map(i => ({
+                sku: i.sku,
+                nom_court: i.nom_court || '',
+                qte_commandee: i.proposition_qte,
+                pa_unitaire: (i.proposition_qte > 0 && i.proposition_montant)
+                  ? Number((i.proposition_montant / i.proposition_qte).toFixed(4))
+                  : 0,
+              })),
+            }
+          : null;
+        const btnLabel = canCreateBdc
+          ? `Créer commande fournisseur (${actionableItems.length} SKU · ${fmtEur(g.totalMontant)})`
+          : 'Créer commande fournisseur';
+        const btnAttrs = canCreateBdc
+          ? `data-bdc-payload='${escapeAttr(JSON.stringify(bdcPayload))}' class="btn-create-bdc" style="background:var(--primary);color:#fff;border:none;padding:8px 14px;border-radius:6px;font-size:13px;cursor:pointer;font-weight:500;"`
+          : `disabled title="${!g.fournisseur_id ? 'Aucun fournisseur assigné à ces SKU — assigne un fournisseur par défaut depuis Commandes fournisseur > Assignations SKU' : 'Aucune proposition actionnable pour ce groupe'}" style="opacity:0.5;padding:8px 14px;border-radius:6px;font-size:13px;"`;
         return `
           <div class="group">
             <div class="group-header">
@@ -626,7 +649,7 @@
                 <div class="stats"><strong>${g.totalSkus}</strong> SKU · <strong>${fmtInt(g.totalQte)}</strong> unités · <strong>${fmtEur(g.totalMontant)}</strong></div>
               </div>
               <div>
-                <button disabled title="Module BDC arrive en étape 4">Créer commande fournisseur</button>
+                <button ${btnAttrs}>${btnLabel}</button>
               </div>
             </div>
             <table>
@@ -647,6 +670,58 @@
             </table>
           </div>`;
       }).join('');
+
+      // Bind les boutons "Créer commande fournisseur" — un seul listener délégué
+      // pour tous les groupes actifs de la vue actuelle.
+      container.querySelectorAll('.btn-create-bdc').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          try {
+            const payload = JSON.parse(btn.dataset.bdcPayload);
+            await prefillBdcFromAlerts(payload);
+          } catch (err) {
+            alert('Erreur : ' + err.message);
+          }
+        });
+      });
+    }
+
+    // Bascule sur "Commandes fournisseur > Nouvelle commande" avec le
+    // fournisseur pré-sélectionné et une ligne par proposition actionnable.
+    // Aucun POST tant que l'utilisateur n'a pas cliqué "Créer BDC" — il peut
+    // ajuster quantités et PA avant de valider.
+    async function prefillBdcFromAlerts(payload) {
+      // 1. Bascule tab principal → "bdc"
+      const mainTabBtn = document.querySelector('nav.tabs button[data-tab="bdc"]');
+      if (mainTabBtn) mainTabBtn.click();
+      // 2. Bascule sous-onglet → "nouveau"
+      const subTabBtn = document.querySelector('#tab-bdc .subtab-btn[data-subtab="nouveau"]');
+      if (subTabBtn) subTabBtn.click();
+      // 3. Attend que loadFournisseurs() ait rempli le select (async)
+      const sel = document.getElementById('newBdcFournisseur');
+      for (let i = 0; i < 30 && sel.options.length <= 1; i++) {
+        await new Promise(r => setTimeout(r, 50));
+      }
+      // 4. Sélectionne le fournisseur → déclenche l'affichage du bloc lignes
+      sel.value = String(payload.fournisseur_id);
+      sel.dispatchEvent(new Event('change'));
+      // 5. Reset les lignes existantes puis ajoute les propositions
+      NEW_BDC_LINES.length = 0;
+      for (const l of payload.lignes) {
+        NEW_BDC_LINES.push({
+          sku: l.sku,
+          nom_court: l.nom_court,
+          qte_commandee: l.qte_commandee,
+          pa_unitaire: l.pa_unitaire || 0,
+        });
+      }
+      renderNewBdcLines();
+      // 6. Note automatique + auto-calcul ETA
+      const notes = document.getElementById('newBdcNotes');
+      const today = new Date().toLocaleDateString('fr-FR');
+      if (!notes.value) notes.value = `Créé depuis alertes du ${today} — ${payload.fournisseur_nom}`;
+      if (typeof recomputeEtaFromLines === 'function') recomputeEtaFromLines();
+      // 7. Scroll vers le bloc lignes
+      document.getElementById('newBdcLignesCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
     function renderRow(i) {
