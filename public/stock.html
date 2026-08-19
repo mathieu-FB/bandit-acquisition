@@ -944,14 +944,9 @@
              <td style="color:#b45309;">+${fmtInt(totDistrib)}</td>
              <td><strong>${fmtInt(totForecast + totDistrib)}</strong></td>
            </tr>` : '';
-      // Warning DATA ⚠ : précise quel champ manque + comment corriger.
-      // Le moteur remplit `d.missing` avec la liste des champs vides
-      // (pa, shopify_variant_id, shopify_inventory_item_id).
+      // Warning DATA ⚠ : précise quels champs BLOQUANTS manquent (Shopify mapping)
+      // + affiche une note info si PA manquant (non bloquant, juste montant nul).
       const MISSING_LABELS = {
-        'pa (prix achat vs/dernier)': {
-          label: 'Prix d\'achat manquant (pa_vs / pa_dernier)',
-          fix: 'renseigne le PA dans la matrice xlsx colonne PA, puis relance "Seed matrice" depuis /stock-admin.html',
-        },
         'shopify_variant_id': {
           label: 'Aucun variant Shopify mappé',
           fix: 'le SKU du référentiel ne correspond à aucun variant Shopify — soit le SKU n\'existe pas dans Shopify (produit non vendu online), soit le sync variants n\'a pas trouvé le match. Vérifie côté Shopify que le SKU est bien saisi tel quel, puis relance "Sync variants".',
@@ -973,9 +968,16 @@
             </ul>
           </div>`
         : '';
+      // Info non bloquante : PA manquant → qté calculée mais pas de montant.
+      const infoNote = d.infoOnly && d.infoOnly.length > 0
+        ? `<div style="background:#f3f4f6;border:1px solid #d1d5db;border-radius:6px;padding:8px 12px;margin:8px 0 14px;font-size:11px;color:var(--muted);line-height:1.5;">
+            <strong>ℹ Info :</strong> PA (prix d'achat) non renseigné — la <strong>quantité</strong> à commander est calculée, mais le <strong>montant</strong> du restock reste à null. Renseigne <code>pa_vs</code> ou <code>pa_dernier</code> dans la matrice xlsx pour l'obtenir.
+          </div>`
+        : '';
       return `
         <div class="metrics">${metrics.map(m => `<div class="metric"><div class="lbl">${m.l}</div><div class="val">${m.v}</div></div>`).join('')}</div>
         ${missingWarn}
+        ${infoNote}
         <h4>Prévision mensuelle (12 mois)${hasDistrib ? ' — <span style="color:#b45309;font-size:12px;font-weight:normal;">colonne "Distrib." = sorties commandes distributeurs B2B</span>' : ''}</h4>
         ${sourceWarn}
         <table class="forecast-table">

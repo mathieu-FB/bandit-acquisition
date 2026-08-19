@@ -499,15 +499,18 @@ function runForSku({ sku, ref, previsions, saisonaliteByFamille, famillesParam, 
     ? 'param_famille'
     : (ref.couverture_visee_jours != null ? 'matrice' : 'defaut_global');
 
-  // Complétude check for niveau
+  // Complétude check for niveau — seuls les champs qui empêchent le calcul de
+  // besoin sont bloquants. Le PA n'est PAS bloquant : sans lui, la qté est
+  // calculée normalement, seul le montant du restock est null.
   const paKnown = ref.pa_vs != null || ref.pa_dernier != null;
   const shopifyKnown = !!ref.shopify_variant_id && !!ref.shopify_inventory_item_id;
-  const complet = paKnown && shopifyKnown;
-  // Détail précis de ce qui manque — remonté à l'UI pour aider le user à agir.
+  const complet = shopifyKnown;
+  // Détail précis de ce qui manque — remonté à l'UI (champs bloquants + PA en info).
   const missing = [];
-  if (!paKnown) missing.push('pa (prix achat vs/dernier)');
   if (!ref.shopify_variant_id) missing.push('shopify_variant_id');
   if (!ref.shopify_inventory_item_id) missing.push('shopify_inventory_item_id');
+  const infoOnly = [];
+  if (!paKnown) infoOnly.push('pa (prix achat vs/dernier) — non bloquant, seul le montant du restock ne sera pas calculable');
 
   const forecast = forecastPerSku({ sku, ref, previsions: skuPrev, saisonaliteByFamille, famillesParam, today });
   // Enrichit chaque row du forecast avec la sortie distributeur du même mois
@@ -561,12 +564,14 @@ function runForSku({ sku, ref, previsions, saisonaliteByFamille, famillesParam, 
     messageParts.push(`Proposition: ${proposition.qte} unités${proposition.montant != null ? ` (${proposition.montant.toFixed(2)} €)` : ''}`);
   }
   if (!complet) messageParts.push(`Données incomplètes : ${missing.join(', ')}`);
+  if (infoOnly.length) messageParts.push(`Info : ${infoOnly.join(', ')}`);
 
   return {
     sku,
     niveau,
     complet,
     missing,
+    infoOnly,
     leadTimeJours,
     couvertureViseeJours,
     couvertureViseeSource,
