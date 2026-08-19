@@ -13,7 +13,26 @@
 // ============================================================
 
 const XLSX = require('xlsx');
+const fs = require('fs');
+const path = require('path');
 const stockDb = require('./db');
+
+// Logo Bandit noir — chargé une seule fois puis converti en data URI pour être
+// embarqué inline dans le .doc (self-contained, pas de fetch réseau depuis
+// Word). SVG mieux qu'un PNG car vectoriel = pas de perte à l'impression.
+let LOGO_BANDIT_DATA_URI = null;
+function getBanditLogoDataUri() {
+  if (LOGO_BANDIT_DATA_URI !== null) return LOGO_BANDIT_DATA_URI;
+  try {
+    const svg = fs.readFileSync(path.join(__dirname, 'assets', 'logo-bandit-black.svg'), 'utf8');
+    const b64 = Buffer.from(svg, 'utf8').toString('base64');
+    LOGO_BANDIT_DATA_URI = `data:image/svg+xml;base64,${b64}`;
+  } catch (err) {
+    console.warn('[BDC docs] Logo Bandit introuvable :', err.message);
+    LOGO_BANDIT_DATA_URI = '';
+  }
+  return LOGO_BANDIT_DATA_URI;
+}
 
 // ------------------------------------------------------------
 // EAN13 barcode → SVG inline (aucune dépendance externe).
@@ -161,15 +180,37 @@ function generateCartonMarksDoc(ligneId) {
 
   const productName = ref.nom_court || ref.nom_long || ref.sku;
   const barcodeHtml = ref.ean_13
-    ? ean13BarsHtml(ref.ean_13, { moduleWidth: 2, height: 70, fontSize: 12 })
+    ? ean13BarsHtml(ref.ean_13, { moduleWidth: 2, height: 60, fontSize: 11 })
     : '<div style="color:red;font-size:11pt;">EAN 13 manquant dans le référentiel</div>';
-  const productImage = ref.image_url
-    ? `<img src="${escapeAttr(ref.image_url)}" style="max-width:220px;max-height:220px;display:block;margin:0 auto;" alt="${escapeAttr(productName)}">`
-    : '<div style="width:220px;height:180px;background:#f3f3f3;color:#999;font-size:10pt;text-align:center;line-height:180px;">image non disponible</div>';
+  const productImageUrl = ref.image_url || null;
+  // Image produit : width EN PX ABSOLU pour tenir dans la colonne droite (280px).
+  // Word ignore souvent max-width en CSS → on force width= attribut HTML.
+  const productImageHtml = productImageUrl
+    ? `<img src="${escapeAttr(productImageUrl)}" width="240" style="width:240px;height:auto;display:block;margin:0 auto;" alt="${escapeAttr(productName)}">`
+    : '<div style="width:240px;height:180px;background:#f3f3f3;color:#999;font-size:10pt;text-align:center;line-height:180px;margin:0 auto;">image non disponible</div>';
+
+  // Logo Bandit (SVG en base64 data URI) — width fixe en px pour rendu Word.
+  const logoDataUri = getBanditLogoDataUri();
+  const logoHeaderHtml = logoDataUri
+    ? `<img src="${escapeAttr(logoDataUri)}" width="200" style="width:200px;height:auto;display:block;margin:0 auto;" alt="Bandit">`
+    : '<div style="font-family:cursive;font-size:32pt;font-weight:bold;">Bandit</div>';
+  // Petit logo Bandit sous le barcode (30px), utilisé à droite du SKU
+  const logoSmallHtml = logoDataUri
+    ? `<img src="${escapeAttr(logoDataUri)}" width="70" style="width:70px;height:auto;vertical-align:middle;" alt="Bandit">`
+    : '<span style="font-family:cursive;font-size:14pt;font-style:italic;">Bandit</span>';
 
   // Surlignage jaune façon Word (background sur span). Les valeurs "XX" sont
   // sélectionnables → fournisseur peut cliquer-remplacer dans Word.
   const fillMark = (txt) => `<span style="background:#FFEB3B;padding:1pt 4pt;font-weight:600;">${escapeHtml(txt)}</span>`;
+
+  // Layout 2 colonnes robuste sous Word :
+  //   - <table> avec width="720" en pixels ABSOLU (Word ignore les %)
+  //   - table-layout: fixed → force les largeurs déclarées
+  //   - <td> avec width en px absolu + attribut HTML `width` (fallback Word)
+  //   - Page A4 ≈ 794 px de large, marges 30px → ~730 px utiles.
+  //
+  // Colonne gauche : 400 px (nom produit qui peut être long, ne wrap plus)
+  // Colonne droite : 300 px (image 240 + barcode ~200 rentrent)
 
   const html = `<!DOCTYPE html>
 <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
@@ -178,34 +219,27 @@ function generateCartonMarksDoc(ligneId) {
   <title>Carton marks — ${escapeHtml(ligne.sku)}</title>
   <!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom></w:WordDocument></xml><![endif]-->
   <style>
-    body { font-family: Arial, Helvetica, sans-serif; margin: 30pt 40pt; font-size: 14pt; }
-    .brand-header { text-align: center; font-family: 'Brush Script MT', 'Segoe Script', 'Lucida Handwriting', cursive; font-size: 34pt; font-weight: bold; margin: 0 0 22pt; }
-    .brand-header .divider { display: block; width: 100%; height: 1pt; background: #000; margin-top: 6pt; }
-    .prod-name { font-size: 26pt; font-weight: 400; text-align: center; margin: 30pt 0 22pt; letter-spacing: 1pt; }
-    .sku-line, .cip-line { font-size: 20pt; text-align: center; margin: 10pt 0; letter-spacing: 1pt; }
-    .fields { margin-top: 40pt; font-size: 15pt; line-height: 2.0; text-align: center; }
-    .fields .row { margin: 6pt 0; }
+    body { font-family: Arial, Helvetica, sans-serif; margin: 20px 30px; font-size: 14pt; }
+    .brand-header { text-align: center; margin: 0 0 20px; }
+    .prod-name { font-size: 24pt; font-weight: 500; text-align: center; margin: 20px 0 20px; letter-spacing: 1pt; line-height: 1.1; }
+    .sku-line, .cip-line { font-size: 18pt; text-align: center; margin: 8px 0; letter-spacing: 1pt; white-space: nowrap; }
+    .fields { margin-top: 30px; font-size: 14pt; text-align: center; }
+    .fields .row { margin: 12px 0; white-space: nowrap; }
     .fields .lbl { font-weight: 600; }
-    .prod-photo-wrap { text-align: center; padding-top: 10pt; }
-    .prod-photo-caption { font-size: 12pt; text-align: center; margin-top: 6pt; margin-bottom: 20pt; }
-    .barcode-wrap { text-align: center; margin: 6pt 0 4pt; }
-    .under-barcode { font-family: 'Courier New', monospace; font-size: 11pt; margin-top: 14pt; }
-    .under-barcode .sku { float: left; }
-    .under-barcode .bandit { float: right; font-family: 'Brush Script MT', 'Segoe Script', cursive; font-size: 14pt; font-style: italic; }
-    .carton-no { text-align: center; font-size: 32pt; font-weight: bold; margin: 50pt 0 20pt; letter-spacing: 2pt; }
-    .footer { margin-top: 30pt; font-size: 9pt; color: #888; text-align: center; border-top: 1px solid #ccc; padding-top: 8pt; }
-    .grid { width: 100%; border-collapse: collapse; }
-    .grid td.left { width: 58%; vertical-align: top; padding: 0 20pt 0 10pt; }
-    .grid td.right { width: 42%; vertical-align: top; padding: 0 10pt 0 20pt; border-left: none; }
+    .prod-photo-wrap { text-align: center; padding-top: 5px; }
+    .prod-photo-caption { font-size: 11pt; text-align: center; margin-top: 4px; margin-bottom: 14px; font-weight: 500; }
+    .barcode-wrap { text-align: center; margin: 4px 0; }
+    .carton-no { text-align: center; font-size: 30pt; font-weight: bold; margin: 40px 0 15px; letter-spacing: 2pt; }
+    .footer { margin-top: 25px; font-size: 9pt; color: #888; text-align: center; border-top: 1px solid #ccc; padding-top: 8px; }
   </style>
 </head>
 <body>
 
-  <div class="brand-header">Bandit</div>
+  <div class="brand-header">${logoHeaderHtml}</div>
 
-  <table class="grid" cellspacing="0" cellpadding="0" border="0">
+  <table cellspacing="0" cellpadding="0" border="0" width="720" style="width:720px;table-layout:fixed;border-collapse:collapse;margin:0 auto;">
     <tr>
-      <td class="left">
+      <td width="400" valign="top" style="width:400px;vertical-align:top;padding:0 20px 0 10px;">
         <div class="prod-name">${escapeHtml(productName).toUpperCase()}</div>
         <div class="sku-line">SKU : ${escapeHtml(ref.sku)}</div>
         <div class="cip-line">CIP : ${escapeHtml(ref.cip || '—')}</div>
@@ -218,16 +252,16 @@ function generateCartonMarksDoc(ligneId) {
         </div>
       </td>
 
-      <td class="right">
-        <div class="prod-photo-wrap">${productImage}</div>
+      <td width="300" valign="top" style="width:300px;vertical-align:top;padding:0 10px 0 20px;">
+        <div class="prod-photo-wrap">${productImageHtml}</div>
         <div class="prod-photo-caption">${escapeHtml(productName)}</div>
 
         <div class="barcode-wrap">${barcodeHtml}</div>
 
-        <table cellspacing="0" cellpadding="0" border="0" style="width:100%;margin-top:16pt;">
+        <table cellspacing="0" cellpadding="0" border="0" width="280" style="width:280px;margin:14px auto 0;">
           <tr>
-            <td style="font-family:'Courier New',monospace;font-size:11pt;text-align:left;">${escapeHtml(ref.sku)}</td>
-            <td style="font-family:'Brush Script MT','Segoe Script',cursive;font-size:16pt;font-style:italic;text-align:right;">Bandit</td>
+            <td width="140" style="width:140px;font-family:'Courier New',monospace;font-size:11pt;text-align:left;vertical-align:middle;">${escapeHtml(ref.sku)}</td>
+            <td width="140" style="width:140px;text-align:right;vertical-align:middle;">${logoSmallHtml}</td>
           </tr>
         </table>
       </td>
