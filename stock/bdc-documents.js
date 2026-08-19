@@ -204,10 +204,6 @@ function generateCartonMarksDoc(ligneId) {
   const logoHeaderHtml = logoDataUri
     ? `<img src="${escapeAttr(logoDataUri)}" width="180" height="74" style="width:180px;height:74px;display:block;margin:0 auto;" alt="Bandit">`
     : '<div style="font-family:cursive;font-size:28pt;font-weight:bold;">Bandit</div>';
-  // Petit logo sous barcode — 80×33 (même ratio).
-  const logoSmallHtml = logoDataUri
-    ? `<img src="${escapeAttr(logoDataUri)}" width="80" height="33" style="width:80px;height:33px;vertical-align:middle;" alt="Bandit">`
-    : '<span style="font-family:cursive;font-size:12pt;font-style:italic;">Bandit</span>';
 
   // Surlignage jaune façon Word (background sur span). Les valeurs "XX" sont
   // sélectionnables → fournisseur peut cliquer-remplacer dans Word.
@@ -259,7 +255,6 @@ function generateCartonMarksDoc(ligneId) {
     .prod-photo-caption { font-size: 10pt; text-align: center; margin-top: 3px; margin-bottom: 8px; font-weight: 500; }
     .barcode-wrap { text-align: center; margin: 4px 0; }
     .carton-no { text-align: center; font-size: 28pt; font-weight: bold; margin: 25px 0 8px; letter-spacing: 2pt; }
-    .footer { margin-top: 10px; font-size: 8.5pt; color: #888; text-align: center; border-top: 1px solid #ccc; padding-top: 5px; }
   </style>
 </head>
 <body>
@@ -287,22 +282,11 @@ function generateCartonMarksDoc(ligneId) {
         <div class="prod-photo-caption">${escapeHtml(productName)}</div>
 
         <div class="barcode-wrap">${barcodeHtml}</div>
-
-        <table cellspacing="0" cellpadding="0" border="0" width="280" style="width:280px;margin:8px auto 0;">
-          <tr>
-            <td width="140" style="width:140px;font-family:'Courier New',monospace;font-size:10pt;text-align:left;vertical-align:middle;">${escapeHtml(ref.sku)}</td>
-            <td width="140" style="width:140px;text-align:right;vertical-align:middle;">${logoSmallHtml}</td>
-          </tr>
-        </table>
       </td>
     </tr>
   </table>
 
   <div class="carton-no">CARTON No. ${fillMark('XX')} / ${fillMark('XX')}</div>
-
-  <div class="footer">
-    ${bdc ? `BDC ${escapeHtml(bdc.numero)} · ` : ''}Généré le ${new Date().toLocaleDateString('fr-FR')} · Merci d'imprimer et d'apposer sur chaque carton
-  </div>
 
 </div>
 </body>
