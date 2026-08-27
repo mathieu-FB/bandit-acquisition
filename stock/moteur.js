@@ -661,14 +661,24 @@ function runAll({ dryRun = true } = {}) {
       proposition_montant: result.proposition ? result.proposition.montant : null,
       message: result.message || null,
     });
+    // Décomposition proposition — utile pour proposer 3 modes de prefill
+    // dans la Nouvelle commande : "web only", "distrib only", "les deux".
+    const p = result.proposition || {};
     details.push({
       sku: ref.sku,
       famille: ref.famille,
       animal: ref.animal,
       niveau: result.niveau,
       dateRuptureEstimee: result.dateRuptureEstimeeStr,
-      proposition_qte: result.proposition ? result.proposition.qte : null,
-      proposition_montant: result.proposition ? result.proposition.montant : null,
+      proposition_qte: p.qte != null ? p.qte : null,
+      proposition_montant: p.montant != null ? p.montant : null,
+      // Split demande pour prefill sélectif
+      demandeFenetre: p.demandeFenetre != null ? p.demandeFenetre : null,
+      sortiesDistribFenetre: p.sortiesDistribFenetre != null ? p.sortiesDistribFenetre : null,
+      enCoursUtiles: p.enCoursUtiles != null ? p.enCoursUtiles : null,
+      colisage: p.colisage != null ? p.colisage : 1,
+      moq: p.moq != null ? p.moq : 1,
+      pa_unitaire: p.pa_unitaire != null ? p.pa_unitaire : null,
       stockActuel: state.stockActuel[ref.sku] || 0,
       leadTimeJours: result.leadTimeJours,
       couvertureViseeJours: result.couvertureViseeJours,

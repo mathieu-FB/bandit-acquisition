@@ -6212,6 +6212,7 @@ app.post('/api/stock/bdc', express.json(), (req, res) => {
     }
     const created = stockDb.createBdc({
       fournisseur_id: fournisseur.id,
+      nom: body.nom ? String(body.nom).trim() : null,
       statut: body.statut || 'brouillon',
       date_envoi: body.date_envoi ? new Date(body.date_envoi).getTime() : null,
       date_eta: body.date_eta ? new Date(body.date_eta).getTime() : null,
@@ -6245,6 +6246,7 @@ app.put('/api/stock/bdc/:id', express.json(), (req, res) => {
       date_eta: body.date_eta != null ? (body.date_eta ? new Date(body.date_eta).getTime() : null) : existing.date_eta,
       date_reception_prevue: body.date_reception_prevue != null ? (body.date_reception_prevue ? new Date(body.date_reception_prevue).getTime() : null) : existing.date_reception_prevue,
       notes: body.notes !== undefined ? body.notes : existing.notes,
+      ...(body.nom !== undefined && { nom: body.nom ? String(body.nom).trim() : null }),
     });
     res.json({ ok: true, bdc: enrichBdc(stockDb.getBdc(id)) });
   } catch (err) {
@@ -7034,6 +7036,13 @@ app.get('/api/stock/alertes/enriched', (req, res) => {
         dateRuptureEstimee: d.dateRuptureEstimee,
         proposition_qte: d.proposition_qte,
         proposition_montant: d.proposition_montant,
+        // Décomposition — utile pour "Pré-remplir depuis propositions" (web/distrib/2)
+        demandeFenetre: d.demandeFenetre,
+        sortiesDistribFenetre: d.sortiesDistribFenetre,
+        enCoursUtiles: d.enCoursUtiles,
+        colisage_effectif: d.colisage,
+        moq_effectif: d.moq,
+        pa_unitaire: d.pa_unitaire,
         matrice_bg_ref: ref.matrice_bg_ref,
         matrice_bh_ref: ref.matrice_bh_ref,
         fournisseur_id: ref.fournisseur_defaut_id,

@@ -118,6 +118,7 @@ CREATE TABLE IF NOT EXISTS stock_actuel (
 CREATE TABLE IF NOT EXISTS stock_bdc (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   numero TEXT UNIQUE NOT NULL,
+  nom TEXT,
   fournisseur_id INTEGER NOT NULL,
   date_creation INTEGER NOT NULL,
   date_envoi INTEGER,
@@ -276,6 +277,9 @@ function init() {
   // pour certains SKU sans toucher aux autres lignes du même BDC.
   safeAlter(`ALTER TABLE stock_bdc_lignes ADD COLUMN date_eta_ligne INTEGER`);
   safeAlter(`ALTER TABLE stock_bdc_lignes ADD COLUMN qte_annulee_fournisseur INTEGER DEFAULT 0`);
+  // BDC nom : label libre saisi par l'utilisateur (distinct du numero auto).
+  // Utile pour retrouver la commande dans l'historique ("Réappro Colliers essentielle Aug 2026").
+  safeAlter(`ALTER TABLE stock_bdc ADD COLUMN nom TEXT`);
   // Migration stock_parametres_famille : ajout shopify_tag_filter dans la PK.
   // SQLite ne permet pas ALTER TABLE pour changer la PK → recréation avec copie.
   // Détecte l'absence de la colonne pour n'exécuter qu'une fois.
@@ -521,11 +525,12 @@ function prepareStatements() {
 
     // ---- bdc ----
     insertBdc: db.prepare(`
-      INSERT INTO stock_bdc (numero, fournisseur_id, date_creation, date_envoi, date_eta, date_reception_prevue, date_reception_reelle, statut, montant_total, devise, notes, created_at, updated_at)
-      VALUES (@numero, @fournisseur_id, @date_creation, @date_envoi, @date_eta, @date_reception_prevue, @date_reception_reelle, @statut, @montant_total, @devise, @notes, @now, @now)
+      INSERT INTO stock_bdc (numero, nom, fournisseur_id, date_creation, date_envoi, date_eta, date_reception_prevue, date_reception_reelle, statut, montant_total, devise, notes, created_at, updated_at)
+      VALUES (@numero, @nom, @fournisseur_id, @date_creation, @date_envoi, @date_eta, @date_reception_prevue, @date_reception_reelle, @statut, @montant_total, @devise, @notes, @now, @now)
     `),
     updateBdc: db.prepare(`
       UPDATE stock_bdc SET
+        nom = @nom,
         fournisseur_id = @fournisseur_id,
         date_envoi = @date_envoi,
         date_eta = @date_eta,
@@ -822,7 +827,7 @@ function nextBdcNumero(prefix = 'BDC', year = new Date().getFullYear()) {
   return `${prefix}-${year}-${String(n).padStart(3, '0')}`;
 }
 
-function createBdc({ fournisseur_id, statut = 'brouillon', date_envoi = null, date_eta = null, date_reception_prevue = null, notes = null, devise = 'EUR', lignes = [] }) {
+function createBdc({ fournisseur_id, nom = null, statut = 'brouillon', date_envoi = null, date_eta = null, date_reception_prevue = null, notes = null, devise = 'EUR', lignes = [] }) {
   const now = Date.now();
   const prefixRow = stmts.selectParametreGlobal.get('bdc_prefixe_numero');
   const prefix = prefixRow && prefixRow.value ? prefixRow.value : 'BDC';
@@ -832,7 +837,9 @@ function createBdc({ fournisseur_id, statut = 'brouillon', date_envoi = null, da
   let bdcId;
   const tx = db.transaction(() => {
     const info = stmts.insertBdc.run({
-      numero, fournisseur_id,
+      numero,
+      nom: nom || null,
+      fournisseur_id,
       date_creation: now,
       date_envoi, date_eta, date_reception_prevue,
       date_reception_reelle: null,
@@ -861,6 +868,7 @@ function updateBdcMeta(id, patch) {
   const now = Date.now();
   stmts.updateBdc.run({
     id,
+    nom: 'nom' in patch ? (patch.nom || null) : cur.nom,
     fournisseur_id: patch.fournisseur_id ?? cur.fournisseur_id,
     date_envoi: patch.date_envoi ?? cur.date_envoi,
     date_eta: patch.date_eta ?? cur.date_eta,
@@ -892,6 +900,7 @@ function replaceBdcLignes(bdc_id, lignes = []) {
     });
     stmts.updateBdc.run({
       id: bdc_id,
+      nom: cur.nom,
       fournisseur_id: cur.fournisseur_id,
       date_envoi: cur.date_envoi,
       date_eta: cur.date_eta,

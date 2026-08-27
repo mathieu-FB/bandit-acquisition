@@ -328,7 +328,8 @@
               </tfoot>
             </table>
             <button class="action-btn" id="btnAddLine" style="margin-top:10px;">+ Ajouter une ligne</button>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:16px;">
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:16px;">
+              <label>Nom de la commande <input type="text" id="newBdcNom" placeholder="ex: Réappro Colliers essentielle Aug 2026" maxlength="120"><span style="display:block;font-size:11px;color:var(--muted);margin-top:2px;">Label libre pour retrouver dans l'historique</span></label>
               <label>Date ETA <input type="date" id="newBdcEta"><span id="newBdcEtaHint" style="display:block;font-size:11px;color:var(--muted);margin-top:2px;">Calculée auto : aujourd'hui + max(lead time SKU)</span></label>
               <label>Notes <input type="text" id="newBdcNotes" placeholder="Notes libres sur cette commande"></label>
             </div>
@@ -1322,31 +1323,174 @@
       window.location.href = url;
     });
 
-    // Pré-remplir depuis propositions du moteur
+    // Pré-remplir depuis propositions du moteur — ouvre un modal permettant de
+    // filtrer par famille et de choisir le type de besoin à couvrir :
+    //   - "web" (Shopify) uniquement : couvre demandeFenetre
+    //   - "distrib" B2B uniquement    : couvre sortiesDistribFenetre (BDC distributeurs)
+    //   - "both" (défaut)             : couvre le total (proposition_qte du moteur)
     document.getElementById('btnPrefillFromEngine').addEventListener('click', async () => {
       const fid = document.getElementById('newBdcFournisseur').value;
-      const res = await fetch(`/api/stock/alertes/enriched?niveaux=RUPTURE,CRITIQUE,URGENT,A_COMMANDER`, { credentials: 'same-origin' });
+      if (!fid) { alert('Sélectionne d\'abord un fournisseur.'); return; }
+      const res = await fetch(`/api/stock/alertes/enriched?niveaux=RUPTURE,CRITIQUE,URGENT,A_COMMANDER,OK&includeOk=1`, { credentials: 'same-origin' });
       const data = await res.json();
-      // Récupère les SKU du groupe fournisseur choisi (ou "sans fournisseur" si fid vide)
       let items = [];
       for (const g of data.grouped) {
-        const matches = fid ? String(g.fournisseur_id) === String(fid) : !g.fournisseur_id;
-        if (matches) items = items.concat(g.items);
+        if (String(g.fournisseur_id) === String(fid)) items = items.concat(g.items);
       }
-      const propositions = items.filter(i => (i.proposition_qte || 0) > 0);
-      if (propositions.length === 0) {
-        alert('Aucune proposition avec qté > 0 pour ce fournisseur.');
+      // Ne garde que ceux avec au moins un besoin (web OU distrib > 0). On INCLUT
+      // les SKU niveau OK si un besoin distrib existe — utile pour couvrir un BDC
+      // distributeur même quand le stock est OK côté web.
+      const eligible = items.filter(i => (i.demandeFenetre || 0) > 0 || (i.sortiesDistribFenetre || 0) > 0);
+      if (eligible.length === 0) {
+        alert('Aucun besoin (web ou distrib) pour ce fournisseur.');
         return;
       }
-      if (!confirm(`Ajouter ${propositions.length} lignes depuis les propositions du moteur ?`)) return;
-      NEW_BDC_LINES = propositions.map(p => ({
-        sku: p.sku,
-        nom_court: p.nom_court,
-        qte_commandee: p.proposition_qte,
-        pa_unitaire: p.pa_vs || 0,
-      }));
-      renderNewBdcLines();
+      openPrefillModal(fid, eligible);
     });
+
+    // Modal filtre + confirmation pour le prefill.
+    function openPrefillModal(fournisseurId, eligible) {
+      const modal = document.getElementById('modal');
+      const body = document.getElementById('modalBody');
+      const fournisseurNom = (FOURNISSEURS.find(f => String(f.id) === String(fournisseurId)) || {}).nom || 'Fournisseur';
+      document.getElementById('modalTitle').textContent = `Pré-remplir — ${fournisseurNom}`;
+
+      // Groupe par famille pour la sélection multi
+      const famAgg = {};
+      for (const it of eligible) {
+        const f = it.famille || '(sans)';
+        if (!famAgg[f]) famAgg[f] = { famille: f, nbSku: 0, totalDemandeWeb: 0, totalDemandeDistrib: 0 };
+        famAgg[f].nbSku++;
+        famAgg[f].totalDemandeWeb += (it.demandeFenetre || 0);
+        famAgg[f].totalDemandeDistrib += (it.sortiesDistribFenetre || 0);
+      }
+      const familles = Object.values(famAgg).sort((a, b) => a.famille.localeCompare(b.famille));
+
+      const famRows = familles.map(f => `
+        <label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--border);font-size:13px;">
+          <input type="checkbox" data-prefill-fam="${escapeAttr(f.famille)}" checked>
+          <span style="flex:1;">${escapeHtml(f.famille)}</span>
+          <span style="color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums;">
+            ${f.nbSku} SKU · Web ${fmtInt(f.totalDemandeWeb)}u · Distrib ${fmtInt(f.totalDemandeDistrib)}u
+          </span>
+        </label>
+      `).join('');
+
+      body.innerHTML = `
+        <div style="margin-bottom:14px;font-size:13px;color:var(--muted);">
+          Sélectionne les familles à inclure et le type de besoin à couvrir. Les quantités seront calculées à la volée (soustraites du stock actuel + BDC en cours, arrondies au colisage/MOQ).
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
+          <div>
+            <h4 style="margin:0 0 8px;font-size:13px;">Type de besoin à couvrir</h4>
+            <div style="border:1px solid var(--border);border-radius:6px;padding:10px 12px;">
+              <label style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px;">
+                <input type="radio" name="prefill-mode" value="both" checked>
+                <strong>Les deux</strong> <span style="color:var(--muted);font-size:11px;">(défaut — proposition moteur complète)</span>
+              </label>
+              <label style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px;">
+                <input type="radio" name="prefill-mode" value="web">
+                Web uniquement <span style="color:var(--muted);font-size:11px;">(demande Shopify)</span>
+              </label>
+              <label style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px;">
+                <input type="radio" name="prefill-mode" value="distrib">
+                Distributeur B2B uniquement <span style="color:var(--muted);font-size:11px;">(sorties BDC distributeur)</span>
+              </label>
+            </div>
+          </div>
+
+          <div>
+            <h4 style="margin:0 0 8px;font-size:13px;">Familles à inclure</h4>
+            <div style="display:flex;gap:8px;margin-bottom:6px;">
+              <button class="action-btn" onclick="togglePrefillFams(true)" style="font-size:11px;">Tout cocher</button>
+              <button class="action-btn" onclick="togglePrefillFams(false)" style="font-size:11px;">Tout décocher</button>
+            </div>
+            <div style="border:1px solid var(--border);border-radius:6px;max-height:260px;overflow:auto;">
+              ${famRows}
+            </div>
+          </div>
+        </div>
+
+        <div id="prefillSummary" style="background:#f9fafb;padding:10px 12px;border-radius:6px;font-size:12px;color:var(--muted);margin-bottom:16px;"></div>
+
+        <div style="display:flex;gap:10px;justify-content:flex-end;">
+          <button class="action-btn" onclick="document.getElementById('modal').classList.remove('active')">Annuler</button>
+          <button id="btnConfirmPrefill" style="background:var(--primary);color:#fff;">Ajouter les lignes</button>
+        </div>
+      `;
+
+      modal.classList.add('active');
+
+      // Store eligible items on window for the confirm handler
+      window.__PREFILL_ELIGIBLE = eligible;
+
+      function updateSummary() {
+        const mode = body.querySelector('input[name="prefill-mode"]:checked').value;
+        const selectedFams = new Set(Array.from(body.querySelectorAll('input[data-prefill-fam]:checked')).map(x => x.dataset.prefillFam));
+        const lines = computePrefillLines(eligible, selectedFams, mode);
+        const totalQte = lines.reduce((s, l) => s + l.qte_commandee, 0);
+        const totalMt = lines.reduce((s, l) => s + l.qte_commandee * (l.pa_unitaire || 0), 0);
+        document.getElementById('prefillSummary').innerHTML =
+          `<strong>${lines.length} lignes</strong> · <strong>${fmtInt(totalQte)} unités</strong> · <strong>${fmtEur(totalMt)}</strong> — mode: ${mode}`;
+      }
+      body.querySelectorAll('input[name="prefill-mode"], input[data-prefill-fam]').forEach(el => {
+        el.addEventListener('change', updateSummary);
+      });
+      updateSummary();
+
+      document.getElementById('btnConfirmPrefill').addEventListener('click', () => {
+        const mode = body.querySelector('input[name="prefill-mode"]:checked').value;
+        const selectedFams = new Set(Array.from(body.querySelectorAll('input[data-prefill-fam]:checked')).map(x => x.dataset.prefillFam));
+        const lines = computePrefillLines(eligible, selectedFams, mode);
+        if (lines.length === 0) { alert('Aucune ligne à ajouter (aucun besoin pour cette sélection).'); return; }
+        NEW_BDC_LINES = lines;
+        renderNewBdcLines();
+        modal.classList.remove('active');
+        // Recalcul ETA si dispo
+        if (typeof recomputeEtaFromLines === 'function') recomputeEtaFromLines();
+      });
+    }
+
+    // Cocher/décocher toutes les familles dans le modal de prefill.
+    function togglePrefillFams(state) {
+      document.querySelectorAll('input[data-prefill-fam]').forEach(cb => { cb.checked = state; cb.dispatchEvent(new Event('change')); });
+    }
+
+    // Calcule les lignes à créer selon le mode + familles sélectionnées.
+    // Réplique la logique d'arrondi MOQ/colisage du moteur (computeProposition).
+    function computePrefillLines(eligible, selectedFams, mode) {
+      const lines = [];
+      for (const it of eligible) {
+        if (!selectedFams.has(it.famille || '(sans)')) continue;
+        let besoin = 0;
+        if (mode === 'both') {
+          // Utilise directement la proposition du moteur (déjà rounded avec MOQ/colisage/plancher)
+          besoin = it.proposition_qte || 0;
+        } else {
+          const demandeCiblee = mode === 'web'
+            ? (it.demandeFenetre || 0)
+            : (it.sortiesDistribFenetre || 0);
+          const stock = it.stockActuel || 0;
+          const enCours = it.enCoursUtiles || 0;
+          const brut = Math.max(0, demandeCiblee - stock - enCours);
+          const colisage = it.colisage_effectif || 1;
+          const moq = it.moq_effectif || 1;
+          let qte = Math.ceil(brut / colisage) * colisage;
+          if (qte > 0 && qte < moq) qte = Math.ceil(moq / colisage) * colisage;
+          if (brut === 0) qte = 0;
+          besoin = qte;
+        }
+        if (besoin <= 0) continue;
+        lines.push({
+          sku: it.sku,
+          nom_court: it.nom_court || '',
+          qte_commandee: besoin,
+          pa_unitaire: it.pa_unitaire || it.pa_vs || 0,
+        });
+      }
+      return lines;
+    }
 
     // Import CSV commande distributeur (bouton dans sous-onglet Commandes distributeurs)
     document.getElementById('btnImportCd').addEventListener('click', () => {
@@ -1487,6 +1631,7 @@
       const etaVal = document.getElementById('newBdcEta').value;
       const payload = {
         fournisseur_id: fid,
+        nom: document.getElementById('newBdcNom').value.trim() || null,
         statut,
         date_envoi: statut === 'envoye' ? new Date().toISOString() : null,
         date_eta: etaVal || null,
@@ -1512,6 +1657,7 @@
       renderNewBdcLines();
       document.getElementById('newBdcEta').value = '';
       document.getElementById('newBdcNotes').value = '';
+      document.getElementById('newBdcNom').value = '';
       // Switch to en-cours tab
       setTimeout(() => {
         document.querySelector('#tab-bdc .subtab-btn[data-subtab="en-cours"]').click();
@@ -1554,6 +1700,7 @@
       const q = (document.getElementById(searchId).value || '').trim().toLowerCase();
       const filtered = q ? items.filter(b =>
         (b.numero || '').toLowerCase().includes(q) ||
+        (b.nom || '').toLowerCase().includes(q) ||
         (b.fournisseur_nom || '').toLowerCase().includes(q)
       ) : items;
       if (filtered.length === 0) {
@@ -1562,7 +1709,10 @@
       }
       const rows = filtered.map(b => `
         <tr>
-          <td><strong>${escapeHtml(b.numero)}</strong></td>
+          <td>
+            <strong>${escapeHtml(b.numero)}</strong>
+            ${b.nom ? `<div style="font-size:11px;color:var(--muted);margin-top:2px;">${escapeHtml(b.nom)}</div>` : ''}
+          </td>
           <td>${escapeHtml(b.fournisseur_nom || '—')}</td>
           <td>${fmtDate(b.date_creation ? new Date(b.date_creation).toISOString() : null)}</td>
           <td>${fmtDate(b.date_envoi ? new Date(b.date_envoi).toISOString() : null)}</td>
@@ -1616,7 +1766,7 @@
       const res = await fetch(`/api/stock/bdc/${id}`, { credentials: 'same-origin' });
       const b = await res.json();
       if (!res.ok) { body.innerHTML = `<div class="empty-state">Erreur: ${b.error}</div>`; return; }
-      document.getElementById('modalTitle').textContent = `BDC ${b.numero} — ${b.fournisseur ? b.fournisseur.nom : '—'}`;
+      document.getElementById('modalTitle').textContent = `BDC ${b.numero}${b.nom ? ` · ${b.nom}` : ''} — ${b.fournisseur ? b.fournisseur.nom : '—'}`;
       const metrics = [
         { l: 'Statut', v: `<span class="badge ${STATUT_CLS[b.statut]}">${STATUT_LABELS[b.statut]}</span>` },
         { l: 'Créé le', v: fmtDate(b.date_creation ? new Date(b.date_creation).toISOString() : null) },
