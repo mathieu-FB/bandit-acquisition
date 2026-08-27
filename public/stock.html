@@ -1548,40 +1548,94 @@
       const body = document.getElementById('modalBody');
       document.getElementById('modalTitle').textContent = `Import commande distributeur — ${fileName}`;
       modal.classList.add('active');
-      const rows = data.rows.map((r) => `
+
+      // Stock coverage : couleur selon le % couvert (rouge < 50, orange < 100, vert = 100)
+      const covColor = (pct) => pct >= 100 ? '#065f46' : pct >= 50 ? '#b45309' : '#991b1b';
+
+      const rows = data.rows.map((r) => {
+        const covered = r.in_referentiel ? (r.stock_couverture_qte || 0) : 0;
+        const pct = r.in_referentiel ? (r.stock_couverture_pct || 0) : 0;
+        const shortfall = r.in_referentiel ? Math.max(0, r.qte_commandee - covered) : 0;
+        return `
         <tr style="${r.in_referentiel ? '' : 'background:#fee2e2;'}">
           <td style="font-family:monospace;font-size:12px;">${escapeHtml(r.sku)}</td>
           <td style="font-size:12px;">${escapeHtml(r.nom_ref || r.nom_csv || '—')}</td>
-          <td style="font-family:monospace;font-size:11px;color:var(--muted);">${escapeHtml(r.ean_csv || '')}</td>
-          <td style="text-align:right;">${r.qte_commandee}</td>
-          <td>${r.in_referentiel ? '<span class="badge ok">OK</span>' : '<span class="badge rupture">Inconnu</span>'}</td>
-        </tr>`).join('');
+          <td style="text-align:right;font-variant-numeric:tabular-nums;">${r.qte_commandee}</td>
+          <td style="text-align:right;font-variant-numeric:tabular-nums;">${r.in_referentiel ? fmtInt(r.stock_actuel || 0) : '—'}</td>
+          <td style="text-align:right;">
+            ${r.in_referentiel
+              ? `<span style="color:${covColor(pct)};font-weight:600;">${pct}%</span><div style="font-size:10px;color:var(--muted);">${fmtInt(covered)}/${fmtInt(r.qte_commandee)}${shortfall > 0 ? ` · <strong style="color:#991b1b;">manque ${fmtInt(shortfall)}</strong>` : ''}</div>`
+              : '<span class="badge rupture">Inconnu</span>'
+            }
+          </td>
+          <td style="font-size:11px;color:var(--muted);">${escapeHtml(r.fournisseur_defaut_nom || '—')}</td>
+        </tr>`;
+      }).join('');
+
+      const cov = data.stock_coverage || {};
+      const globalCovColor = covColor(cov.pct_qte || 0);
       const metrics = [
         { l: 'Distributeur détecté', v: data.fournisseur_nom || '<em>?</em>' },
         { l: 'N° cmd distributeur', v: data.numero_commande || '<em>—</em>' },
-        { l: 'Date réception cmd', v: data.date_envoi || '<em>—</em>' },
-        { l: 'Lignes détectées', v: data.rows_count },
-        { l: 'SKU reconnus', v: `${data.matched_count} / ${data.rows_count}` },
-        { l: 'Total qté à livrer', v: fmtInt(data.total_qte) },
+        { l: 'Lignes / SKU reconnus', v: `${data.rows_count} · <strong>${data.matched_count} OK</strong>` },
+        { l: 'Total qté demandée', v: fmtInt(cov.total_qte || 0) },
+        { l: 'Couverture stock (qté)', v: `<span style="color:${globalCovColor};font-weight:600;">${cov.pct_qte || 0}%</span> <span style="font-size:11px;color:var(--muted);">${fmtInt(cov.couvert_qte || 0)}/${fmtInt(cov.total_qte || 0)} u</span>` },
+        { l: 'Couverture stock (valeur)', v: `<span style="color:${covColor(cov.pct_val || 0)};font-weight:600;">${cov.pct_val || 0}%</span> <span style="font-size:11px;color:var(--muted);">${fmtEur(cov.couvert_val || 0)} / ${fmtEur(cov.total_val || 0)}</span>` },
       ];
+
       const warningsBlock = (data.warnings || []).length > 0
         ? `<div style="background:#fef3c7;padding:10px;border-radius:6px;margin-bottom:12px;font-size:12px;">
             <strong>⚠ ${data.warnings.length} warning(s)</strong>
             <ul style="margin:6px 0 0 20px;padding:0;">${data.warnings.slice(0, 5).map(w => `<li>${escapeHtml(w)}</li>`).join('')}</ul>
             ${data.warnings.length > 5 ? `<div style="margin-top:4px;color:var(--muted);">+ ${data.warnings.length - 5} autres...</div>` : ''}
           </div>` : '';
+
+      // Regroupe les lignes par fournisseur_defaut_id → un bouton "Créer BDC" par fournisseur
+      const byFournisseur = {};
+      for (const r of data.rows) {
+        if (!r.in_referentiel || !r.fournisseur_defaut_id) continue;
+        const key = r.fournisseur_defaut_id;
+        if (!byFournisseur[key]) byFournisseur[key] = { id: key, nom: r.fournisseur_defaut_nom, lignes: [], totalQte: 0, totalVal: 0 };
+        byFournisseur[key].lignes.push(r);
+        byFournisseur[key].totalQte += r.qte_commandee;
+        byFournisseur[key].totalVal += r.qte_commandee * (r.pa_vs || 0);
+      }
+      const fournisseursList = Object.values(byFournisseur).sort((a, b) => (a.nom || '').localeCompare(b.nom || ''));
+      const unassigned = data.rows.filter(r => r.in_referentiel && !r.fournisseur_defaut_id);
+      const bdcButtons = fournisseursList.map(f => `
+        <button class="btn-create-bdc-integral" data-fid="${f.id}"
+          style="background:var(--primary);color:#fff;border:none;padding:6px 12px;border-radius:6px;font-size:12px;cursor:pointer;margin:2px 4px 2px 0;">
+          🚚 Créer BDC ${escapeHtml(f.nom)} <span style="opacity:0.7;">(${f.lignes.length} SKU · ${fmtInt(f.totalQte)} u · ${fmtEur(f.totalVal)})</span>
+        </button>
+      `).join('');
+      const unassignedWarn = unassigned.length > 0
+        ? `<div style="font-size:11px;color:#991b1b;margin-top:6px;">⚠ ${unassigned.length} SKU sans fournisseur assigné — ignorés dans les BDC ci-dessus.</div>`
+        : '';
+
       const dtDefaut = new Date(Date.now() + 21 * 86400 * 1000).toISOString().slice(0, 10);
+      const stockDataAttr = escapeAttr(JSON.stringify(data));
       body.innerHTML = `
         <div style="background:#fef3c7;padding:12px;border-radius:6px;margin-bottom:14px;font-size:13px;">
-          <strong>ℹ️ Commande DISTRIBUTEUR</strong> — cette qté va <strong>SORTIR</strong> du stock à la date de livraison prévue, ce qui va <strong>AUGMENTER les besoins</strong> pour cette famille de SKU. Le moteur ajustera automatiquement les propositions de commande fournisseur en conséquence.
+          <strong>ℹ️ Commande DISTRIBUTEUR</strong> — cette qté va <strong>SORTIR</strong> du stock à la date de livraison prévue. Le moteur ajustera automatiquement les propositions de commande fournisseur en conséquence.
         </div>
         <div class="metrics">${metrics.map(m => `<div class="metric"><div class="lbl">${m.l}</div><div class="val">${m.v}</div></div>`).join('')}</div>
         ${warningsBlock}
-        <h4>Lignes à livrer (${data.rows_count})</h4>
+
+        <h4>Lignes à livrer (${data.rows_count}) — couverture stock immédiate</h4>
         <table class="forecast-table">
-          <thead><tr><th>SKU</th><th>Nom</th><th>EAN</th><th>Qté à livrer</th><th>Statut</th></tr></thead>
+          <thead>
+            <tr>
+              <th>SKU</th>
+              <th>Nom</th>
+              <th style="text-align:right;">Qté demandée</th>
+              <th style="text-align:right;">Stock actuel</th>
+              <th style="text-align:right;">Couverture</th>
+              <th>Fournisseur défaut</th>
+            </tr>
+          </thead>
           <tbody>${rows}</tbody>
         </table>
+
         <div style="margin-top:16px;background:#f9fafb;padding:12px;border-radius:6px;border:1px solid var(--border);">
           <div style="font-size:12px;font-weight:600;margin-bottom:8px;">Options de création</div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
@@ -1590,11 +1644,71 @@
           </div>
           <label style="margin-top:8px;display:block;">Notes <input type="text" id="csvDistribNotes" value="${escapeAttr(data.numero_commande ? `Import CSV — n° distributeur : ${data.numero_commande}` : 'Import CSV distributeur')}"></label>
         </div>
-        <div style="display:flex;gap:8px;margin-top:16px;">
-          <button onclick='confirmCsvDistributeurImport(${JSON.stringify(data).replace(/'/g, "&#39;")})' style="background:#b45309;">Créer commande distributeur (statut à livrer)</button>
+
+        <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;">
+          <button onclick='confirmCsvDistributeurImport(${stockDataAttr})' style="background:#b45309;">1️⃣ Créer commande distributeur (statut à livrer)</button>
           <button class="action-btn" onclick="document.getElementById('modal').classList.remove('active')">Annuler</button>
         </div>
-        <p style="margin-top:10px;font-size:11px;color:var(--muted);">Les SKU inconnus du référentiel (en rouge) seront rejetés à la création. Consulte l'onglet "Commandes distributeurs" pour marquer la livraison plus tard.</p>`;
+
+        ${fournisseursList.length > 0 ? `
+          <div style="margin-top:20px;padding:14px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;">
+            <div style="font-weight:600;font-size:13px;margin-bottom:4px;">2️⃣ Créer BDC fournisseur intégral (facultatif)</div>
+            <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+              Pour livraison directe fournisseur → distributeur (drop-shipping). Le BDC couvrira <strong>100% des qtés du BDC distributeur</strong> — sans soustraire ton stock actuel. Un BDC par fournisseur défaut. Tu ajusteras dans le formulaire Nouvelle commande.
+            </div>
+            <div>${bdcButtons}</div>
+            ${unassignedWarn}
+          </div>
+        ` : ''}
+
+        <p style="margin-top:12px;font-size:11px;color:var(--muted);">Les SKU inconnus du référentiel (en rouge) seront rejetés à la création.</p>`;
+
+      // Bind les boutons "Créer BDC intégral fournisseur"
+      body.querySelectorAll('.btn-create-bdc-integral').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const fid = Number(btn.dataset.fid);
+          const grp = fournisseursList.find(g => g.id === fid);
+          if (!grp) return;
+          startBdcIntegral(grp, data);
+        });
+      });
+    }
+
+    // Pré-remplit la Nouvelle commande fournisseur avec les lignes du BDC distributeur
+    // (qte = qte du distributeur, SANS soustraire le stock actuel — livraison directe).
+    async function startBdcIntegral(grp, distribData) {
+      document.getElementById('modal').classList.remove('active');
+      // Switch tabs : main → bdc, sub → nouveau
+      const mainTab = document.querySelector('nav.tabs button[data-tab="bdc"]');
+      if (mainTab) mainTab.click();
+      const subTab = document.querySelector('#tab-bdc .subtab-btn[data-subtab="nouveau"]');
+      if (subTab) subTab.click();
+      // Attendre que le select fournisseur soit peuplé
+      const sel = document.getElementById('newBdcFournisseur');
+      for (let i = 0; i < 30 && sel.options.length <= 1; i++) {
+        await new Promise(r => setTimeout(r, 50));
+      }
+      sel.value = String(grp.id);
+      sel.dispatchEvent(new Event('change'));
+      // Reset + prefill
+      NEW_BDC_LINES.length = 0;
+      for (const l of grp.lignes) {
+        NEW_BDC_LINES.push({
+          sku: l.sku,
+          nom_court: l.nom_ref || l.nom_csv || '',
+          qte_commandee: l.qte_commandee,
+          pa_unitaire: l.pa_vs || 0,
+        });
+      }
+      renderNewBdcLines();
+      // Nom + notes auto
+      const distribNom = distribData.fournisseur_nom || 'distributeur';
+      const numExt = distribData.numero_commande ? ` #${distribData.numero_commande}` : '';
+      const today = new Date().toLocaleDateString('fr-FR');
+      document.getElementById('newBdcNom').value = `Drop-ship ${distribNom}${numExt}`;
+      document.getElementById('newBdcNotes').value = `Livraison directe fournisseur → ${distribNom} · BDC distributeur${numExt} · Créé le ${today}`;
+      if (typeof recomputeEtaFromLines === 'function') recomputeEtaFromLines();
+      document.getElementById('newBdcLignesCard').scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
 
     async function confirmCsvDistributeurImport(parsedData) {
@@ -1624,9 +1738,22 @@
       });
       const data = await res.json();
       if (!res.ok) { alert(`Erreur création: ${data.error}`); return; }
-      alert(`✓ Commande distributeur ${data.numero_interne} créée avec ${data.lignes_creees} lignes${data.lignes_rejetees.length ? ` · ${data.lignes_rejetees.length} rejetés` : ''}`);
-      document.getElementById('modal').classList.remove('active');
-      // Recharge la liste (on est déjà sur le sous-onglet distributeurs)
+      // Ne ferme PAS le modal — le user peut vouloir enchaîner avec un BDC
+      // fournisseur intégral (drop-shipping) sans re-uploader le CSV.
+      // On désactive le bouton "Créer commande distributeur" et on montre un
+      // bandeau vert de confirmation à la place.
+      const zoneBtn = document.querySelector('button[onclick^="confirmCsvDistributeurImport"]');
+      if (zoneBtn) {
+        const parent = zoneBtn.parentElement;
+        parent.innerHTML = `
+          <div style="background:#d1fae5;color:#065f46;padding:10px 14px;border-radius:6px;font-size:13px;flex:1;">
+            ✓ Commande distributeur <strong>${escapeHtml(data.numero_interne)}</strong> créée (${data.lignes_creees} lignes${data.lignes_rejetees.length ? ` · ${data.lignes_rejetees.length} rejetés` : ''}).
+            Tu peux maintenant créer un BDC fournisseur intégral ci-dessous, ou fermer.
+          </div>
+          <button class="action-btn" onclick="document.getElementById('modal').classList.remove('active');loadCommandesDistributeur();">Fermer</button>
+        `;
+      }
+      // Recharge la liste en arrière-plan
       loadCommandesDistributeur();
     }
 

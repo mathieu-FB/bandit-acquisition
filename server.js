@@ -6566,6 +6566,41 @@ app.post('/api/stock/bdc/parse-csv-fournisseur', stockUpload.single('csv'), (req
     let text = req.file.buffer.toString('utf-8');
     if (text.includes('�')) text = req.file.buffer.toString('latin1');
     const parsed = stockCsvImport.parseFournisseurCsv(text);
+    // Enrichit chaque ligne avec les infos nécessaires à l'affichage :
+    // stock_actuel (couverture immédiate), fournisseur_defaut (pour créer un BDC
+    // fournisseur intégral), et pa_vs (valorisation).
+    const fournisseursById = {};
+    for (const f of stockDb.listFournisseurs()) fournisseursById[f.id] = f;
+    let coverageQte = 0, totalQte = 0, coverageVal = 0, totalVal = 0;
+    for (const r of parsed.rows || []) {
+      if (!r.in_referentiel) continue;
+      const ref = stockDb.getReferentielSku(r.sku);
+      if (!ref) continue;
+      const stock = (stockDb.getStockActuel(r.sku) || {}).stock_dispo || 0;
+      const pa = ref.pa_vs != null ? ref.pa_vs : (ref.pa_dernier != null ? ref.pa_dernier : null);
+      const fournisseur = ref.fournisseur_defaut_id ? fournisseursById[ref.fournisseur_defaut_id] : null;
+      const qteCouv = Math.min(stock, r.qte_commandee);
+      r.stock_actuel = stock;
+      r.pa_vs = pa;
+      r.fournisseur_defaut_id = ref.fournisseur_defaut_id || null;
+      r.fournisseur_defaut_nom = fournisseur ? fournisseur.nom : null;
+      r.stock_couverture_qte = qteCouv;
+      r.stock_couverture_pct = r.qte_commandee > 0 ? Math.round((qteCouv / r.qte_commandee) * 100) : 0;
+      totalQte += r.qte_commandee;
+      coverageQte += qteCouv;
+      if (pa != null) {
+        totalVal += r.qte_commandee * pa;
+        coverageVal += qteCouv * pa;
+      }
+    }
+    parsed.stock_coverage = {
+      total_qte: totalQte,
+      couvert_qte: coverageQte,
+      pct_qte: totalQte > 0 ? Math.round((coverageQte / totalQte) * 100) : 0,
+      total_val: Number(totalVal.toFixed(2)),
+      couvert_val: Number(coverageVal.toFixed(2)),
+      pct_val: totalVal > 0 ? Math.round((coverageVal / totalVal) * 100) : 0,
+    };
     res.json(parsed);
   } catch (err) {
     console.error('[Stock] parse CSV fournisseur error:', err.message);
