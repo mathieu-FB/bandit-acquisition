@@ -488,16 +488,17 @@ function runForSku({ sku, ref, previsions, saisonaliteByFamille, famillesParam, 
   // s'ajoutent à la demande forecast (non couvertes par les ventes Shopify).
   const commandesDistribLignes = stockDb.getCommandesDistributeurALivrerForSku(sku);
   const leadTimeJours = ref.lead_time_jours != null ? ref.lead_time_jours : DEFAULTS.leadTimeJours;
-  // Priorité : param famille (défini dans stock_parametres_famille) → xlsx → défaut global.
-  // Le param famille override la matrice pour permettre au user de recalibrer par famille sans
-  // toucher au fichier Excel source.
+  // Priorité : param famille (stock_parametres_famille) → défaut global.
+  // La couverture matrice au niveau SKU (referentiel_sku.couverture_visee_jours)
+  // est ignorée — considérée obsolète. Le pilotage se fait uniquement par
+  // famille (override manuel dans stock_parametres_famille) ou fallback global.
   const famParam = famillesParam[`${ref.famille}|${ref.animal}`] || {};
   const couvertureViseeJours = famParam.couverture_visee_jours != null
     ? famParam.couverture_visee_jours
-    : (ref.couverture_visee_jours != null ? ref.couverture_visee_jours : DEFAULTS.couvertureViseeJours);
+    : DEFAULTS.couvertureViseeJours;
   const couvertureViseeSource = famParam.couverture_visee_jours != null
     ? 'param_famille'
-    : (ref.couverture_visee_jours != null ? 'matrice' : 'defaut_global');
+    : 'defaut_global';
 
   // Complétude check for niveau — seuls les champs qui empêchent le calcul de
   // besoin sont bloquants. Le PA n'est PAS bloquant : sans lui, la qté est

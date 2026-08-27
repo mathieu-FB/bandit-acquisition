@@ -1063,10 +1063,12 @@
           <h4>Détail proposition</h4>
           <table class="forecast-table">
             <tbody>
-              <tr><td>Demande sur fenêtre ${p.horizonJours} j</td><td><strong>${fmtInt(p.demandeFenetre)} u</strong></td></tr>
+              <tr><td>Demande Shopify sur fenêtre ${p.horizonJours} j</td><td><strong>${fmtInt(p.demandeFenetre)} u</strong></td></tr>
+              ${p.sortiesDistribFenetre > 0 ? `<tr><td>Sorties distributeur B2B (dans la fenêtre)</td><td><strong style="color:#b45309;">+${fmtInt(p.sortiesDistribFenetre)} u</strong></td></tr>
+              <tr style="border-top:1px solid var(--border);"><td>Demande totale fenêtre</td><td><strong>${fmtInt(p.demandeFenetreTotale)} u</strong></td></tr>` : ''}
               <tr><td>Stock actuel</td><td>-${fmtInt(p.stockActuel)} u</td></tr>
               <tr><td>En-cours utiles (BDC)</td><td>-${fmtInt(p.enCoursUtiles)} u</td></tr>
-              <tr><td>Brut à commander</td><td>${fmtInt(p.brut)} u</td></tr>
+              <tr><td>Brut à commander</td><td>${fmtInt(p.brut)} u${p.brutPlancher != null ? ` <span style="color:var(--muted);font-size:11px;">(plancher couverture ${fmtInt(p.brutPlancher)} u appliqué)</span>` : ''}</td></tr>
               <tr><td>Arrondi (MOQ ${p.moq}, colisage ${p.colisage})</td><td><strong>${fmtInt(p.qte)} u</strong></td></tr>
               <tr><td>Montant (PA ${fmtEur(p.pa_unitaire)})</td><td><strong>${fmtEur(p.montant)}</strong></td></tr>
             </tbody>
