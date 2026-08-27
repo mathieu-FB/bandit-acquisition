@@ -82,11 +82,33 @@ function loadState() {
   for (const row of stockDb.listStockActuel()) {
     stockActuel[row.sku] = row.stock_dispo || 0;
   }
+  // Index en 2 dimensions : (famille, animal) → { '': paramDefault, 'essentielle': paramTag, ... }
+  // Permet une résolution O(1) au moment du lookup par SKU (voir resolveFamParam).
   const famillesParam = {};
   for (const f of stockDb.listParametresFamille()) {
-    famillesParam[`${f.famille}|${f.animal}`] = f;
+    const key = `${f.famille}|${f.animal}`;
+    if (!famillesParam[key]) famillesParam[key] = {};
+    famillesParam[key][String(f.shopify_tag_filter || '').toLowerCase()] = f;
   }
   return { previsions, stockActuel, famillesParam };
+}
+
+// Résout le param famille pour un ref donné en cascade :
+//   1. Si le SKU a des tags Shopify → tente un match tag exact (case-insensitive)
+//   2. Sinon → fallback au param par défaut '' de la (famille, animal)
+//   3. Sinon → {} (défauts codés dans DEFAULTS s'appliquent)
+// Retourne { param, tagMatched } — tagMatched = le tag ayant matché ou null.
+function resolveFamParam(ref, famillesParam) {
+  const pairKey = `${ref.famille}|${ref.animal}`;
+  const bucket = famillesParam[pairKey];
+  if (!bucket) return { param: {}, tagMatched: null };
+  const tags = String(ref.shopify_tags || '')
+    .split(',').map(t => t.trim().toLowerCase()).filter(Boolean);
+  for (const tag of tags) {
+    if (bucket[tag]) return { param: bucket[tag], tagMatched: tag };
+  }
+  if (bucket['']) return { param: bucket[''], tagMatched: null };
+  return { param: {}, tagMatched: null };
 }
 
 // ------------------------------------------------------------
@@ -238,7 +260,7 @@ const SEUIL_OUTLIER_BAS = 0.2;
 function forecastPerSku({ sku, ref, previsions, saisonaliteByFamille, famillesParam, today }) {
   const familleKey = `${ref.famille}|${ref.animal}`;
   const saisonalite = saisonaliteByFamille[familleKey] || {};
-  const famParam = famillesParam[familleKey] || {};
+  const { param: famParam } = resolveFamParam(ref, famillesParam);
   const coeffSec = famParam.coeff_securite != null ? famParam.coeff_securite : DEFAULTS.coeffSecurite;
   const overrideSais = famParam.coeff_saisonnalite || null;
   const tendance = deriveTendanceCoeff(previsions, today);
@@ -488,16 +510,15 @@ function runForSku({ sku, ref, previsions, saisonaliteByFamille, famillesParam, 
   // s'ajoutent à la demande forecast (non couvertes par les ventes Shopify).
   const commandesDistribLignes = stockDb.getCommandesDistributeurALivrerForSku(sku);
   const leadTimeJours = ref.lead_time_jours != null ? ref.lead_time_jours : DEFAULTS.leadTimeJours;
-  // Priorité : param famille (stock_parametres_famille) → défaut global.
-  // La couverture matrice au niveau SKU (referentiel_sku.couverture_visee_jours)
-  // est ignorée — considérée obsolète. Le pilotage se fait uniquement par
-  // famille (override manuel dans stock_parametres_famille) ou fallback global.
-  const famParam = famillesParam[`${ref.famille}|${ref.animal}`] || {};
+  // Priorité : param famille (stock_parametres_famille, avec cascade tag Shopify)
+  // → défaut global. La couverture matrice au niveau SKU est ignorée (obsolète).
+  // Le pilotage se fait uniquement par famille + optionnel override par tag.
+  const { param: famParam, tagMatched: famParamTag } = resolveFamParam(ref, famillesParam);
   const couvertureViseeJours = famParam.couverture_visee_jours != null
     ? famParam.couverture_visee_jours
     : DEFAULTS.couvertureViseeJours;
   const couvertureViseeSource = famParam.couverture_visee_jours != null
-    ? 'param_famille'
+    ? (famParamTag ? `param_famille_tag:${famParamTag}` : 'param_famille')
     : 'defaut_global';
 
   // Complétude check for niveau — seuls les champs qui empêchent le calcul de
@@ -576,6 +597,7 @@ function runForSku({ sku, ref, previsions, saisonaliteByFamille, famillesParam, 
     leadTimeJours,
     couvertureViseeJours,
     couvertureViseeSource,
+    famParamTag, // tag Shopify qui a matché le param famille (null si défaut)
     tendance: forecast.tendance,
     coeffSecurite: forecast.coeffSec,
     monthlyForecast: forecast.rows,

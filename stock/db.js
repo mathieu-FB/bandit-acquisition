@@ -77,9 +77,15 @@ CREATE INDEX IF NOT EXISTS idx_stock_ref_fournisseur ON stock_referentiel_sku(fo
 CREATE INDEX IF NOT EXISTS idx_stock_ref_variant ON stock_referentiel_sku(shopify_variant_id);
 CREATE INDEX IF NOT EXISTS idx_stock_ref_inventory_item ON stock_referentiel_sku(shopify_inventory_item_id);
 
+-- shopify_tag_filter permet d'avoir plusieurs entrées pour une même
+-- (famille, animal) selon un tag Shopify. Ex : (Colliers, Chien, 'essentielle')
+-- pour distinguer les colliers essentielle (B2B tendance forte) du reste.
+-- Empty string '' = param par défaut, s'applique aux SKU n'ayant aucun tag
+-- override plus spécifique. Le moteur cherche d'abord un match tag exact.
 CREATE TABLE IF NOT EXISTS stock_parametres_famille (
   famille TEXT NOT NULL,
   animal TEXT NOT NULL,
+  shopify_tag_filter TEXT NOT NULL DEFAULT '',
   couverture_visee_jours INTEGER DEFAULT 90,
   coeff_securite REAL DEFAULT 1.1,
   coeff_saisonnalite_json TEXT,
@@ -87,7 +93,7 @@ CREATE TABLE IF NOT EXISTS stock_parametres_famille (
   moq INTEGER,
   colisage INTEGER,
   updated_at INTEGER,
-  PRIMARY KEY (famille, animal)
+  PRIMARY KEY (famille, animal, shopify_tag_filter)
 );
 
 CREATE TABLE IF NOT EXISTS stock_previsions_mensuelles (
@@ -270,6 +276,36 @@ function init() {
   // pour certains SKU sans toucher aux autres lignes du même BDC.
   safeAlter(`ALTER TABLE stock_bdc_lignes ADD COLUMN date_eta_ligne INTEGER`);
   safeAlter(`ALTER TABLE stock_bdc_lignes ADD COLUMN qte_annulee_fournisseur INTEGER DEFAULT 0`);
+  // Migration stock_parametres_famille : ajout shopify_tag_filter dans la PK.
+  // SQLite ne permet pas ALTER TABLE pour changer la PK → recréation avec copie.
+  // Détecte l'absence de la colonne pour n'exécuter qu'une fois.
+  const hasTagCol = db.prepare(`SELECT 1 AS ok FROM pragma_table_info('stock_parametres_famille') WHERE name = 'shopify_tag_filter'`).get();
+  if (!hasTagCol) {
+    console.log('[Stock] Migration: stock_parametres_famille → ajout shopify_tag_filter dans la PK.');
+    db.exec(`
+      BEGIN;
+      CREATE TABLE stock_parametres_famille_v2 (
+        famille TEXT NOT NULL,
+        animal TEXT NOT NULL,
+        shopify_tag_filter TEXT NOT NULL DEFAULT '',
+        couverture_visee_jours INTEGER DEFAULT 90,
+        coeff_securite REAL DEFAULT 1.1,
+        coeff_saisonnalite_json TEXT,
+        coeff_tendance REAL DEFAULT 1.0,
+        moq INTEGER,
+        colisage INTEGER,
+        updated_at INTEGER,
+        PRIMARY KEY (famille, animal, shopify_tag_filter)
+      );
+      INSERT INTO stock_parametres_famille_v2
+        (famille, animal, shopify_tag_filter, couverture_visee_jours, coeff_securite, coeff_saisonnalite_json, coeff_tendance, moq, colisage, updated_at)
+        SELECT famille, animal, '', couverture_visee_jours, coeff_securite, coeff_saisonnalite_json, coeff_tendance, moq, colisage, updated_at
+          FROM stock_parametres_famille;
+      DROP TABLE stock_parametres_famille;
+      ALTER TABLE stock_parametres_famille_v2 RENAME TO stock_parametres_famille;
+      COMMIT;
+    `);
+  }
   prepareStatements();
   seedDefaults();
   // Cleanup des jobs "running" fantômes laissés par un redémarrage / crash du process.
@@ -318,15 +354,18 @@ function seedDefaults() {
     { famille: 'Fontaine', animal: 'Chat', couverture_visee_jours: 60, coeff_securite: 1.15, coeff_tendance: 1.0 },
   ];
   familles.forEach(f => {
-    const existing = stmts.selectParametreFamille.get(f.famille, f.animal);
+    const existing = stmts.selectParametreFamille.get(f.famille, f.animal, '');
     if (existing) return;
     stmts.upsertParametreFamille.run({
       famille: f.famille,
       animal: f.animal,
+      shopify_tag_filter: '',
       couverture_visee_jours: f.couverture_visee_jours,
       coeff_securite: f.coeff_securite,
       coeff_saisonnalite_json: null,
       coeff_tendance: f.coeff_tendance,
+      moq: null,
+      colisage: null,
       now,
     });
   });
@@ -435,11 +474,13 @@ function prepareStatements() {
     countReferentiel: db.prepare(`SELECT COUNT(*) AS n FROM stock_referentiel_sku`),
     selectByInventoryItemId: db.prepare(`SELECT * FROM stock_referentiel_sku WHERE shopify_inventory_item_id = ?`),
 
-    // ---- parametres_famille ----
+    // ---- parametres_famille (tri-clé : famille, animal, shopify_tag_filter) ----
+    // shopify_tag_filter = '' → applique à tous les SKU de la (famille, animal).
+    // Sinon match tag exact (lowercase) sur shopify_tags du SKU.
     upsertParametreFamille: db.prepare(`
-      INSERT INTO stock_parametres_famille (famille, animal, couverture_visee_jours, coeff_securite, coeff_saisonnalite_json, coeff_tendance, moq, colisage, updated_at)
-      VALUES (@famille, @animal, @couverture_visee_jours, @coeff_securite, @coeff_saisonnalite_json, @coeff_tendance, @moq, @colisage, @now)
-      ON CONFLICT(famille, animal) DO UPDATE SET
+      INSERT INTO stock_parametres_famille (famille, animal, shopify_tag_filter, couverture_visee_jours, coeff_securite, coeff_saisonnalite_json, coeff_tendance, moq, colisage, updated_at)
+      VALUES (@famille, @animal, @shopify_tag_filter, @couverture_visee_jours, @coeff_securite, @coeff_saisonnalite_json, @coeff_tendance, @moq, @colisage, @now)
+      ON CONFLICT(famille, animal, shopify_tag_filter) DO UPDATE SET
         couverture_visee_jours = excluded.couverture_visee_jours,
         coeff_securite = excluded.coeff_securite,
         coeff_saisonnalite_json = excluded.coeff_saisonnalite_json,
@@ -448,8 +489,9 @@ function prepareStatements() {
         colisage = excluded.colisage,
         updated_at = excluded.updated_at
     `),
-    selectParametreFamille: db.prepare(`SELECT * FROM stock_parametres_famille WHERE famille = ? AND animal = ?`),
-    selectAllParametresFamille: db.prepare(`SELECT * FROM stock_parametres_famille ORDER BY famille, animal`),
+    deleteParametreFamille: db.prepare(`DELETE FROM stock_parametres_famille WHERE famille = ? AND animal = ? AND shopify_tag_filter = ?`),
+    selectParametreFamille: db.prepare(`SELECT * FROM stock_parametres_famille WHERE famille = ? AND animal = ? AND shopify_tag_filter = ?`),
+    selectAllParametresFamille: db.prepare(`SELECT * FROM stock_parametres_famille ORDER BY famille, animal, shopify_tag_filter`),
 
     // ---- previsions_mensuelles ----
     upsertPrevisionMensuelle: db.prepare(`
@@ -683,10 +725,15 @@ function countReferentiel() { return stmts.countReferentiel.get().n; }
 function getSkuByInventoryItemId(inventoryItemId) { return stmts.selectByInventoryItemId.get(String(inventoryItemId)) || null; }
 
 // ------------------------ Paramètres famille ------------------------
-function upsertParametreFamille({ famille, animal, couverture_visee_jours = 90, coeff_securite = 1.15, coeff_saisonnalite = null, coeff_tendance = 1.0, moq = null, colisage = null }) {
+// shopify_tag_filter : chaîne lowercased comparée aux tags Shopify du SKU.
+// '' (default) = param par défaut de la famille, s'applique quand aucun override
+// tag ne match. Le moteur cherche d'abord un match tag exact (majorité des cas).
+function upsertParametreFamille({ famille, animal, shopify_tag_filter = '', couverture_visee_jours = 90, coeff_securite = 1.15, coeff_saisonnalite = null, coeff_tendance = 1.0, moq = null, colisage = null }) {
   const now = Date.now();
   stmts.upsertParametreFamille.run({
-    famille, animal, couverture_visee_jours, coeff_securite,
+    famille, animal,
+    shopify_tag_filter: String(shopify_tag_filter || '').trim().toLowerCase(),
+    couverture_visee_jours, coeff_securite,
     coeff_saisonnalite_json: coeff_saisonnalite ? JSON.stringify(coeff_saisonnalite) : null,
     coeff_tendance,
     moq: moq != null && moq > 0 ? Math.round(Number(moq)) : null,
@@ -694,8 +741,11 @@ function upsertParametreFamille({ famille, animal, couverture_visee_jours = 90, 
     now,
   });
 }
-function getParametreFamille(famille, animal) {
-  const r = stmts.selectParametreFamille.get(famille, animal);
+function deleteParametreFamille(famille, animal, shopify_tag_filter = '') {
+  return stmts.deleteParametreFamille.run(famille, animal, String(shopify_tag_filter || '').trim().toLowerCase()).changes;
+}
+function getParametreFamille(famille, animal, shopify_tag_filter = '') {
+  const r = stmts.selectParametreFamille.get(famille, animal, String(shopify_tag_filter || '').trim().toLowerCase());
   if (!r) return null;
   return { ...r, coeff_saisonnalite: r.coeff_saisonnalite_json ? safeJson(r.coeff_saisonnalite_json) : null };
 }
@@ -1318,7 +1368,7 @@ module.exports = {
   upsertReferentielSKUBulk, updateReferentielShopify, updateReferentielShopifyTags, updateReferentielOverrides,
   getReferentielSku, listReferentielAll, listReferentielActif, countReferentiel, getSkuByInventoryItemId,
   // parametres famille
-  upsertParametreFamille, getParametreFamille, listParametresFamille,
+  upsertParametreFamille, deleteParametreFamille, getParametreFamille, listParametresFamille,
   // previsions
   upsertPrevisionsMensuellesBulk, getPrevisionsForSku, countPrevisionsForSku, listAllPrevisions,
   // stock actuel

@@ -5884,9 +5884,13 @@ app.post('/api/stock/parametres-famille', express.json(), (req, res) => {
     if (!body.famille || !body.animal) {
       return res.status(400).json({ error: 'Champs requis: famille, animal' });
     }
+    // shopify_tag_filter est optionnel — vide = param par défaut famille.
+    // Sinon, override qui s'applique aux SKU ayant ce tag Shopify (exact, case-insensitive).
+    const tag = String(body.shopify_tag_filter || '').trim().toLowerCase();
     stockDb.upsertParametreFamille({
       famille: String(body.famille),
       animal: String(body.animal),
+      shopify_tag_filter: tag,
       couverture_visee_jours: body.couverture_visee_jours != null ? Number(body.couverture_visee_jours) : 90,
       coeff_securite: body.coeff_securite != null ? Number(body.coeff_securite) : 1.15,
       coeff_saisonnalite: body.coeff_saisonnalite || null,
@@ -5894,7 +5898,25 @@ app.post('/api/stock/parametres-famille', express.json(), (req, res) => {
       moq: body.moq != null ? Number(body.moq) : null,
       colisage: body.colisage != null ? Number(body.colisage) : null,
     });
-    res.json({ ok: true, param: stockDb.getParametreFamille(body.famille, body.animal) });
+    res.json({ ok: true, param: stockDb.getParametreFamille(body.famille, body.animal, tag) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE : retire un override tag (utile pour revenir au comportement défaut famille).
+// Body : { famille, animal, shopify_tag_filter } — tag_filter obligatoire non vide
+// (on refuse la suppression du param par défaut famille via cet endpoint pour éviter
+// une bavure — passe par upsert avec valeurs par défaut si vraiment souhaité).
+app.delete('/api/stock/parametres-famille', express.json(), (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const { famille, animal, shopify_tag_filter } = req.body || {};
+    if (!famille || !animal) return res.status(400).json({ error: 'Champs requis: famille, animal' });
+    const tag = String(shopify_tag_filter || '').trim().toLowerCase();
+    if (!tag) return res.status(400).json({ error: 'shopify_tag_filter requis (non vide) — pour supprimer un override tag uniquement' });
+    const changes = stockDb.deleteParametreFamille(famille, animal, tag);
+    res.json({ ok: true, deleted: changes });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -5906,9 +5928,11 @@ app.get('/api/stock/parametres-famille/set', (req, res) => {
   try {
     const { famille, animal } = req.query;
     if (!famille || !animal) return res.status(400).json({ error: 'Query requise: famille=&animal=' });
+    const tag = String(req.query.shopify_tag_filter || '').trim().toLowerCase();
     stockDb.upsertParametreFamille({
       famille: String(famille),
       animal: String(animal),
+      shopify_tag_filter: tag,
       couverture_visee_jours: req.query.couverture_visee_jours != null ? Number(req.query.couverture_visee_jours) : 90,
       coeff_securite: req.query.coeff_securite != null ? Number(req.query.coeff_securite) : 1.15,
       coeff_tendance: req.query.coeff_tendance != null ? Number(req.query.coeff_tendance) : 1.0,
@@ -5916,7 +5940,7 @@ app.get('/api/stock/parametres-famille/set', (req, res) => {
       colisage: req.query.colisage != null ? Number(req.query.colisage) : null,
       coeff_saisonnalite: null,
     });
-    res.json({ ok: true, param: stockDb.getParametreFamille(String(famille), String(animal)) });
+    res.json({ ok: true, param: stockDb.getParametreFamille(String(famille), String(animal), tag) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
