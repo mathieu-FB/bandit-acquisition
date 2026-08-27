@@ -1367,56 +1367,83 @@
       const familles = Object.values(famAgg).sort((a, b) => a.famille.localeCompare(b.famille));
 
       const famRows = familles.map(f => `
-        <label style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--border);font-size:13px;">
+        <label class="prefill-fam-row">
           <input type="checkbox" data-prefill-fam="${escapeAttr(f.famille)}" checked>
-          <span style="flex:1;">${escapeHtml(f.famille)}</span>
-          <span style="color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums;">
-            ${f.nbSku} SKU · Web ${fmtInt(f.totalDemandeWeb)}u · Distrib ${fmtInt(f.totalDemandeDistrib)}u
+          <span class="prefill-fam-name">${escapeHtml(f.famille)}</span>
+          <span class="prefill-fam-meta">
+            <strong>${f.nbSku}</strong> SKU
+            <span class="dot">·</span> Web <strong>${fmtInt(f.totalDemandeWeb)}</strong> u
+            <span class="dot">·</span> Distrib <strong>${fmtInt(f.totalDemandeDistrib)}</strong> u
           </span>
         </label>
       `).join('');
 
       body.innerHTML = `
-        <div style="margin-bottom:14px;font-size:13px;color:var(--muted);">
-          Sélectionne les familles à inclure et le type de besoin à couvrir. Les quantités seront calculées à la volée (soustraites du stock actuel + BDC en cours, arrondies au colisage/MOQ).
+        <style>
+          .prefill-mode-row { display:grid; grid-template-columns: 24px 1fr; gap:10px; align-items:start; padding:10px 12px; border-bottom:1px solid var(--border); cursor:pointer; }
+          .prefill-mode-row:last-child { border-bottom:none; }
+          .prefill-mode-row input { margin-top:3px; }
+          .prefill-mode-title { font-size:13px; font-weight:600; line-height:1.3; }
+          .prefill-mode-desc { font-size:11px; color:var(--muted); margin-top:2px; line-height:1.3; }
+          .prefill-fam-row { display:grid; grid-template-columns: 24px 1fr auto; gap:12px; align-items:center; padding:8px 12px; border-bottom:1px solid var(--border); font-size:13px; cursor:pointer; }
+          .prefill-fam-row:last-child { border-bottom:none; }
+          .prefill-fam-row:hover { background:#f9fafb; }
+          .prefill-fam-name { font-weight:500; }
+          .prefill-fam-meta { color:var(--muted); font-size:11px; font-variant-numeric:tabular-nums; white-space:nowrap; }
+          .prefill-fam-meta .dot { margin:0 4px; opacity:0.5; }
+        </style>
+
+        <div style="margin-bottom:16px;font-size:13px;color:var(--muted);line-height:1.5;">
+          Sélectionne les familles à inclure et le type de besoin à couvrir. Les quantités sont calculées à la volée (soustraites du stock actuel + BDC en cours, arrondies au colisage/MOQ).
         </div>
 
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px;">
+        <div style="display:grid;grid-template-columns:280px 1fr;gap:20px;margin-bottom:20px;">
           <div>
-            <h4 style="margin:0 0 8px;font-size:13px;">Type de besoin à couvrir</h4>
-            <div style="border:1px solid var(--border);border-radius:6px;padding:10px 12px;">
-              <label style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px;">
+            <h4 style="margin:0 0 8px;font-size:12px;text-transform:uppercase;color:var(--muted);letter-spacing:0.05em;">Type de besoin à couvrir</h4>
+            <div style="border:1px solid var(--border);border-radius:6px;overflow:hidden;">
+              <label class="prefill-mode-row">
                 <input type="radio" name="prefill-mode" value="both" checked>
-                <strong>Les deux</strong> <span style="color:var(--muted);font-size:11px;">(défaut — proposition moteur complète)</span>
+                <div>
+                  <div class="prefill-mode-title">Les deux</div>
+                  <div class="prefill-mode-desc">Défaut — proposition moteur complète (web + distributeur)</div>
+                </div>
               </label>
-              <label style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px;">
+              <label class="prefill-mode-row">
                 <input type="radio" name="prefill-mode" value="web">
-                Web uniquement <span style="color:var(--muted);font-size:11px;">(demande Shopify)</span>
+                <div>
+                  <div class="prefill-mode-title">Web uniquement</div>
+                  <div class="prefill-mode-desc">Couvre uniquement la demande Shopify prévue sur la fenêtre</div>
+                </div>
               </label>
-              <label style="display:flex;align-items:center;gap:8px;padding:4px 0;font-size:13px;">
+              <label class="prefill-mode-row">
                 <input type="radio" name="prefill-mode" value="distrib">
-                Distributeur B2B uniquement <span style="color:var(--muted);font-size:11px;">(sorties BDC distributeur)</span>
+                <div>
+                  <div class="prefill-mode-title">Distributeur B2B uniquement</div>
+                  <div class="prefill-mode-desc">Couvre uniquement les sorties BDC distributeur planifiées</div>
+                </div>
               </label>
             </div>
           </div>
 
           <div>
-            <h4 style="margin:0 0 8px;font-size:13px;">Familles à inclure</h4>
-            <div style="display:flex;gap:8px;margin-bottom:6px;">
-              <button class="action-btn" onclick="togglePrefillFams(true)" style="font-size:11px;">Tout cocher</button>
-              <button class="action-btn" onclick="togglePrefillFams(false)" style="font-size:11px;">Tout décocher</button>
+            <div style="display:flex;justify-content:space-between;align-items:center;margin:0 0 8px;">
+              <h4 style="margin:0;font-size:12px;text-transform:uppercase;color:var(--muted);letter-spacing:0.05em;">Familles à inclure</h4>
+              <div style="display:flex;gap:6px;">
+                <button class="action-btn" onclick="togglePrefillFams(true)" style="font-size:11px;padding:4px 10px;">Tout cocher</button>
+                <button class="action-btn" onclick="togglePrefillFams(false)" style="font-size:11px;padding:4px 10px;">Tout décocher</button>
+              </div>
             </div>
-            <div style="border:1px solid var(--border);border-radius:6px;max-height:260px;overflow:auto;">
+            <div style="border:1px solid var(--border);border-radius:6px;max-height:320px;overflow:auto;">
               ${famRows}
             </div>
           </div>
         </div>
 
-        <div id="prefillSummary" style="background:#f9fafb;padding:10px 12px;border-radius:6px;font-size:12px;color:var(--muted);margin-bottom:16px;"></div>
+        <div id="prefillSummary" style="background:#f9fafb;padding:12px 14px;border-radius:6px;font-size:13px;margin-bottom:16px;border:1px solid var(--border);"></div>
 
         <div style="display:flex;gap:10px;justify-content:flex-end;">
           <button class="action-btn" onclick="document.getElementById('modal').classList.remove('active')">Annuler</button>
-          <button id="btnConfirmPrefill" style="background:var(--primary);color:#fff;">Ajouter les lignes</button>
+          <button id="btnConfirmPrefill" style="background:var(--primary);color:#fff;border:none;padding:8px 16px;border-radius:6px;font-size:13px;font-weight:500;cursor:pointer;">Ajouter les lignes</button>
         </div>
       `;
 
@@ -1431,8 +1458,16 @@
         const lines = computePrefillLines(eligible, selectedFams, mode);
         const totalQte = lines.reduce((s, l) => s + l.qte_commandee, 0);
         const totalMt = lines.reduce((s, l) => s + l.qte_commandee * (l.pa_unitaire || 0), 0);
-        document.getElementById('prefillSummary').innerHTML =
-          `<strong>${lines.length} lignes</strong> · <strong>${fmtInt(totalQte)} unités</strong> · <strong>${fmtEur(totalMt)}</strong> — mode: ${mode}`;
+        const modeLabel = { both: 'Web + Distrib', web: 'Web uniquement', distrib: 'Distrib B2B uniquement' }[mode] || mode;
+        document.getElementById('prefillSummary').innerHTML = `
+          <div style="display:flex;justify-content:space-between;align-items:center;gap:20px;flex-wrap:wrap;">
+            <div><span style="color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:0.05em;">Récap</span> · <span style="font-size:11px;color:var(--muted);">mode ${modeLabel}</span></div>
+            <div style="display:flex;gap:16px;font-variant-numeric:tabular-nums;">
+              <div><strong>${lines.length}</strong> <span style="color:var(--muted);font-size:11px;">lignes</span></div>
+              <div><strong>${fmtInt(totalQte)}</strong> <span style="color:var(--muted);font-size:11px;">unités</span></div>
+              <div><strong>${fmtEur(totalMt)}</strong></div>
+            </div>
+          </div>`;
       }
       body.querySelectorAll('input[name="prefill-mode"], input[data-prefill-fam]').forEach(el => {
         el.addEventListener('change', updateSummary);
