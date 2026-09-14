@@ -9,6 +9,7 @@ const multer = require('multer');
 const { GoogleAdsApi, fromMicros } = require('google-ads-api');
 const { sendReport } = require('./daily-report');
 const cache = require('./cache');
+const metaSync = require('./meta-sync');
 const stockDb = require('./stock/db');
 const stockSeed = require('./stock/seed-matrice');
 const stockSync = require('./stock/sync-shopify');
@@ -3212,6 +3213,46 @@ async function fetchMetaCampaignInsights(start, end) {
 // Meta analysis cache — backed by cache.js (SQLite, 30min TTL)
 const META_CACHE_TTL = 30 * 60 * 1000;
 
+// ============================================================
+// META AD-LEVEL SYNC — backfill endpoint (admin-protégé)
+//
+// Long-running : fire-and-forget quand ?async=1, sinon await.
+// Body / query : start, end (YYYY-MM-DD). N'écrase pas — les upserts
+// sont idempotents via PK (day, ad_id).
+// ============================================================
+async function handleMetaBackfill(req, res) {
+  if (!requireAdmin(req, res)) return;
+  const start = String(req.query.start || (req.body && req.body.start) || '').trim();
+  const end = String(req.query.end || (req.body && req.body.end) || '').trim();
+  if (!start || !end) {
+    return res.status(400).json({ error: 'start et end requis (format YYYY-MM-DD)' });
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+    return res.status(400).json({ error: 'format attendu YYYY-MM-DD' });
+  }
+  const runAsync = req.query.async === '1';
+  if (runAsync) {
+    setImmediate(async () => {
+      try {
+        const stats = await metaSync.backfill(start, end);
+        console.log(`[Meta backfill async] ${start}→${end} — ${stats.daysDone}/${stats.daysAttempted} jours (${stats.totalAds} ads).`);
+      } catch (e) {
+        console.error(`[Meta backfill async] failed: ${e.message}`);
+      }
+    });
+    return res.status(202).json({ accepted: true, message: `Backfill ${start} → ${end} démarré en arrière-plan.` });
+  }
+  try {
+    const stats = await metaSync.backfill(start, end);
+    res.json({ ok: true, ...stats });
+  } catch (err) {
+    console.error('[Meta backfill] failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+}
+app.post('/api/meta/sync/backfill', express.json(), handleMetaBackfill);
+app.get('/api/meta/sync/backfill', handleMetaBackfill);
+
 app.get('/api/meta/analysis', async (req, res) => {
   try {
     const token = process.env.META_ACCESS_TOKEN;
@@ -4455,6 +4496,45 @@ cron.schedule('1 0 * * *', async () => {
     console.log('[Cron] Daily report sent successfully.');
   } catch (err) {
     console.error('[Cron] Daily report failed:', err);
+  }
+}, { timezone: 'Europe/Paris' });
+
+// ============================================================
+// CRON — Meta ad-level daily sync (05:00 Europe/Paris)
+//
+// Rejoue J-1 puis J-2 : les conversions Meta bougent encore à J-1
+// (attribution window 7d_click). Le second passage capte donc les
+// retards de reporting sur J-2. Coût réseau : 2 jours × ~3-5 pages
+// insights + N creative endpoints (skippés si déjà en cache).
+// ============================================================
+
+function formatDateParis(d) {
+  const parisStr = d.toLocaleString('en-US', { timeZone: 'Europe/Paris' });
+  const p = new Date(parisStr);
+  const yyyy = p.getFullYear();
+  const mm = String(p.getMonth() + 1).padStart(2, '0');
+  const dd = String(p.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+cron.schedule('0 5 * * *', async () => {
+  console.log('[Cron] Triggering Meta ad-level sync (J-1 puis J-2)...');
+  try {
+    if (!process.env.META_ACCESS_TOKEN || !process.env.META_AD_ACCOUNT_ID) {
+      console.log('[Cron] Meta ad-level sync skipped — META_ACCESS_TOKEN/AD_ACCOUNT_ID non configurés.');
+      return;
+    }
+    const now = new Date();
+    const jm1 = new Date(now); jm1.setDate(jm1.getDate() - 1);
+    const jm2 = new Date(now); jm2.setDate(jm2.getDate() - 2);
+    const dJm1 = formatDateParis(jm1);
+    const dJm2 = formatDateParis(jm2);
+    const s1 = await metaSync.syncDay(dJm1);
+    console.log(`[Cron] Meta syncDay(J-1=${dJm1}) — ${s1.adsUpserted} ads, ${s1.creativesFetched} new creatives`);
+    const s2 = await metaSync.syncDay(dJm2);
+    console.log(`[Cron] Meta syncDay(J-2=${dJm2}) — ${s2.adsUpserted} ads, ${s2.creativesFetched} new creatives`);
+  } catch (err) {
+    console.error('[Cron] Meta ad-level sync failed:', err.message);
   }
 }, { timezone: 'Europe/Paris' });
 
