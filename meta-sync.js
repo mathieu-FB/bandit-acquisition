@@ -133,11 +133,9 @@ function parseAdInsightRow(row) {
   // ThruPlays : champ dédié video_thruplay_watched_actions
   const thruplays = findActionValue(row.video_thruplay_watched_actions, ['video_view']);
 
-  // video_views_3s : préférer video_3_sec_watched_actions puis fallback actions[video_view]
-  let video_views_3s = findActionValue(row.video_3_sec_watched_actions, ['video_view']);
-  if (video_views_3s === 0) {
-    video_views_3s = findActionValue(row.actions, ['video_view']);
-  }
+  // video_views_3s : Meta expose la métrique 3s via actions[video_view]
+  // (comportement natif). Pas de champ dédié dans Ads Insights.
+  const video_views_3s = findActionValue(row.actions, ['video_view']);
 
   const video_p25 = findActionValue(row.video_p25_watched_actions, ['video_view']);
 
@@ -154,6 +152,10 @@ function parseAdInsightRow(row) {
 
 async function fetchAdDailyInsights(start, end) {
   const { token, accountId } = requireEnv();
+  // Note : le champ 'video_3_sec_watched_actions' n'existe PAS dans l'API
+  // Ads Insights (rejeté avec code 100). Meta expose la métrique 3s via
+  // actions[action_type='video_view'] (comportement natif). On récupère
+  // donc uniquement les champs dédiés qui existent réellement.
   const fields = [
     'ad_id', 'ad_name',
     'adset_id', 'adset_name',
@@ -161,7 +163,6 @@ async function fetchAdDailyInsights(start, end) {
     'spend', 'impressions', 'clicks',
     'actions', 'action_values',
     'reach', 'frequency',
-    'video_3_sec_watched_actions',
     'video_thruplay_watched_actions',
     'video_p25_watched_actions',
   ].join(',');
