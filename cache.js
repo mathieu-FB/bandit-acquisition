@@ -122,6 +122,70 @@ INSERT OR IGNORE INTO schema_meta(key, value) VALUES ('version', '1');
 `;
 
 // ------------------------------------------------------------
+// Meta ad-level persistence (schema version 2)
+//
+// New in v2: persistence pour la couche ad-level Meta, indépendante de
+// daily_metrics (qui reste account-level). Deux tables :
+//   - meta_ad_daily : 1 row par (day, ad_id) — spend + toutes les métriques
+//     dérivées, plus les IDs adset/campaign/creative pour join.
+//   - meta_creative : 1 row par creative_id — image/video ID, thumbnails,
+//     texte, + slots taxonomie (tags_json, taxonomy_version, tagged_at) —
+//     ces derniers ne sont PAS écrits par le sync courant, réservés pour
+//     l'étape taggage à venir.
+//
+// Migration idempotente via schema_meta version. Rejouée au démarrage si
+// version < 2 puis bumpée à '2'. Les CREATE TABLE IF NOT EXISTS restent
+// safe en soi mais on veut le versioning explicite pour tracer.
+// ------------------------------------------------------------
+const SCHEMA_V2 = `
+CREATE TABLE IF NOT EXISTS meta_ad_daily (
+  day TEXT NOT NULL,
+  ad_id TEXT NOT NULL,
+  adset_id TEXT,
+  campaign_id TEXT,
+  creative_id TEXT,
+  ad_name TEXT,
+  adset_name TEXT,
+  campaign_name TEXT,
+  spend REAL NOT NULL DEFAULT 0,
+  impressions INTEGER NOT NULL DEFAULT 0,
+  clicks INTEGER NOT NULL DEFAULT 0,
+  link_clicks INTEGER NOT NULL DEFAULT 0,
+  purchases INTEGER NOT NULL DEFAULT 0,
+  revenue REAL NOT NULL DEFAULT 0,
+  reach INTEGER NOT NULL DEFAULT 0,
+  frequency REAL NOT NULL DEFAULT 0,
+  video_views_3s INTEGER NOT NULL DEFAULT 0,
+  thruplays INTEGER NOT NULL DEFAULT 0,
+  video_p25 INTEGER NOT NULL DEFAULT 0,
+  fetched_at INTEGER NOT NULL,
+  PRIMARY KEY (day, ad_id)
+);
+CREATE INDEX IF NOT EXISTS idx_meta_ad_daily_day ON meta_ad_daily(day);
+CREATE INDEX IF NOT EXISTS idx_meta_ad_daily_creative ON meta_ad_daily(creative_id);
+CREATE INDEX IF NOT EXISTS idx_meta_ad_daily_campaign ON meta_ad_daily(campaign_id);
+CREATE INDEX IF NOT EXISTS idx_meta_ad_daily_ad ON meta_ad_daily(ad_id);
+
+CREATE TABLE IF NOT EXISTS meta_creative (
+  creative_id TEXT PRIMARY KEY,
+  image_hash TEXT,
+  video_id TEXT,
+  thumbnail_url TEXT,
+  image_url TEXT,
+  title TEXT,
+  body TEXT,
+  object_type TEXT,
+  first_seen TEXT,
+  last_seen TEXT,
+  tags_json TEXT,
+  taxonomy_version TEXT,
+  tagged_at INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_meta_creative_image_hash ON meta_creative(image_hash);
+CREATE INDEX IF NOT EXISTS idx_meta_creative_video_id ON meta_creative(video_id);
+`;
+
+// ------------------------------------------------------------
 // Lifecycle
 // ------------------------------------------------------------
 function init(opts = {}) {
@@ -143,6 +207,23 @@ function init(opts = {}) {
   db.pragma('foreign_keys = ON');
 
   db.exec(SCHEMA);
+  // Migration v1 → v2 : ad-level Meta tables. Idempotent — les CREATE TABLE
+  // IF NOT EXISTS sont safe, on bump juste la version pour tracer.
+  const currentVersion = (() => {
+    try {
+      const r = db.prepare(`SELECT value FROM schema_meta WHERE key = 'version'`).get();
+      return r ? r.value : '1';
+    } catch { return '1'; }
+  })();
+  if (currentVersion < '2') {
+    db.exec(SCHEMA_V2);
+    db.prepare(`INSERT INTO schema_meta(key, value) VALUES ('version', '2') ON CONFLICT(key) DO UPDATE SET value = '2'`).run();
+    console.log('[Cache] Migrated schema to v2 (meta_ad_daily + meta_creative).');
+  } else {
+    // Réexécute en safe pour capter les cas où la DB a été créée post-v2 mais où
+    // une des tables aurait disparu (dev). CREATE TABLE IF NOT EXISTS = no-op sinon.
+    db.exec(SCHEMA_V2);
+  }
   prepareStatements();
 
   // One-shot import of existing JSON files
@@ -267,6 +348,78 @@ function prepareStatements() {
       INSERT INTO schema_meta (key, value) VALUES (?, ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value
     `),
+
+    // meta_ad_daily
+    upsertMetaAdDaily: db.prepare(`
+      INSERT INTO meta_ad_daily (
+        day, ad_id, adset_id, campaign_id, creative_id,
+        ad_name, adset_name, campaign_name,
+        spend, impressions, clicks, link_clicks, purchases, revenue,
+        reach, frequency, video_views_3s, thruplays, video_p25,
+        fetched_at
+      ) VALUES (
+        @day, @ad_id, @adset_id, @campaign_id, @creative_id,
+        @ad_name, @adset_name, @campaign_name,
+        @spend, @impressions, @clicks, @link_clicks, @purchases, @revenue,
+        @reach, @frequency, @video_views_3s, @thruplays, @video_p25,
+        @fetched_at
+      )
+      ON CONFLICT(day, ad_id) DO UPDATE SET
+        adset_id      = excluded.adset_id,
+        campaign_id   = excluded.campaign_id,
+        creative_id   = excluded.creative_id,
+        ad_name       = excluded.ad_name,
+        adset_name    = excluded.adset_name,
+        campaign_name = excluded.campaign_name,
+        spend         = excluded.spend,
+        impressions   = excluded.impressions,
+        clicks        = excluded.clicks,
+        link_clicks   = excluded.link_clicks,
+        purchases     = excluded.purchases,
+        revenue       = excluded.revenue,
+        reach         = excluded.reach,
+        frequency     = excluded.frequency,
+        video_views_3s = excluded.video_views_3s,
+        thruplays     = excluded.thruplays,
+        video_p25     = excluded.video_p25,
+        fetched_at    = excluded.fetched_at
+    `),
+    selectMetaAdDailyRange: db.prepare(`SELECT * FROM meta_ad_daily WHERE day >= ? AND day <= ? ORDER BY day, ad_id`),
+    selectMetaAdDailySpendSum: db.prepare(`SELECT COALESCE(SUM(spend), 0) AS spend FROM meta_ad_daily WHERE day >= ? AND day <= ?`),
+    countMetaAdDailyForDay: db.prepare(`SELECT COUNT(*) AS n FROM meta_ad_daily WHERE day = ?`),
+    listMetaAdDailyDays: db.prepare(`SELECT DISTINCT day FROM meta_ad_daily ORDER BY day`),
+
+    // meta_creative
+    upsertMetaCreative: db.prepare(`
+      INSERT INTO meta_creative (
+        creative_id, image_hash, video_id, thumbnail_url, image_url,
+        title, body, object_type, first_seen, last_seen,
+        tags_json, taxonomy_version, tagged_at
+      ) VALUES (
+        @creative_id, @image_hash, @video_id, @thumbnail_url, @image_url,
+        @title, @body, @object_type, @first_seen, @last_seen,
+        @tags_json, @taxonomy_version, @tagged_at
+      )
+      ON CONFLICT(creative_id) DO UPDATE SET
+        image_hash    = COALESCE(excluded.image_hash, meta_creative.image_hash),
+        video_id      = COALESCE(excluded.video_id, meta_creative.video_id),
+        thumbnail_url = COALESCE(excluded.thumbnail_url, meta_creative.thumbnail_url),
+        image_url     = COALESCE(excluded.image_url, meta_creative.image_url),
+        title         = COALESCE(excluded.title, meta_creative.title),
+        body          = COALESCE(excluded.body, meta_creative.body),
+        object_type   = COALESCE(excluded.object_type, meta_creative.object_type),
+        first_seen    = CASE
+                          WHEN meta_creative.first_seen IS NULL OR meta_creative.first_seen = '' THEN excluded.first_seen
+                          WHEN excluded.first_seen IS NOT NULL AND excluded.first_seen < meta_creative.first_seen THEN excluded.first_seen
+                          ELSE meta_creative.first_seen
+                        END,
+        last_seen     = CASE
+                          WHEN excluded.last_seen IS NOT NULL AND (meta_creative.last_seen IS NULL OR excluded.last_seen > meta_creative.last_seen) THEN excluded.last_seen
+                          ELSE meta_creative.last_seen
+                        END
+    `),
+    selectMetaCreative: db.prepare(`SELECT * FROM meta_creative WHERE creative_id = ?`),
+    selectMetaCreativesByIds: db.prepare(`SELECT * FROM meta_creative WHERE creative_id IN (SELECT value FROM json_each(?))`),
   };
 }
 
@@ -800,6 +953,106 @@ function safeWrite(fn) {
   }
 }
 
+// ------------------------------------------------------------
+// Meta ad-level persistence API
+// ------------------------------------------------------------
+
+/**
+ * Upsert d'un batch de rows meta_ad_daily. Chaque row = un (day, ad_id).
+ * Champs manquants tolérés (defaults SQL : 0 pour numériques, NULL pour text).
+ * Transaction unique → atomicité sur toute la journée.
+ */
+function upsertMetaAdDailyBulk(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return 0;
+  const now = Date.now();
+  const tx = db.transaction((items) => {
+    items.forEach(r => {
+      stmts.upsertMetaAdDaily.run({
+        day: r.day,
+        ad_id: String(r.ad_id),
+        adset_id: r.adset_id != null ? String(r.adset_id) : null,
+        campaign_id: r.campaign_id != null ? String(r.campaign_id) : null,
+        creative_id: r.creative_id != null ? String(r.creative_id) : null,
+        ad_name: r.ad_name || null,
+        adset_name: r.adset_name || null,
+        campaign_name: r.campaign_name || null,
+        spend: Number(r.spend || 0),
+        impressions: Math.round(Number(r.impressions || 0)),
+        clicks: Math.round(Number(r.clicks || 0)),
+        link_clicks: Math.round(Number(r.link_clicks || 0)),
+        purchases: Math.round(Number(r.purchases || 0)),
+        revenue: Number(r.revenue || 0),
+        reach: Math.round(Number(r.reach || 0)),
+        frequency: Number(r.frequency || 0),
+        video_views_3s: Math.round(Number(r.video_views_3s || 0)),
+        thruplays: Math.round(Number(r.thruplays || 0)),
+        video_p25: Math.round(Number(r.video_p25 || 0)),
+        fetched_at: now,
+      });
+    });
+  });
+  let n = 0;
+  safeWrite(() => { tx(rows); n = rows.length; });
+  return n;
+}
+
+function getMetaAdDailyRange(startDay, endDay) {
+  return stmts.selectMetaAdDailyRange.all(startDay, endDay);
+}
+
+function getMetaAdDailySpendSum(startDay, endDay) {
+  const r = stmts.selectMetaAdDailySpendSum.get(startDay, endDay);
+  return r ? Number(r.spend) : 0;
+}
+
+function countMetaAdDailyForDay(day) {
+  return stmts.countMetaAdDailyForDay.get(day).n;
+}
+
+function listMetaAdDailyDays() {
+  return stmts.listMetaAdDailyDays.all().map(r => r.day);
+}
+
+/**
+ * Upsert d'un creative. `first_seen`/`last_seen` sont des dates ISO (YYYY-MM-DD)
+ * gérées côté SQL via CASE (min pour first_seen, max pour last_seen).
+ * Les colonnes taxonomie (tags_json, taxonomy_version, tagged_at) ne sont
+ * PAS écrites par ce helper — réservées pour l'étape taggage.
+ */
+function upsertMetaCreative(row) {
+  if (!row || !row.creative_id) return false;
+  let ok = false;
+  safeWrite(() => {
+    stmts.upsertMetaCreative.run({
+      creative_id: String(row.creative_id),
+      image_hash: row.image_hash || null,
+      video_id: row.video_id != null ? String(row.video_id) : null,
+      thumbnail_url: row.thumbnail_url || null,
+      image_url: row.image_url || null,
+      title: row.title || null,
+      body: row.body || null,
+      object_type: row.object_type || null,
+      first_seen: row.first_seen || null,
+      last_seen: row.last_seen || null,
+      tags_json: null,
+      taxonomy_version: null,
+      tagged_at: null,
+    });
+    ok = true;
+  });
+  return ok;
+}
+
+function getMetaCreative(creativeId) {
+  if (!creativeId) return null;
+  return stmts.selectMetaCreative.get(String(creativeId)) || null;
+}
+
+function getMetaCreativesByIds(ids) {
+  if (!Array.isArray(ids) || ids.length === 0) return [];
+  return stmts.selectMetaCreativesByIds.all(JSON.stringify(ids.map(String)));
+}
+
 function formatDate(d) {
   const yyyy = d.getFullYear();
   const mm = String(d.getMonth() + 1).padStart(2, '0');
@@ -840,6 +1093,15 @@ module.exports = {
   getMetaAnalysis,
   setMetaAnalysis,
   deleteMetaAnalysisOlderThan,
+  // meta ad-level (v2)
+  upsertMetaAdDailyBulk,
+  getMetaAdDailyRange,
+  getMetaAdDailySpendSum,
+  countMetaAdDailyForDay,
+  listMetaAdDailyDays,
+  upsertMetaCreative,
+  getMetaCreative,
+  getMetaCreativesByIds,
   // product types
   getProductTypeMap,
   setProductTypeMap,
