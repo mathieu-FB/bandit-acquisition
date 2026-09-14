@@ -2,6 +2,71 @@
 
 Documente le lancement du backfill 2026-03-18 → hier et la validation d'écart demandée.
 
+## Token — obligatoire System User, pas Graph Explorer
+
+`META_ACCESS_TOKEN` doit être un **token System User** issu de Meta Business Manager, **pas** un token utilisateur généré via Graph API Explorer.
+
+### Différences
+
+| Type | Source | Expiration | Convient pour la prod ? |
+|---|---|---|---|
+| **Token utilisateur** | Graph API Explorer, Facebook Login | ~2h (court) puis 60j (long-lived exchange) | ❌ Non — expire silencieusement au bout de 60j, casse le cron |
+| **Token System User** | Business Manager > Utilisateurs système > Générer token | **Jamais** (si configuré `Never`) | ✅ Oui |
+
+### Procédure de génération (System User)
+
+1. Ouvrir **Meta Business Suite → Business Settings** (https://business.facebook.com/settings)
+2. Menu de gauche → **Users → System Users** — créer un utilisateur système ou en sélectionner un existant (ex : "Backend Bandit")
+3. **Assign Assets** → sélectionner le compte publicitaire Bandit avec permission au moins **View performance** (ou Manage account)
+4. Cliquer **Generate New Token** :
+   - **App** : l'app Meta liée
+   - **Token expiration** : **Never** (crucial — si l'option n'apparaît pas, il faut basculer l'app en `System User Access Token` type)
+   - **Scopes** : cocher **`ads_read`** (obligatoire) et **`ads_management`** (recommandé pour write)
+5. Copier le token → l'installer sur Railway comme `META_ACCESS_TOKEN` (Variables tab)
+6. Redéployer si nécessaire
+
+### Symptômes d'un mauvais token
+
+- **Backfill / cron 5h** échoue avec `Meta 400 code=190 type=OAuthException msg=Error validating access token: Session has expired...`
+- Le **check au démarrage serveur** log :
+  ```
+  [meta-sync] ⚠ META_ACCESS_TOKEN INVALIDE ou EXPIRÉ (code 190) — ...
+  ```
+
+### Check santé du token au démarrage
+
+Le serveur appelle automatiquement `metaSync.checkTokenHealth()` au démarrage. Deux étapes :
+
+1. **`GET /me?fields=id`** — valide que le token répond OK. Si code 190 → warning explicite pointant vers cette section.
+2. **`GET /debug_token?input_token=X&access_token=X`** — récupère les métadonnées (type, app, scopes, expires_at).
+
+Log attendu pour un System User bien configuré :
+```
+[meta-sync] Token OK — /me id=1234567890
+[meta-sync] Token metadata — type=SYSTEM_USER app=BandidAds scopes=ads_read,ads_management expires=NEVER ✓
+```
+
+Log si expiration approche :
+```
+[meta-sync] Token metadata — type=USER app=... expires_at=2026-11-14T... (dans 45 jours) — ⚠ Attention.
+```
+Le warning devient **⚠⚠ CRITIQUE** dans les 7 derniers jours.
+
+### Comment vérifier manuellement
+
+```bash
+# Health
+curl "https://graph.facebook.com/v19.0/me?fields=id&access_token=<TOKEN>"
+# Debug expiration + scopes
+curl "https://graph.facebook.com/v19.0/debug_token?input_token=<TOKEN>&access_token=<TOKEN>"
+```
+
+`data.expires_at` = `0` → jamais expire. Sinon timestamp unix.
+
+---
+
+
+
 ## Contexte
 
 Persistance ad-level Meta introduite en 4 commits :

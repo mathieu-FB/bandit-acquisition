@@ -7465,4 +7465,13 @@ app.listen(PORT, () => {
     console.log('[Amazon Ads] Starting initial ad spend refresh...');
     refreshAmazonAdSpend();
   }
+
+  // Check Meta token health (background, non-fatal). Log un warning explicite
+  // si le token est invalide/expiré (code 190) et affiche l'expiration réelle
+  // via /debug_token. Voir META_BACKFILL_VALIDATION.md > Token.
+  if (process.env.META_ACCESS_TOKEN) {
+    metaSync.checkTokenHealth().catch(err => {
+      console.warn('[meta-sync] Token health check failed non-fatally:', err.message);
+    });
+  }
 });

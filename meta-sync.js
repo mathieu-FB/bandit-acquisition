@@ -388,6 +388,77 @@ async function backfill(start, end) {
   };
 }
 
+// ------------------------------------------------------------
+// Token health check (au démarrage serveur)
+// ------------------------------------------------------------
+
+/**
+ * Vérifie la validité du META_ACCESS_TOKEN au démarrage.
+ * Appelle GET /me?fields=id puis /debug_token pour connaître l'expiration.
+ * Ne throw jamais — log les warnings et retourne un objet status.
+ *
+ * Attendu : token System User (Business Manager > Utilisateurs système),
+ * expires_at = 0 (never), permissions ads_read + ads_management.
+ * Détecte le cas typique d'un token utilisateur Graph API Explorer (60j)
+ * ou expiré (code 190).
+ */
+async function checkTokenHealth() {
+  const token = process.env.META_ACCESS_TOKEN;
+  if (!token) {
+    console.warn('[meta-sync] META_ACCESS_TOKEN non défini — les crons et endpoints ad-level ne fonctionneront pas.');
+    return { ok: false, reason: 'no_token' };
+  }
+  // 1. Health : GET /me?fields=id
+  try {
+    const url = `${graphBase()}/me?fields=id&access_token=${token}`;
+    const res = await fetch(url);
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const code = body.error && body.error.code;
+      const msg = body.error && body.error.message;
+      if (code === 190) {
+        console.error(`[meta-sync] ⚠ META_ACCESS_TOKEN INVALIDE ou EXPIRÉ (code 190) — ${msg}. Voir META_BACKFILL_VALIDATION.md > Token pour la procédure de renouvellement (System User recommandé).`);
+      } else {
+        console.warn(`[meta-sync] Token health check /me a échoué : status ${res.status} code ${code} — ${msg}`);
+      }
+      return { ok: false, code, message: msg };
+    }
+    console.log(`[meta-sync] Token OK — /me id=${body.id}`);
+  } catch (e) {
+    console.warn(`[meta-sync] Token health check /me network error: ${e.message}`);
+    return { ok: false, reason: 'network', error: e.message };
+  }
+  // 2. Debug : GET /debug_token pour connaître expires_at
+  try {
+    const url = `${graphBase()}/debug_token?input_token=${token}&access_token=${token}`;
+    const res = await fetch(url);
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      console.warn(`[meta-sync] /debug_token a échoué (status ${res.status}) — token utilisable mais expiration inconnue.`);
+      return { ok: true, expiresAt: null };
+    }
+    const info = body.data || {};
+    const expiresAt = info.expires_at != null ? Number(info.expires_at) : null;
+    const type = info.type || 'unknown';
+    const scopes = Array.isArray(info.scopes) ? info.scopes.join(',') : (info.scopes || '');
+    const app = info.application || '?';
+    if (expiresAt === 0) {
+      console.log(`[meta-sync] Token metadata — type=${type} app=${app} scopes=${scopes || 'n/a'} expires=NEVER ✓`);
+    } else if (expiresAt) {
+      const dt = new Date(expiresAt * 1000);
+      const daysLeft = Math.round((dt.getTime() - Date.now()) / (86400 * 1000));
+      const level = daysLeft < 7 ? '⚠⚠ CRITIQUE' : (daysLeft < 30 ? '⚠ Attention' : 'OK');
+      console.warn(`[meta-sync] Token metadata — type=${type} app=${app} scopes=${scopes || 'n/a'} expires_at=${dt.toISOString()} (dans ${daysLeft} jours) — ${level}. Prévoir renouvellement (System User recommandé).`);
+    } else {
+      console.log(`[meta-sync] Token metadata — type=${type} app=${app} scopes=${scopes || 'n/a'} expires_at=? (non renseigné, probablement never).`);
+    }
+    return { ok: true, type, expiresAt, scopes, app };
+  } catch (e) {
+    console.warn(`[meta-sync] /debug_token network error: ${e.message}`);
+    return { ok: true, expiresAt: null };
+  }
+}
+
 module.exports = {
   fetchAdDailyInsights,
   upsertCreativeForAd,
@@ -395,4 +466,5 @@ module.exports = {
   backfill,
   parseAdInsightRow, // exposé pour tests
   ATTRIBUTION_WINDOWS,
+  checkTokenHealth,
 };
