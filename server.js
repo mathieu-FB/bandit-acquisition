@@ -10,6 +10,7 @@ const { GoogleAdsApi, fromMicros } = require('google-ads-api');
 const { sendReport } = require('./daily-report');
 const cache = require('./cache');
 const metaSync = require('./meta-sync');
+const testMonitor = require('./test-monitor');
 const stockDb = require('./stock/db');
 const stockSeed = require('./stock/seed-matrice');
 const stockSync = require('./stock/sync-shopify');
@@ -3412,6 +3413,40 @@ app.get('/api/meta/creatives', (req, res) => {
   }
 });
 
+// ============================================================
+// GET /api/meta/test-monitor
+//
+// Renvoie le JSON complet du moniteur de la campagne test créas.
+// Config lue depuis data/test_rules.json à chaque appel — les
+// changements de seuils sont pris en compte sans redéploiement.
+//
+// ?send=1 : trigger l'envoi email en même temps (idempotent, envoie
+// uniquement si actionableCount > 0). Utile pour tester l'email
+// manuellement en dehors du cron 8h15.
+// ============================================================
+app.get('/api/meta/test-monitor', async (req, res) => {
+  if (!requireAdmin(req, res)) return;
+  try {
+    const dryRun = req.query.send !== '1';
+    const result = await testMonitor.runDailyEmail({ dryRun });
+    res.json({
+      generatedAt: result.report.generatedAt,
+      rules: result.report.rules,
+      total: result.report.total,
+      byVerdict: result.report.byVerdict,
+      items: result.report.items,
+      email: {
+        sent: result.sent,
+        reason: result.reason || null,
+        subject: result.subject || null,
+      },
+    });
+  } catch (err) {
+    console.error('[/api/meta/test-monitor] failed:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/meta/analysis', async (req, res) => {
   try {
     const token = process.env.META_ACCESS_TOKEN;
@@ -4694,6 +4729,29 @@ cron.schedule('0 5 * * *', async () => {
     console.log(`[Cron] Meta syncDay(J-2=${dJm2}) — ${s2.adsUpserted} ads, ${s2.creativesFetched} new creatives`);
   } catch (err) {
     console.error('[Cron] Meta ad-level sync failed:', err.message);
+  }
+}, { timezone: 'Europe/Paris' });
+
+// ============================================================
+// CRON — Test créas monitor (08:15 Europe/Paris)
+//
+// 3h15 après le sync Meta → laisse tomber les données finales J-1/J-2.
+// Envoie un email UNIQUEMENT s'il y a ≥ 1 KILL, KILL_EXTENDED ou
+// GRADUATE. Aucun email si tout est en CONTINUE (bruit réduit).
+// Aucune action d'écriture sur Meta — le mail recommande.
+// ============================================================
+cron.schedule('15 8 * * *', async () => {
+  console.log('[Cron] Triggering test créas monitor...');
+  try {
+    const result = await testMonitor.runDailyEmail({ dryRun: false });
+    if (result.sent) {
+      const bv = result.report.byVerdict;
+      console.log(`[Cron] Test créas mail sent: ${bv.KILL} KILL · ${bv.KILL_EXTENDED} KILL_EXTENDED · ${bv.GRADUATE} GRADUATE.`);
+    } else {
+      console.log(`[Cron] Test créas: pas d'email envoyé (${result.reason}).`);
+    }
+  } catch (err) {
+    console.error('[Cron] Test créas monitor failed:', err.message);
   }
 }, { timezone: 'Europe/Paris' });
 
