@@ -1,0 +1,11 @@
+{
+  "campaign_name_match": "TEST",
+  "target_cpa": 30,
+  "kill_spend": 100,
+  "kill_ctr_link_min": 0.006,
+  "kill_ctr_min_impressions": 5000,
+  "extend_spend": 200,
+  "extend_cpa_max": 45,
+  "graduate_min_purchases": 5,
+  "graduate_cpa_max": 35
+}
