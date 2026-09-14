@@ -3253,6 +3253,165 @@ async function handleMetaBackfill(req, res) {
 app.post('/api/meta/sync/backfill', express.json(), handleMetaBackfill);
 app.get('/api/meta/sync/backfill', handleMetaBackfill);
 
+// ============================================================
+// GET /api/meta/creatives
+//
+// Agrège meta_ad_daily par creative_id sur la période [start, end],
+// join avec meta_creative pour les métadonnées visuelles, et sépare
+// audience (acquisition / retargeting) via la regex campaignType
+// existante (server.js:3314).
+//
+// Query :
+//   start, end  : YYYY-MM-DD (requis)
+//   min_spend   : filtre spend total >= N € (défaut 0)
+//   audience    : "acquisition" | "retargeting" | "all" (défaut "all")
+//
+// Response :
+//   {
+//     period: { start, end },
+//     total: N,
+//     items: [{ creative_id, creative: {...}, campaignType,
+//               spend, purchases, revenue, roas, cpa, ctr,
+//               hookRate, holdRate, adIds: [] }, ...]
+//   }
+// ============================================================
+app.get('/api/meta/creatives', (req, res) => {
+  try {
+    const start = String(req.query.start || '').trim();
+    const end = String(req.query.end || '').trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+      return res.status(400).json({ error: 'start et end (YYYY-MM-DD) requis' });
+    }
+    const minSpend = Number(req.query.min_spend || 0);
+    const audienceFilter = String(req.query.audience || 'all').toLowerCase();
+    if (!['all', 'acquisition', 'retargeting'].includes(audienceFilter)) {
+      return res.status(400).json({ error: 'audience invalide (all | acquisition | retargeting)' });
+    }
+
+    // Classifieur — même regex que /api/meta/analysis (cf. server.js:3314)
+    function classifyCampaign(campaignName) {
+      const n = (campaignName || '').toLowerCase();
+      if (/retarget|remarketing|rtg|rlsa|remarket|retarg|recibl/i.test(n)) return 'retargeting';
+      return 'acquisition';
+    }
+
+    const rows = cache.getMetaAdDailyRange(start, end);
+
+    // Agrège par creative_id. Les rows sans creative_id sont groupées sous
+    // creative_id = null (rare — ads sans creative accessible ou fetch échoué).
+    const agg = new Map();
+    for (const r of rows) {
+      const key = r.creative_id || `__no_creative__${r.ad_id}`;
+      if (!agg.has(key)) {
+        agg.set(key, {
+          creative_id: r.creative_id || null,
+          campaignTypes: new Set(),
+          spend: 0, impressions: 0, clicks: 0, link_clicks: 0,
+          purchases: 0, revenue: 0, reach: 0,
+          video_views_3s: 0, thruplays: 0, video_p25: 0,
+          adIds: new Set(),
+          firstSeen: r.day, lastSeen: r.day,
+        });
+      }
+      const a = agg.get(key);
+      a.spend += Number(r.spend || 0);
+      a.impressions += Number(r.impressions || 0);
+      a.clicks += Number(r.clicks || 0);
+      a.link_clicks += Number(r.link_clicks || 0);
+      a.purchases += Number(r.purchases || 0);
+      a.revenue += Number(r.revenue || 0);
+      a.reach += Number(r.reach || 0);
+      a.video_views_3s += Number(r.video_views_3s || 0);
+      a.thruplays += Number(r.thruplays || 0);
+      a.video_p25 += Number(r.video_p25 || 0);
+      a.adIds.add(String(r.ad_id));
+      a.campaignTypes.add(classifyCampaign(r.campaign_name));
+      if (r.day < a.firstSeen) a.firstSeen = r.day;
+      if (r.day > a.lastSeen) a.lastSeen = r.day;
+    }
+
+    // Batch récupère les métadonnées créa (une requête pour tous les IDs valides)
+    const creativeIds = Array.from(agg.keys()).filter(k => !k.startsWith('__no_creative__'));
+    const creativesById = {};
+    if (creativeIds.length > 0) {
+      const creatives = cache.getMetaCreativesByIds(creativeIds);
+      for (const c of creatives) creativesById[c.creative_id] = c;
+    }
+
+    // Applique filtres + calcule métriques dérivées
+    const items = [];
+    for (const [key, a] of agg) {
+      if (a.spend < minSpend) continue;
+      // audience :
+      //  - "acquisition" : au moins une campagne acquisition, aucune retargeting
+      //  - "retargeting" : au moins une retargeting
+      //  - mixte : classée "mixed" (renvoyée uniquement en "all")
+      let campaignType;
+      if (a.campaignTypes.has('retargeting') && a.campaignTypes.has('acquisition')) {
+        campaignType = 'mixed';
+      } else if (a.campaignTypes.has('retargeting')) {
+        campaignType = 'retargeting';
+      } else {
+        campaignType = 'acquisition';
+      }
+      if (audienceFilter !== 'all' && campaignType !== audienceFilter) continue;
+
+      const spend = a.spend;
+      const impressions = a.impressions;
+      const revenue = a.revenue;
+      const purchases = a.purchases;
+      const clicks = a.clicks;
+      const roas = spend > 0 ? revenue / spend : 0;
+      const cpa = purchases > 0 ? spend / purchases : 0;
+      const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
+      const cpm = impressions > 0 ? (spend / impressions) * 1000 : 0;
+      const hookRate = (impressions > 0 && a.video_views_3s > 0)
+        ? (a.video_views_3s / impressions) * 100 : null;
+      const holdRate = (a.video_views_3s > 0 && a.thruplays > 0)
+        ? (a.thruplays / a.video_views_3s) * 100 : null;
+
+      items.push({
+        creative_id: a.creative_id,
+        creative: a.creative_id ? (creativesById[a.creative_id] || null) : null,
+        campaignType,
+        spend: Number(spend.toFixed(2)),
+        impressions,
+        clicks,
+        link_clicks: a.link_clicks,
+        purchases,
+        revenue: Number(revenue.toFixed(2)),
+        reach: a.reach,
+        video_views_3s: a.video_views_3s,
+        thruplays: a.thruplays,
+        video_p25: a.video_p25,
+        roas: Number(roas.toFixed(3)),
+        cpa: Number(cpa.toFixed(2)),
+        ctr: Number(ctr.toFixed(3)),
+        cpm: Number(cpm.toFixed(2)),
+        hookRate: hookRate != null ? Number(hookRate.toFixed(3)) : null,
+        holdRate: holdRate != null ? Number(holdRate.toFixed(3)) : null,
+        firstSeen: a.firstSeen,
+        lastSeen: a.lastSeen,
+        adIds: Array.from(a.adIds).sort(),
+      });
+    }
+
+    // Tri : spend desc
+    items.sort((a, b) => b.spend - a.spend);
+
+    res.json({
+      period: { start, end },
+      total: items.length,
+      audience: audienceFilter,
+      minSpend,
+      items,
+    });
+  } catch (err) {
+    console.error('[/api/meta/creatives] failed:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/meta/analysis', async (req, res) => {
   try {
     const token = process.env.META_ACCESS_TOKEN;
