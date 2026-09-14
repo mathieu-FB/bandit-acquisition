@@ -610,6 +610,21 @@
           <span class="meta-period-label" id="metaPeriodLabel"></span>
         </div>
 
+        <!-- Test créas monitor (indépendant de la période — évalué depuis 1er jour de spend par ad) -->
+        <section class="meta-section" id="testMonitorSection">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+            <div>
+              <h2 class="meta-section-title" style="margin:0;">Test créas — verdicts</h2>
+              <div style="font-size:11px;color:#6b7280;margin-top:2px;" id="testMonitorMeta">Campagnes contenant <code id="testMonitorMatch">TEST</code> · évaluation depuis premier jour de spend par ad</div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;">
+              <button class="btn btn-ghost btn-sm" id="testMonitorRefreshBtn" title="Rafraîchir">&#x21bb;</button>
+              <button class="btn btn-ghost btn-sm" id="testMonitorSendBtn" title="Envoyer l'email de verdicts maintenant (idempotent, uniquement si actionnable)">Envoyer mail</button>
+            </div>
+          </div>
+          <div id="testMonitorContent"><div style="color:#6b7280;padding:12px;font-size:12px;">Chargement…</div></div>
+        </section>
+
         <!-- META LOADING -->
         <div class="meta-loading" id="metaLoading">
           <div class="spinner"></div>

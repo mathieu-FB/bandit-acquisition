@@ -1387,6 +1387,112 @@ function filterMetaAds(type) {
   document.getElementById('metaTopAds').innerHTML = renderMetaAdCards(filtered.slice(0, 50));
 }
 
+// ============================================================
+// Test créas monitor — loader + renderer
+// ============================================================
+async function loadTestMonitor(triggerSend) {
+  const container = document.getElementById('testMonitorContent');
+  if (!container) return;
+  container.innerHTML = '<div style="color:#6b7280;padding:12px;font-size:12px;">Chargement…</div>';
+  const url = triggerSend ? '/api/meta/test-monitor?send=1' : '/api/meta/test-monitor';
+  try {
+    const res = await fetch(url, { credentials: 'same-origin' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    // Met à jour le sous-titre avec le nom-de-match effectif (peut avoir changé dans test_rules.json)
+    const matchEl = document.getElementById('testMonitorMatch');
+    if (matchEl && data.rules && data.rules.campaign_name_match) {
+      matchEl.textContent = data.rules.campaign_name_match;
+    }
+    renderTestMonitor(data);
+    if (triggerSend) {
+      // Feedback discret sur l'envoi
+      const msg = data.email && data.email.sent
+        ? `✓ Email envoyé (${data.email.subject || 'sujet non retourné'})`
+        : `Email non envoyé — ${data.email && data.email.reason ? data.email.reason : 'raison inconnue'}`;
+      alert(msg);
+    }
+  } catch (err) {
+    container.innerHTML = `<div style="color:#991b1b;padding:12px;font-size:12px;">Erreur : ${err.message}</div>`;
+  }
+}
+
+function renderTestMonitor(data) {
+  const container = document.getElementById('testMonitorContent');
+  if (!container) return;
+  if (!data || !data.items || data.items.length === 0) {
+    container.innerHTML = `<div style="color:#6b7280;padding:14px;font-size:12px;background:#fafbfc;border-radius:6px;border:1px dashed #e5e7eb;">Aucun ad de test trouvé (campagnes contenant "${data && data.rules ? data.rules.campaign_name_match : 'TEST'}"). Vérifie que meta_ad_daily est bien peuplé et que les campagnes de test portent ce mot-clé dans leur nom.</div>`;
+    return;
+  }
+  const bv = data.byVerdict;
+  const kpiCards = [
+    { label: 'KILL', value: bv.KILL, bg: '#fee2e2', fg: '#991b1b' },
+    { label: 'KILL_EXTENDED', value: bv.KILL_EXTENDED, bg: '#fef3c7', fg: '#92400e' },
+    { label: 'GRADUATE', value: bv.GRADUATE, bg: '#d1fae5', fg: '#065f46' },
+    { label: 'CONTINUE', value: bv.CONTINUE, bg: '#f3f4f6', fg: '#374151' },
+  ];
+  const kpisHtml = kpiCards.map(k => `
+    <div style="background:${k.bg};padding:10px 12px;border-radius:8px;flex:1;min-width:110px;">
+      <div style="font-size:10px;text-transform:uppercase;font-weight:600;color:${k.fg};letter-spacing:0.05em;">${k.label}</div>
+      <div style="font-size:22px;font-weight:700;color:${k.fg};">${k.value}</div>
+    </div>
+  `).join('');
+
+  const verdictColors = {
+    KILL: { bg: '#fee2e2', fg: '#991b1b' },
+    KILL_EXTENDED: { bg: '#fef3c7', fg: '#92400e' },
+    GRADUATE: { bg: '#d1fae5', fg: '#065f46' },
+    CONTINUE: { bg: '#f3f4f6', fg: '#374151' },
+  };
+  const order = { KILL: 0, KILL_EXTENDED: 1, GRADUATE: 2, CONTINUE: 3 };
+  const sorted = [...data.items].sort((a, b) => (order[a.verdict] - order[b.verdict]) || (b.spend - a.spend));
+
+  const fmtEur = v => new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(v || 0);
+  const fmtPct = (v, d = 2) => v == null ? '—' : `${(v * 100).toFixed(d)}%`;
+  const escapeHtml = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  const rows = sorted.map(i => {
+    const c = verdictColors[i.verdict] || verdictColors.CONTINUE;
+    return `
+      <tr style="border-bottom:1px solid #e5e7eb;">
+        <td style="padding:6px 8px;"><span style="display:inline-block;padding:2px 8px;border-radius:6px;background:${c.bg};color:${c.fg};font-weight:600;font-size:10px;letter-spacing:0.03em;">${i.verdict}</span></td>
+        <td style="padding:6px 8px;font-family:monospace;font-size:11px;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(i.ad_name || '')}">${escapeHtml(i.ad_name || i.ad_id)}</td>
+        <td style="padding:6px 8px;font-size:11px;color:#6b7280;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(i.adset_name || '')}">${escapeHtml(i.adset_name || '')}</td>
+        <td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums;font-size:11px;">${i.days_active}j</td>
+        <td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums;font-size:11px;">${fmtEur(i.spend)}</td>
+        <td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums;font-size:11px;">${i.purchases}</td>
+        <td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums;font-size:11px;">${i.purchases > 0 ? fmtEur(i.cpa) : '—'}</td>
+        <td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums;font-size:11px;">${fmtPct(i.ctr_link)}</td>
+        <td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums;font-size:11px;">${i.is_video ? fmtPct(i.hook_rate) : '—'}</td>
+        <td style="padding:6px 8px;font-size:10px;color:${c.fg};">${escapeHtml(i.reason)}</td>
+      </tr>
+    `;
+  }).join('');
+
+  container.innerHTML = `
+    <div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap;">${kpisHtml}</div>
+    <div style="font-size:11px;color:#6b7280;margin-bottom:8px;">${data.total} ads évalués · règles chargées depuis <code>data/test_rules.json</code> · kill_spend ${data.rules.kill_spend} € · extend_spend ${data.rules.extend_spend} € · graduate ≥ ${data.rules.graduate_min_purchases} achats à CPA ≤ ${data.rules.graduate_cpa_max} €</div>
+    <div style="overflow-x:auto;">
+      <table style="width:100%;border-collapse:collapse;font-size:12px;">
+        <thead>
+          <tr style="background:#fafbfc;text-align:left;">
+            <th style="padding:8px;font-size:10px;text-transform:uppercase;color:#6b7280;">Verdict</th>
+            <th style="padding:8px;font-size:10px;text-transform:uppercase;color:#6b7280;">Ad</th>
+            <th style="padding:8px;font-size:10px;text-transform:uppercase;color:#6b7280;">Adset</th>
+            <th style="padding:8px;font-size:10px;text-transform:uppercase;color:#6b7280;text-align:right;">Jours</th>
+            <th style="padding:8px;font-size:10px;text-transform:uppercase;color:#6b7280;text-align:right;">Spend</th>
+            <th style="padding:8px;font-size:10px;text-transform:uppercase;color:#6b7280;text-align:right;">Achats</th>
+            <th style="padding:8px;font-size:10px;text-transform:uppercase;color:#6b7280;text-align:right;">CPA</th>
+            <th style="padding:8px;font-size:10px;text-transform:uppercase;color:#6b7280;text-align:right;">CTR link</th>
+            <th style="padding:8px;font-size:10px;text-transform:uppercase;color:#6b7280;text-align:right;">Hook</th>
+            <th style="padding:8px;font-size:10px;text-transform:uppercase;color:#6b7280;">Raison</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
 async function loadMetaAnalysis(forceDays, forceRefresh) {
   const range = metaAnalysisDateRange;
   const days = forceDays || metaAnalysisDays;
@@ -3174,6 +3280,19 @@ document.addEventListener('DOMContentLoaded', async () => {
     metaAnalysisLoadedRange = null;
     loadMetaAnalysis(null, true);
   });
+
+  // ============================================================
+  // Test créas monitor — section indépendante de la période
+  // ============================================================
+  const testMonitorRefresh = document.getElementById('testMonitorRefreshBtn');
+  const testMonitorSend = document.getElementById('testMonitorSendBtn');
+  if (testMonitorRefresh) testMonitorRefresh.addEventListener('click', () => loadTestMonitor(false));
+  if (testMonitorSend) testMonitorSend.addEventListener('click', () => {
+    if (!confirm('Envoyer l\'email de verdicts test créas maintenant ?\n(idempotent — n\'envoie que s\'il y a au moins un KILL / KILL_EXTENDED / GRADUATE)')) return;
+    loadTestMonitor(true);
+  });
+  // Chargement initial (à l'ouverture de l'onglet Acquisition)
+  loadTestMonitor(false);
 
   // Meta ad filter buttons (Tout / Videos / Static / Acquisition / Retargeting)
   document.querySelectorAll('[data-ad-filter]').forEach(btn => {
