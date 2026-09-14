@@ -41,7 +41,7 @@ function loadRules() {
   const rules = JSON.parse(raw);
   const required = [
     'campaign_name_match', 'target_cpa', 'kill_spend',
-    'kill_ctr_link_min', 'kill_ctr_min_impressions',
+    'kill_ctr_link_min', 'kill_ctr_min_impressions', 'kill_ctr_max_purchases',
     'extend_spend', 'extend_cpa_max',
     'graduate_min_purchases', 'graduate_cpa_max',
   ];
@@ -59,31 +59,41 @@ function loadRules() {
 
 /**
  * Applique les règles à un ad agrégé. Ordre d'évaluation :
- *   KILL → GRADUATE → KILL_EXTENDED → CONTINUE
+ *   KILL 0-achat → KILL CTR (si purchases<max) → GRADUATE → KILL_EXTENDED → CONTINUE
  *
- * Rationale : KILL couvre les cas 0-achat qui produiraient CPA infini
- * (donc KILL_EXTENDED serait trivialement vrai) ; on tranche avant.
- * GRADUATE et KILL_EXTENDED sont mutuellement exclusifs par construction
- * (cpa≤graduate_cpa_max ⇒ cpa≤35 < extend_cpa_max=45).
+ * Rationale :
+ * - KILL 0-achat couvre les cas où CPA serait infini (spend brûlé sans conversion).
+ * - KILL CTR ne s'applique QUE si purchases < kill_ctr_max_purchases : un ad qui
+ *   génère déjà des achats a prouvé un signal d'intérêt malgré un CTR link faible
+ *   (ex : offre différée, retargeting). On ne le kill pas sur ce seul critère.
+ * - GRADUATE se vérifie AVANT KILL_EXTENDED car par construction ils sont
+ *   mutuellement exclusifs (cpa ≤ graduate_cpa_max=35 < extend_cpa_max=45).
  */
 function classify(ad, rules) {
   const {
-    kill_spend, kill_ctr_link_min, kill_ctr_min_impressions,
+    kill_spend,
+    kill_ctr_link_min, kill_ctr_min_impressions, kill_ctr_max_purchases,
     extend_spend, extend_cpa_max,
     graduate_min_purchases, graduate_cpa_max,
   } = rules;
 
-  // KILL — pas d'achat malgré assez de dépense OU CTR link trop faible sur volume suffisant
+  // KILL 0-achat — brûle du budget sans conversion
   if (ad.purchases === 0 && ad.spend >= kill_spend) {
     return {
       verdict: 'KILL',
       reason: `0 achat pour ${ad.spend.toFixed(0)} € dépensés (≥ ${kill_spend} €)`,
     };
   }
-  if (ad.impressions >= kill_ctr_min_impressions && ad.ctr_link < kill_ctr_link_min) {
+
+  // KILL CTR — seuil bas + volume suffisant + pas déjà en preuve d'intérêt via achats
+  if (
+    ad.impressions >= kill_ctr_min_impressions
+    && ad.ctr_link < kill_ctr_link_min
+    && ad.purchases < kill_ctr_max_purchases
+  ) {
     return {
       verdict: 'KILL',
-      reason: `CTR link ${(ad.ctr_link * 100).toFixed(2)}% < ${(kill_ctr_link_min * 100).toFixed(2)}% sur ${ad.impressions.toLocaleString('fr-FR')} impressions (≥ ${kill_ctr_min_impressions.toLocaleString('fr-FR')})`,
+      reason: `CTR link ${(ad.ctr_link * 100).toFixed(2)}% < ${(kill_ctr_link_min * 100).toFixed(2)}% sur ${ad.impressions.toLocaleString('fr-FR')} impressions (≥ ${kill_ctr_min_impressions.toLocaleString('fr-FR')}), seulement ${ad.purchases} achats (< ${kill_ctr_max_purchases})`,
     };
   }
 
@@ -116,16 +126,21 @@ function classify(ad, rules) {
  */
 function evaluate(rules) {
   const db = cache.getDb();
-  const pattern = `%${rules.campaign_name_match}%`;
-
-  // Sous-requête : pour chaque ad_id, le premier jour de dépense (spend > 0).
-  // Puis agrège depuis ce jour inclus.
+  // Filtre : préfixe STRICT et CASE-SENSITIVE via substr + = COLLATE BINARY.
+  // La campagne Meta doit s'appeler EXACTEMENT "[TC] …" (crochets inclus, majuscules)
+  // pour être suivie. "[tc] foo" ou "Foo [TC]" ne matcheront PAS.
+  //
+  // Rationale : LIKE en SQLite est case-insensitive par défaut sur l'ASCII, GLOB
+  // gère mal les crochets littéraux (character class), instr() dépend de la
+  // collation de la colonne. substr(...) = ... COLLATE BINARY est la forme la
+  // plus explicite et robuste (comparaison octet par octet).
+  const prefix = rules.campaign_name_match;
   const rows = db.prepare(`
     WITH first_spend AS (
       SELECT ad_id, MIN(day) AS first_day
       FROM meta_ad_daily
       WHERE spend > 0
-        AND campaign_name LIKE ?
+        AND substr(campaign_name, 1, length(?)) = ? COLLATE BINARY
       GROUP BY ad_id
     )
     SELECT
@@ -150,10 +165,10 @@ function evaluate(rules) {
     FROM meta_ad_daily m
     JOIN first_spend fs USING(ad_id)
     WHERE m.day >= fs.first_day
-      AND m.campaign_name LIKE ?
+      AND substr(m.campaign_name, 1, length(?)) = ? COLLATE BINARY
     GROUP BY m.ad_id
     ORDER BY spend DESC
-  `).all(pattern, pattern);
+  `).all(prefix, prefix, prefix, prefix);
 
   const items = rows.map(r => {
     const spend = Number(r.spend || 0);
@@ -260,7 +275,10 @@ function buildEmailHTML(report) {
   <div style="max-width:1100px;margin:0 auto;background:#fff;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;">
     <div style="background:#0f172a;color:#fff;padding:16px 24px;">
       <div style="font-size:16px;font-weight:600;">Test créas — verdicts du jour</div>
-      <div style="font-size:12px;opacity:0.7;margin-top:2px;">Généré ${new Date(generatedAt).toLocaleString('fr-FR', { timeZone: 'Europe/Paris' })} · règles : campagnes contenant "${escapeHtml(rules.campaign_name_match)}"</div>
+      <div style="font-size:12px;opacity:0.7;margin-top:2px;">Généré ${new Date(generatedAt).toLocaleString('fr-FR', { timeZone: 'Europe/Paris' })} · règles chargées depuis <code>data/test_rules.json</code></div>
+      <div style="font-size:11px;opacity:0.7;margin-top:4px;">
+        ⚙ Pour être suivie, une campagne Meta doit commencer <strong>exactement</strong> par <code>${escapeHtml(rules.campaign_name_match)}</code> — préfixe sensible à la casse, crochets inclus. Ex : <code>${escapeHtml(rules.campaign_name_match)} Angle 1 - Video</code>.
+      </div>
     </div>
     <div style="padding:20px 24px;">
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:20px;">
