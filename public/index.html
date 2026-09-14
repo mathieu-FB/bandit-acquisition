@@ -615,7 +615,10 @@
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
             <div>
               <h2 class="meta-section-title" style="margin:0;">Test créas — verdicts</h2>
-              <div style="font-size:11px;color:#6b7280;margin-top:2px;" id="testMonitorMeta">Campagnes contenant <code id="testMonitorMatch">TEST</code> · évaluation depuis premier jour de spend par ad</div>
+              <div style="font-size:11px;color:#6b7280;margin-top:2px;" id="testMonitorMeta">
+                Le nom de la campagne Meta doit <strong>commencer exactement par</strong> <code id="testMonitorMatch">[TC]</code> (préfixe sensible à la casse, crochets inclus).
+                Évaluation depuis le premier jour de spend par ad, pas de fenêtre glissante.
+              </div>
             </div>
             <div style="display:flex;gap:8px;align-items:center;">
               <button class="btn btn-ghost btn-sm" id="testMonitorRefreshBtn" title="Rafraîchir">&#x21bb;</button>
