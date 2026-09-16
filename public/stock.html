@@ -2285,6 +2285,20 @@
     let ASSIGN_ITEMS = [];        // full referentiel actif
     let ASSIGN_SELECTED = new Set(); // sku's selected
 
+    // Référentiel actif complet : l'API plafonne à 500 lignes par page → on pagine.
+    async function fetchAllReferentielActif() {
+      const PAGE = 500;
+      let items = [];
+      for (let offset = 0; ; offset += PAGE) {
+        const res = await fetch(`/api/stock/referentiel?limit=${PAGE}&offset=${offset}&actif=1`, { credentials: 'same-origin' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        items = items.concat(data.items || []);
+        if (!data.items || data.items.length < PAGE || items.length >= data.total) break;
+      }
+      return items;
+    }
+
     async function loadAssignations() {
       const content = document.getElementById('assignContent');
       content.innerHTML = '<div class="loading">Chargement du référentiel…</div>';
@@ -2292,9 +2306,7 @@
       await loadFournisseurs();
       populateAssignFournisseurDropdowns();
       // 2. Load référentiel actif (large — could paginate, but 445 SKU is manageable)
-      const res = await fetch('/api/stock/referentiel?limit=500&actif=1', { credentials: 'same-origin' });
-      const data = await res.json();
-      ASSIGN_ITEMS = data.items || [];
+      ASSIGN_ITEMS = await fetchAllReferentielActif();
       // Enrich items with fournisseur_nom for display + populate famille dropdown
       const fournById = {};
       FOURNISSEURS.forEach(f => fournById[f.id] = f);
@@ -2800,10 +2812,9 @@
 
     async function loadProjSkuList() {
       try {
-        const res = await fetch('/api/stock/referentiel?limit=500&actif=1', { credentials: 'same-origin' });
-        const data = await res.json();
+        const items = await fetchAllReferentielActif();
         const list = document.getElementById('projSkuList');
-        list.innerHTML = (data.items || []).map(i => `<option value="${escapeAttr(i.sku)}">${escapeHtml(i.nom_court || '')}</option>`).join('');
+        list.innerHTML = items.map(i => `<option value="${escapeAttr(i.sku)}">${escapeHtml(i.nom_court || '')}</option>`).join('');
       } catch (err) { /* silent */ }
     }
 
@@ -3074,11 +3085,11 @@
     async function loadFamilleParametres() {
       const container = document.getElementById('familleParamContent');
       container.innerHTML = '<div class="loading">Chargement…</div>';
-      const [refRes, paramRes] = await Promise.all([
-        fetch('/api/stock/referentiel?limit=500&actif=1', { credentials: 'same-origin' }),
+      const [refItems, paramRes] = await Promise.all([
+        fetchAllReferentielActif(),
         fetch('/api/stock/parametres-famille', { credentials: 'same-origin' }),
       ]);
-      const refData = await refRes.json();
+      const refData = { items: refItems };
       const paramData = await paramRes.json();
       // Groupe params par (famille|animal) → { '': paramDefault, tag1: p1, ... }
       const paramByPair = {};
