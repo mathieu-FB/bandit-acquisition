@@ -70,6 +70,15 @@ const OBJECTIVES = {
         9: { ca: 95000, ratio: 29 },
       },
     },
+    Q4: {
+      ca: 350000, // 130 + 140 + 80
+      ratio: 29,
+      months: {
+        10: { ca: 130000, ratio: 29 },
+        11: { ca: 140000, ratio: 29 },
+        12: { ca: 80000, ratio: 29 },
+      },
+    },
   },
 };
 
@@ -91,6 +100,15 @@ const AMAZON_OBJECTIVES = {
         7: { ca: 40000, tacos: 20 },
         8: { ca: 30000, tacos: 20 },
         9: { ca: 40000, tacos: 20 },
+      },
+    },
+    Q4: {
+      ca: 175000, // 70 + 50 + 55
+      tacos: 20,
+      months: {
+        10: { ca: 70000, tacos: 20 },
+        11: { ca: 50000, tacos: 20 },
+        12: { ca: 55000, tacos: 20 },
       },
     },
   },
@@ -127,6 +145,9 @@ const B2B_OBJECTIVES_MONTHLY = {
   '2026-07': 70000,
   '2026-08': 10000,
   '2026-09': 10000,
+  '2026-10': 10000,
+  '2026-11': 10000,
+  '2026-12': 10000,
 };
 const B2B_EXCLUDED_CLIENTS = ['VETO SANTE'];
 
