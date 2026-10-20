@@ -4350,6 +4350,224 @@ app.get('/api/amazon/ads-status', (req, res) => {
   });
 });
 
+// ============================================================
+// /api/amazon/health — diagnostic détaillé brique par brique
+//
+// Teste indépendamment chaque étage de la chaîne Amazon et retourne
+// un rapport JSON avec le premier maillon qui casse. Volontairement
+// SANS lancer de rapport Ads (long, 2-5 min) — on vérifie juste la
+// connectivité et la validité des tokens.
+//
+// Checks :
+//   1. env vars SP + Ads présentes ?
+//   2. SP token (OAuth refresh)
+//   3. SP sales API (/sales/v1/orderMetrics sur J-2 → J-1)
+//   4. SP orders API (/orders/v0/orders, limit 1)
+//   5. Ads token (OAuth refresh)
+//   6. Ads profiles API (/v2/profiles — valide clientId + token)
+//   7. État cache SQLite (ad spend lastUpdate, nb mois amazon_products)
+//
+// Chaque check : { status: 'ok' | 'fail' | 'skipped', detail, ms, httpStatus? }.
+// ============================================================
+app.get('/api/amazon/health', async (req, res) => {
+  const started = Date.now();
+  const report = {
+    generatedAt: new Date().toISOString(),
+    checks: {},
+    firstFailure: null,
+  };
+
+  async function timed(name, fn) {
+    const t0 = Date.now();
+    try {
+      const result = await fn();
+      report.checks[name] = { ms: Date.now() - t0, ...result };
+    } catch (err) {
+      report.checks[name] = { ms: Date.now() - t0, status: 'fail', detail: 'exception: ' + err.message };
+    }
+    if (!report.firstFailure && report.checks[name].status === 'fail') {
+      report.firstFailure = name;
+    }
+  }
+
+  // 1. env vars present
+  await timed('env_vars', () => {
+    const sp = {
+      AMAZON_SP_CLIENT_ID: !!process.env.AMAZON_SP_CLIENT_ID,
+      AMAZON_SP_CLIENT_SECRET: !!process.env.AMAZON_SP_CLIENT_SECRET,
+      AMAZON_SP_REFRESH_TOKEN: !!process.env.AMAZON_SP_REFRESH_TOKEN,
+      AMAZON_MARKETPLACE_ID: process.env.AMAZON_MARKETPLACE_ID || 'A13V1IB3VIYZZH (default FR)',
+    };
+    const ads = {
+      AMAZON_ADS_CLIENT_ID: !!process.env.AMAZON_ADS_CLIENT_ID,
+      AMAZON_ADS_CLIENT_SECRET: !!process.env.AMAZON_ADS_CLIENT_SECRET,
+      AMAZON_ADS_REFRESH_TOKEN: !!process.env.AMAZON_ADS_REFRESH_TOKEN,
+      AMAZON_ADS_PROFILE_ID: process.env.AMAZON_ADS_PROFILE_ID || null,
+    };
+    const spOk = sp.AMAZON_SP_CLIENT_ID && sp.AMAZON_SP_CLIENT_SECRET && sp.AMAZON_SP_REFRESH_TOKEN;
+    const adsOk = ads.AMAZON_ADS_CLIENT_ID && ads.AMAZON_ADS_CLIENT_SECRET && ads.AMAZON_ADS_REFRESH_TOKEN && ads.AMAZON_ADS_PROFILE_ID;
+    return {
+      status: (spOk && adsOk) ? 'ok' : (spOk || adsOk ? 'partial' : 'fail'),
+      detail: `SP ${spOk ? 'OK' : 'manque'} · Ads ${adsOk ? 'OK' : 'manque'}`,
+      sp, ads,
+    };
+  });
+
+  // 2. SP OAuth token (refresh)
+  let spToken = null;
+  await timed('sp_token', async () => {
+    if (!process.env.AMAZON_SP_REFRESH_TOKEN) return { status: 'skipped', detail: 'env absent' };
+    const r = await fetch('https://api.amazon.com/auth/o2/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: process.env.AMAZON_SP_REFRESH_TOKEN,
+        client_id: process.env.AMAZON_SP_CLIENT_ID,
+        client_secret: process.env.AMAZON_SP_CLIENT_SECRET,
+      }).toString(),
+    });
+    const body = await r.text();
+    if (!r.ok) {
+      // body typique : {"error":"invalid_grant","error_description":"..."}
+      return { status: 'fail', httpStatus: r.status, detail: body.slice(0, 300) };
+    }
+    try {
+      const j = JSON.parse(body);
+      spToken = j.access_token;
+      return { status: 'ok', detail: `access_token obtenu (expire dans ${j.expires_in}s)` };
+    } catch {
+      return { status: 'fail', httpStatus: r.status, detail: 'body non-JSON: ' + body.slice(0, 200) };
+    }
+  });
+
+  // 3. SP sales API (orderMetrics) — fenêtre courte J-2 → J-1
+  await timed('sp_sales_api', async () => {
+    if (!spToken) return { status: 'skipped', detail: 'pas de SP token' };
+    const d = new Date();
+    const jm2 = new Date(d); jm2.setDate(jm2.getDate() - 2);
+    const jm1 = new Date(d); jm1.setDate(jm1.getDate() - 1);
+    const ymd = (x) => x.toISOString().slice(0, 10);
+    const marketplaceId = process.env.AMAZON_MARKETPLACE_ID || 'A13V1IB3VIYZZH';
+    const url = `https://sellingpartnerapi-eu.amazon.com/sales/v1/orderMetrics?` +
+      new URLSearchParams({
+        marketplaceIds: marketplaceId,
+        interval: `${ymd(jm2)}T00:00:00+00:00--${ymd(jm1)}T23:59:59+00:00`,
+        granularity: 'Day',
+      }).toString();
+    const r = await fetch(url, { headers: { 'x-amz-access-token': spToken } });
+    const txt = await r.text();
+    if (!r.ok) return { status: 'fail', httpStatus: r.status, detail: txt.slice(0, 300) };
+    try {
+      const j = JSON.parse(txt);
+      const buckets = (j.payload || []).length;
+      return { status: 'ok', detail: `${buckets} buckets daily sur ${ymd(jm2)} → ${ymd(jm1)}` };
+    } catch {
+      return { status: 'fail', httpStatus: r.status, detail: 'body non-JSON' };
+    }
+  });
+
+  // 4. SP orders API (list, limit 1) — valide le scope orders et le marketplace
+  await timed('sp_orders_api', async () => {
+    if (!spToken) return { status: 'skipped', detail: 'pas de SP token' };
+    const marketplaceId = process.env.AMAZON_MARKETPLACE_ID || 'A13V1IB3VIYZZH';
+    const d = new Date(Date.now() - 7 * 24 * 3600 * 1000);
+    const url = `https://sellingpartnerapi-eu.amazon.com/orders/v0/orders?` +
+      new URLSearchParams({
+        MarketplaceIds: marketplaceId,
+        CreatedAfter: d.toISOString(),
+        OrderStatuses: 'Shipped,Unshipped',
+        MaxResultsPerPage: '1',
+      }).toString();
+    const r = await fetch(url, { headers: { 'x-amz-access-token': spToken } });
+    const txt = await r.text();
+    if (!r.ok) return { status: 'fail', httpStatus: r.status, detail: txt.slice(0, 300) };
+    try {
+      const j = JSON.parse(txt);
+      const n = (j.payload && j.payload.Orders) ? j.payload.Orders.length : 0;
+      return { status: 'ok', detail: `${n} ordre(s) sample retourné(s) sur les 7 derniers jours` };
+    } catch {
+      return { status: 'fail', httpStatus: r.status, detail: 'body non-JSON' };
+    }
+  });
+
+  // 5. Ads OAuth token
+  let adsToken = null;
+  await timed('ads_token', async () => {
+    if (!process.env.AMAZON_ADS_REFRESH_TOKEN) return { status: 'skipped', detail: 'env absent' };
+    const r = await fetch('https://api.amazon.com/auth/o2/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        grant_type: 'refresh_token',
+        refresh_token: process.env.AMAZON_ADS_REFRESH_TOKEN,
+        client_id: process.env.AMAZON_ADS_CLIENT_ID,
+        client_secret: process.env.AMAZON_ADS_CLIENT_SECRET,
+      }).toString(),
+    });
+    const body = await r.text();
+    if (!r.ok) return { status: 'fail', httpStatus: r.status, detail: body.slice(0, 300) };
+    try {
+      const j = JSON.parse(body);
+      adsToken = j.access_token;
+      return { status: 'ok', detail: `access_token obtenu (expire dans ${j.expires_in}s)` };
+    } catch {
+      return { status: 'fail', httpStatus: r.status, detail: 'body non-JSON' };
+    }
+  });
+
+  // 6. Ads profiles API — valide le trio clientId + token + profile_id
+  await timed('ads_profiles', async () => {
+    if (!adsToken) return { status: 'skipped', detail: 'pas de Ads token' };
+    const r = await fetch('https://advertising-api-eu.amazon.com/v2/profiles', {
+      headers: {
+        'Amazon-Advertising-API-ClientId': process.env.AMAZON_ADS_CLIENT_ID,
+        Authorization: `Bearer ${adsToken}`,
+      },
+    });
+    const txt = await r.text();
+    if (!r.ok) return { status: 'fail', httpStatus: r.status, detail: txt.slice(0, 300) };
+    try {
+      const profiles = JSON.parse(txt);
+      const configuredId = process.env.AMAZON_ADS_PROFILE_ID;
+      const match = profiles.find(p => String(p.profileId) === String(configuredId));
+      return {
+        status: match ? 'ok' : 'fail',
+        detail: match
+          ? `${profiles.length} profil(s) accessible(s). Profile configuré ${configuredId} = ${match.accountInfo && match.accountInfo.marketplaceStringId} (${match.countryCode})`
+          : `${profiles.length} profil(s) accessible(s) mais AMAZON_ADS_PROFILE_ID=${configuredId} ne correspond à AUCUN. IDs dispo : ${profiles.map(p => p.profileId).join(', ')}`,
+        availableProfiles: profiles.map(p => ({ profileId: p.profileId, country: p.countryCode, name: p.accountInfo && p.accountInfo.name })),
+      };
+    } catch {
+      return { status: 'fail', httpStatus: r.status, detail: 'body non-JSON' };
+    }
+  });
+
+  // 7. État cache SQLite
+  await timed('cache_state', () => {
+    const ad = cache.getAmazonAdSpend();
+    const months = cache.getAllAmazonMonths();
+    const adAgeMin = ad.lastUpdate ? Math.round((Date.now() - ad.lastUpdate) / 60000) : null;
+    const monthsDetail = {};
+    for (const m of months) {
+      const products = cache.getAmazonMonth(m);
+      monthsDetail[m] = Object.keys(products).length;
+    }
+    return {
+      status: 'ok',
+      detail: `ad_spend=${ad.spend != null ? ad.spend + '€' : '—'} lastUpdate=${adAgeMin != null ? adAgeMin + ' min' : '—'} ago · ${months.length} mois en cache`,
+      ad_spend: { value: ad.spend, lastUpdate: ad.lastUpdate ? new Date(ad.lastUpdate).toISOString() : null, ageMinutes: adAgeMin },
+      amazon_months: monthsDetail,
+    };
+  });
+
+  report.totalMs = Date.now() - started;
+  report.summary = report.firstFailure
+    ? `❌ Première défaillance : ${report.firstFailure}`
+    : '✅ Toutes les briques Amazon OK';
+  res.json(report);
+});
+
 // Force refresh ad spend — waits for completion and returns result
 app.get('/api/amazon/force-refresh-ads', async (req, res) => {
   try {
