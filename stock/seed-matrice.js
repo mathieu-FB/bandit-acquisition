@@ -49,6 +49,61 @@ const COL = {
   matrice_bh_ref: 59,     // BH  Commande à passer (€)
 };
 
+// Header matchers (normalized: lowercase, no accents, single spaces). The
+// Matrice layout drifts (e.g. v202608 inserted 10 PRU/carton columns after X),
+// so columns are resolved by header name; COL is only the fallback when the
+// first row doesn't look like a header.
+const HEADER = {
+  categorie: h => h === 'categorie',
+  famille: h => h === 'famille',
+  animal: h => h === 'animal',
+  sku: h => h === 'sku',
+  cip: h => h === 'cip',
+  nom_court: h => h.startsWith('designation 20'),
+  nom_long: h => h.startsWith('designation 40'),
+  nom_en: h => h.startsWith('designation en 40'),
+  motif: h => h === 'motif',
+  taille: h => h === 'taille',
+  ean_13: h => h === 'ean 13',
+  ean_12: h => h === 'ean 12',
+  url_produit: h => h === 'url produit',
+  pa_dernier: h => h === 'dernier pru',
+  pa_vs: h => h === 'pa vs',
+  pvc_ttc: h => h === 'pvc (ttc)',
+  pays_fabrication: h => h === 'pays de fabrication',
+  hs_code_10: h => h.includes('hs code') && h.includes('10 chiffres'),
+  hs_code_6: h => h.includes('hs code') && h.includes('6 chiffres'),
+  poids_brut: h => h.startsWith('poids brut'),
+  poids_net: h => h === 'poids net',
+  longueur: h => h === 'longueur',
+  largeur: h => h === 'largeur',
+  hauteur: h => h === 'hauteur',
+  lead_time_jours: h => h.startsWith('lead time'),
+  couverture_visee_jours: h => h.startsWith('couverture stock visee'),
+  matrice_bg_ref: h => h === 'commande a passer (#)',
+  matrice_bh_ref: h => h === 'commande a passer (€)',
+};
+
+function normalizeHeader(v) {
+  return String(v == null ? '' : v)
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+// Returns { col, missing }. Missing columns map to -1 (→ null values).
+function resolveColumns(headerRow) {
+  const headers = (headerRow || []).map(normalizeHeader);
+  if (!headers.includes('sku')) return { col: { ...COL }, missing: [], byHeader: false };
+  const col = {};
+  const missing = [];
+  for (const [field, match] of Object.entries(HEADER)) {
+    const idx = headers.findIndex(match);
+    col[field] = idx;
+    if (idx < 0) missing.push(field);
+  }
+  return { col, missing, byHeader: true };
+}
+
 const STOCK_COL = { sku: 0, available: 3 };
 const VENTES_COL = { skuOrCip: 0, qty: 1 };
 
@@ -61,46 +116,47 @@ function parseMatrice(rows) {
   const referentiel = [];
   const skipped = [];
   const cipToSku = {}; // for VENTES 2025 fallback matching
+  const { col, missing, byHeader } = resolveColumns(rows[0]);
 
   for (let i = 1; i < rows.length; i++) {
     const r = rows[i];
     if (!r) continue;
-    const sku = xlsxIo.toStr(r[COL.sku]);
+    const sku = xlsxIo.toStr(r[col.sku]);
     if (!sku) {
       // Empty row or footer — skip silently
       continue;
     }
-    const cip = xlsxIo.toStr(r[COL.cip]);
+    const cip = xlsxIo.toStr(r[col.cip]);
     const parsed = {
       sku,
-      categorie: xlsxIo.toStr(r[COL.categorie]),
-      famille: xlsxIo.toStr(r[COL.famille]),
-      animal: xlsxIo.toStr(r[COL.animal]),
+      categorie: xlsxIo.toStr(r[col.categorie]),
+      famille: xlsxIo.toStr(r[col.famille]),
+      animal: xlsxIo.toStr(r[col.animal]),
       cip,
-      nom_court: xlsxIo.toStr(r[COL.nom_court]),
-      nom_long: xlsxIo.toStr(r[COL.nom_long]),
-      nom_en: xlsxIo.toStr(r[COL.nom_en]),
-      motif: xlsxIo.toStr(r[COL.motif]),
-      taille: xlsxIo.toStr(r[COL.taille]),
-      ean_13: xlsxIo.toStr(r[COL.ean_13]),
-      ean_12: xlsxIo.toStr(r[COL.ean_12]),
-      url_produit: xlsxIo.toStr(r[COL.url_produit]),
-      pa_dernier: xlsxIo.toNumber(r[COL.pa_dernier]),
-      pa_vs: xlsxIo.toNumber(r[COL.pa_vs]),
-      pvc_ttc: xlsxIo.toNumber(r[COL.pvc_ttc]),
-      pays_fabrication: xlsxIo.toStr(r[COL.pays_fabrication]),
-      hs_code_10: xlsxIo.toStr(r[COL.hs_code_10]),
-      hs_code_6: xlsxIo.toStr(r[COL.hs_code_6]),
-      poids_brut: xlsxIo.toNumber(r[COL.poids_brut]),
-      poids_net: xlsxIo.toNumber(r[COL.poids_net]),
-      longueur: xlsxIo.toNumber(r[COL.longueur]),
-      largeur: xlsxIo.toNumber(r[COL.largeur]),
-      hauteur: xlsxIo.toNumber(r[COL.hauteur]),
-      lead_time_jours: xlsxIo.toInt(r[COL.lead_time_jours]),
-      couverture_visee_jours: xlsxIo.toInt(r[COL.couverture_visee_jours]),
-      couverture_visee_source: xlsxIo.toInt(r[COL.couverture_visee_jours]) != null ? 'matrice' : null,
-      matrice_bg_ref: xlsxIo.toInt(r[COL.matrice_bg_ref]),
-      matrice_bh_ref: xlsxIo.toNumber(r[COL.matrice_bh_ref]),
+      nom_court: xlsxIo.toStr(r[col.nom_court]),
+      nom_long: xlsxIo.toStr(r[col.nom_long]),
+      nom_en: xlsxIo.toStr(r[col.nom_en]),
+      motif: xlsxIo.toStr(r[col.motif]),
+      taille: xlsxIo.toStr(r[col.taille]),
+      ean_13: xlsxIo.toStr(r[col.ean_13]),
+      ean_12: xlsxIo.toStr(r[col.ean_12]),
+      url_produit: xlsxIo.toStr(r[col.url_produit]),
+      pa_dernier: xlsxIo.toNumber(r[col.pa_dernier]),
+      pa_vs: xlsxIo.toNumber(r[col.pa_vs]),
+      pvc_ttc: xlsxIo.toNumber(r[col.pvc_ttc]),
+      pays_fabrication: xlsxIo.toStr(r[col.pays_fabrication]),
+      hs_code_10: xlsxIo.toStr(r[col.hs_code_10]),
+      hs_code_6: xlsxIo.toStr(r[col.hs_code_6]),
+      poids_brut: xlsxIo.toNumber(r[col.poids_brut]),
+      poids_net: xlsxIo.toNumber(r[col.poids_net]),
+      longueur: xlsxIo.toNumber(r[col.longueur]),
+      largeur: xlsxIo.toNumber(r[col.largeur]),
+      hauteur: xlsxIo.toNumber(r[col.hauteur]),
+      lead_time_jours: xlsxIo.toInt(r[col.lead_time_jours]),
+      couverture_visee_jours: xlsxIo.toInt(r[col.couverture_visee_jours]),
+      couverture_visee_source: xlsxIo.toInt(r[col.couverture_visee_jours]) != null ? 'matrice' : null,
+      matrice_bg_ref: xlsxIo.toInt(r[col.matrice_bg_ref]),
+      matrice_bh_ref: xlsxIo.toNumber(r[col.matrice_bh_ref]),
     };
     // Detect duplicates
     if (referentiel.find(x => x.sku === sku)) {
@@ -110,7 +166,7 @@ function parseMatrice(rows) {
     referentiel.push(parsed);
     if (cip) cipToSku[cip] = sku;
   }
-  return { referentiel, skipped, cipToSku };
+  return { referentiel, skipped, cipToSku, missingColumns: missing, byHeader };
 }
 
 function parseStock(rows) {
@@ -205,7 +261,12 @@ function runSeed({ dryRun = true, xlsxPath = null } = {}) {
       rowsSeen: matriceRows.length - 1,
       referentielCount: matrice.referentiel.length,
       skipped: matrice.skipped.length,
+      columnsByHeader: matrice.byHeader,
+      missingColumns: matrice.missingColumns,
     };
+    if (matrice.missingColumns.length) {
+      report.warnings.push(`[Matrice] Colonnes introuvables (valeurs laissées vides) : ${matrice.missingColumns.join(', ')}`);
+    }
     if (matrice.skipped.length) {
       report.warnings.push(...matrice.skipped.slice(0, 20).map(s => `[Matrice] Ligne ${s.row} SKU=${s.sku}: ${s.reason}`));
       if (matrice.skipped.length > 20) report.warnings.push(`[Matrice] +${matrice.skipped.length - 20} autres warnings tronqués`);
@@ -297,6 +358,7 @@ function runSeed({ dryRun = true, xlsxPath = null } = {}) {
 module.exports = {
   runSeed,
   parseMatrice,
+  resolveColumns,
   parseStock,
   parseVentesAnnuelles,
   resolveXlsxPath,
