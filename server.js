@@ -4170,13 +4170,13 @@ app.get('/api/tiktok/debug-campaigns', async (req, res) => {
         advertiser_id: advertiserId,
         store_ids: JSON.stringify(storeIds),
         dimensions: JSON.stringify(['campaign_id']),
-        metrics: JSON.stringify(['spend', 'impressions', 'clicks', 'campaign_name', 'gross_revenue', 'orders']),
+        metrics: JSON.stringify(['cost', 'net_cost', 'gross_revenue', 'orders', 'product_impressions', 'product_clicks']),
         start_date: date, end_date: date,
         page: '1', page_size: '100',
       });
       gmvMaxReport = await fetchJson(gmvMaxReportUrl, gmvParams);
       const rows = gmvMaxReport.data?.list || [];
-      gmvMaxTotalSpend = rows.reduce((s, r) => s + parseFloat(r.metrics?.spend || 0), 0);
+      gmvMaxTotalSpend = rows.reduce((s, r) => s + parseFloat(r.metrics?.cost || 0), 0);
     }
 
     res.json({
