@@ -4059,6 +4059,80 @@ app.get('/api/tiktok/check-permissions', async (req, res) => {
   res.json({ advertiserId, checks });
 });
 
+// Debug: compare spend AUCTION_ADVERTISER (notre fetch global) vs AUCTION_CAMPAIGN
+// pour détecter les campagnes exclues (ex: GMV Max / TikTok Shop).
+app.get('/api/tiktok/debug-campaigns', async (req, res) => {
+  const token = process.env.TIKTOK_ACCESS_TOKEN;
+  const advertiserId = process.env.TIKTOK_ADVERTISER_ID;
+  if (!token || !advertiserId) return res.status(400).json({ error: 'TikTok non configuré' });
+
+  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  const date = (req.query.date || yesterday).toString();
+  const url = 'https://business-api.tiktok.com/open_api/v1.3/report/integrated/get/';
+
+  const advertiserParams = new URLSearchParams({
+    advertiser_id: advertiserId,
+    report_type: 'BASIC',
+    data_level: 'AUCTION_ADVERTISER',
+    dimensions: JSON.stringify(['stat_time_day']),
+    metrics: JSON.stringify(['spend', 'impressions', 'clicks']),
+    start_date: date,
+    end_date: date,
+    page: '1',
+    page_size: '100',
+  });
+
+  const campaignParams = new URLSearchParams({
+    advertiser_id: advertiserId,
+    report_type: 'BASIC',
+    data_level: 'AUCTION_CAMPAIGN',
+    dimensions: JSON.stringify(['campaign_id']),
+    metrics: JSON.stringify(['spend', 'impressions', 'clicks', 'campaign_name', 'objective_type', 'promotion_type']),
+    start_date: date,
+    end_date: date,
+    page: '1',
+    page_size: '1000',
+  });
+
+  try {
+    const [r1, r2] = await Promise.all([
+      fetch(`${url}?${advertiserParams.toString()}`, { headers: { 'Access-Token': token } }),
+      fetch(`${url}?${campaignParams.toString()}`, { headers: { 'Access-Token': token } }),
+    ]);
+    const j1 = await r1.json();
+    const j2 = await r2.json();
+
+    const advertiserRows = j1.data?.list || [];
+    const campaignRows = j2.data?.list || [];
+    const advertiserTotal = advertiserRows.reduce((s, row) => s + parseFloat(row.metrics?.spend || 0), 0);
+    const campaigns = campaignRows.map(row => ({
+      campaign_id: row.dimensions?.campaign_id,
+      campaign_name: row.metrics?.campaign_name,
+      objective_type: row.metrics?.objective_type,
+      promotion_type: row.metrics?.promotion_type,
+      spend: parseFloat(row.metrics?.spend || 0),
+      impressions: parseInt(row.metrics?.impressions || 0),
+      clicks: parseInt(row.metrics?.clicks || 0),
+    })).sort((a, b) => b.spend - a.spend);
+    const campaignTotal = campaigns.reduce((s, c) => s + c.spend, 0);
+
+    res.json({
+      date,
+      advertiser_id: advertiserId,
+      advertiser_total_spend: Number(advertiserTotal.toFixed(2)),
+      campaign_total_spend: Number(campaignTotal.toFixed(2)),
+      ecart: Number((campaignTotal - advertiserTotal).toFixed(2)),
+      campaigns_count: campaigns.length,
+      api_errors: {
+        advertiser: j1.code !== 0 ? { code: j1.code, message: j1.message } : null,
+        campaign: j2.code !== 0 ? { code: j2.code, message: j2.message } : null,
+      },
+      campaigns,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 
 // Search authorized Spark Ads posts by keywords
