@@ -4160,7 +4160,7 @@ app.get('/api/tiktok/debug-campaigns', async (req, res) => {
     const gmvMaxReportUrl = 'https://business-api.tiktok.com/open_api/v1.3/gmv_max/report/get/';
     const storeListParams = new URLSearchParams({ advertiser_id: advertiserId });
     const stores = await fetchJson(storeListUrl, storeListParams);
-    const storeList = stores.data?.list || stores.data?.stores || [];
+    const storeList = stores.data?.store_list || stores.data?.list || stores.data?.stores || [];
     const storeIds = storeList.map(s => s.store_id).filter(Boolean);
 
     let gmvMaxReport = null;
