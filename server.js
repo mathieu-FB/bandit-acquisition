@@ -202,6 +202,19 @@ function formatDate(d) {
   return `${y}-${m}-${day}`;
 }
 
+// Split a date range into chunks of at most maxDays each (inclusive bounds).
+function chunkDateRange(start, end, maxDays) {
+  const chunks = [];
+  let s = new Date(start + 'T12:00:00');
+  const e = new Date(end + 'T12:00:00');
+  while (s <= e) {
+    const chunkEnd = new Date(Math.min(e.getTime(), s.getTime() + (maxDays - 1) * 86400000));
+    chunks.push([formatDate(s), formatDate(chunkEnd)]);
+    s = new Date(chunkEnd.getTime() + 86400000);
+  }
+  return chunks;
+}
+
 // Convert a UTC date string to Paris local date (YYYY-MM-DD)
 function toParisDate(utcStr) {
   return new Date(utcStr).toLocaleDateString('en-CA', { timeZone: 'Europe/Paris' });
@@ -470,6 +483,7 @@ async function fetchMetaAdsData(start, end) {
       time_range: JSON.stringify({ since: start, until: end }),
       time_increment: 1,
       level: 'account',
+      limit: '500',
     }).toString();
 
   const res = await fetch(url);
@@ -659,6 +673,20 @@ app.get('/api/google-ads/debug', async (req, res) => {
 // ============================================================
 
 async function fetchTikTokAdvertiserData(start, end, advertiserId) {
+  // TikTok limite à 30 jours avec stat_time_day → chunk séquentiellement.
+  const chunks = chunkDateRange(start, end, 30);
+  const all = [];
+  let anyNull = false;
+  for (const [s, e] of chunks) {
+    const rows = await fetchTikTokAdvertiserDataChunk(s, e, advertiserId);
+    if (rows === null) { anyNull = true; continue; }
+    all.push(...rows);
+  }
+  if (anyNull && all.length === 0) return null;
+  return all;
+}
+
+async function fetchTikTokAdvertiserDataChunk(start, end, advertiserId) {
   const token = process.env.TIKTOK_ACCESS_TOKEN;
   if (!token || !advertiserId) return null;
 
@@ -704,6 +732,17 @@ async function fetchTikTokAdvertiserData(start, end, advertiserId) {
 // Liste les stores attachés à l'advertiser puis fetch le report par jour.
 // Converti au format `report/integrated/get` pour que aggregateTikTokData l'ingère.
 async function fetchTikTokGmvMaxData(start, end) {
+  // Même contrainte 30 jours max que report/integrated/get.
+  const chunks = chunkDateRange(start, end, 30);
+  const all = [];
+  for (const [s, e] of chunks) {
+    const rows = await fetchTikTokGmvMaxDataChunk(s, e);
+    if (rows?.length) all.push(...rows);
+  }
+  return all;
+}
+
+async function fetchTikTokGmvMaxDataChunk(start, end) {
   const token = process.env.TIKTOK_ACCESS_TOKEN;
   const advertiserId = process.env.TIKTOK_ADVERTISER_ID;
   if (!token || !advertiserId) return [];
