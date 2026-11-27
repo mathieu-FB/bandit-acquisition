@@ -694,15 +694,70 @@ async function fetchTikTokAdvertiserData(start, end, advertiserId) {
   return json.data?.list || [];
 }
 
+// GMV Max — campagnes TikTok Shop (endpoint dédié, metrics distincts).
+// Liste les stores attachés à l'advertiser puis fetch le report par jour.
+// Converti au format `report/integrated/get` pour que aggregateTikTokData l'ingère.
+async function fetchTikTokGmvMaxData(start, end) {
+  const token = process.env.TIKTOK_ACCESS_TOKEN;
+  const advertiserId = process.env.TIKTOK_ADVERTISER_ID;
+  if (!token || !advertiserId) return [];
+
+  const storesRes = await fetch(
+    `https://business-api.tiktok.com/open_api/v1.3/gmv_max/store/list/?advertiser_id=${advertiserId}`,
+    { headers: { 'Access-Token': token } }
+  );
+  const storesJson = await storesRes.json();
+  if (storesJson.code !== 0) {
+    console.error('TikTok GMV Max stores error:', storesJson.message);
+    return [];
+  }
+  const storeIds = (storesJson.data?.store_list || []).map(s => s.store_id).filter(Boolean);
+  if (!storeIds.length) return [];
+
+  const params = new URLSearchParams({
+    advertiser_id: advertiserId,
+    store_ids: JSON.stringify(storeIds),
+    dimensions: JSON.stringify(['stat_time_day']),
+    metrics: JSON.stringify(['cost', 'gross_revenue', 'orders']),
+    start_date: start, end_date: end,
+    page: '1', page_size: '1000',
+  });
+  const r = await fetch(
+    `https://business-api.tiktok.com/open_api/v1.3/gmv_max/report/get/?${params.toString()}`,
+    { headers: { 'Access-Token': token } }
+  );
+  const j = await r.json();
+  if (j.code !== 0) {
+    console.error('TikTok GMV Max report error:', j.message);
+    return [];
+  }
+
+  return (j.data?.list || []).map(row => {
+    const orders = parseFloat(row.metrics?.orders || 0);
+    const gross = parseFloat(row.metrics?.gross_revenue || 0);
+    return {
+      dimensions: { stat_time_day: row.dimensions?.stat_time_day },
+      metrics: {
+        spend: row.metrics?.cost || '0',
+        impressions: 0,
+        clicks: 0,
+        complete_payment: orders,
+        value_per_complete_payment: orders > 0 ? gross / orders : 0,
+      },
+    };
+  });
+}
+
 async function fetchTikTokAdsData(start, end) {
-  const advIds = [
-    process.env.TIKTOK_ADVERTISER_ID,
-    process.env.TIKTOK_SHOP_ADVERTISER_ID,
-  ].filter(Boolean);
-  if (!advIds.length) return null;
-  const parts = await Promise.all(advIds.map(id => fetchTikTokAdvertiserData(start, end, id)));
+  const advertiserId = process.env.TIKTOK_ADVERTISER_ID;
+  if (!advertiserId) return null;
+  const [classic, gmvMax] = await Promise.all([
+    fetchTikTokAdvertiserData(start, end, advertiserId),
+    fetchTikTokGmvMaxData(start, end),
+  ]);
   const merged = [];
-  parts.forEach(p => { if (p) merged.push(...p); });
+  if (classic) merged.push(...classic);
+  if (gmvMax?.length) merged.push(...gmvMax);
   return merged;
 }
 
