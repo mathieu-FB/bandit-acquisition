@@ -4155,12 +4155,39 @@ app.get('/api/tiktok/debug-campaigns', async (req, res) => {
     const reportedIds = new Set(campaigns.map(c => c.campaign_id));
     const missingFromReport = campaignListRaw.filter(c => !reportedIds.has(c.campaign_id));
 
+    // 5) GMV Max — endpoint dédié /gmv_max/store/list/ puis /gmv_max/report/get/
+    const storeListUrl = 'https://business-api.tiktok.com/open_api/v1.3/gmv_max/store/list/';
+    const gmvMaxReportUrl = 'https://business-api.tiktok.com/open_api/v1.3/gmv_max/report/get/';
+    const storeListParams = new URLSearchParams({ advertiser_id: advertiserId });
+    const stores = await fetchJson(storeListUrl, storeListParams);
+    const storeList = stores.data?.list || stores.data?.stores || [];
+    const storeIds = storeList.map(s => s.store_id).filter(Boolean);
+
+    let gmvMaxReport = null;
+    let gmvMaxTotalSpend = 0;
+    if (storeIds.length) {
+      const gmvParams = new URLSearchParams({
+        advertiser_id: advertiserId,
+        store_ids: JSON.stringify(storeIds),
+        dimensions: JSON.stringify(['campaign_id']),
+        metrics: JSON.stringify(['spend', 'impressions', 'clicks', 'campaign_name', 'gross_revenue', 'orders']),
+        start_date: date, end_date: date,
+        page: '1', page_size: '100',
+      });
+      gmvMaxReport = await fetchJson(gmvMaxReportUrl, gmvParams);
+      const rows = gmvMaxReport.data?.list || [];
+      gmvMaxTotalSpend = rows.reduce((s, r) => s + parseFloat(r.metrics?.spend || 0), 0);
+    }
+
     res.json({
       date,
       advertiser_id: advertiserId,
       advertiser_total_spend: Number(advertiserTotal.toFixed(2)),
       campaign_total_spend: Number(campaigns.reduce((s, c) => s + c.spend, 0).toFixed(2)),
       shop_filtered_spend: Number(shopFilteredCampaigns.reduce((s, c) => s + c.spend, 0).toFixed(2)),
+      gmv_max_total_spend: Number(gmvMaxTotalSpend.toFixed(2)),
+      gmv_max_store_ids: storeIds,
+      gmv_max_report: gmvMaxReport ? { ok: gmvMaxReport.ok, code: gmvMaxReport.code, message: gmvMaxReport.message, rows: gmvMaxReport.data?.list || [] } : null,
       campaigns_count: campaigns.length,
       campaigns_list_total: campaignListRaw.length,
       missing_from_report_count: missingFromReport.length,
@@ -4169,6 +4196,7 @@ app.get('/api/tiktok/debug-campaigns', async (req, res) => {
         campaign: c.ok ? null : { code: c.code, message: c.message, error: c.error },
         shopFiltered: sf.ok ? null : { code: sf.code, message: sf.message, error: sf.error },
         campaignList: cl.ok ? null : { code: cl.code, message: cl.message, error: cl.error },
+        storeList: stores.ok ? null : { code: stores.code, message: stores.message, error: stores.error },
       },
       shop_filtered_campaigns: shopFilteredCampaigns,
       missing_from_report: missingFromReport,
