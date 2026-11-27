@@ -479,7 +479,10 @@ async function fetchMetaAdsData(start, end) {
   }
 
   const json = await res.json();
-  return json.data || [];
+  const rows = json.data || [];
+  const totalSpend = rows.reduce((s, r) => s + parseFloat(r.spend || 0), 0);
+  console.log(`[Meta] fetched ${rows.length} rows ${start}→${end} total_spend=${totalSpend.toFixed(2)}`);
+  return rows;
 }
 
 function aggregateMetaData(dailyData) {
@@ -691,7 +694,10 @@ async function fetchTikTokAdvertiserData(start, end, advertiserId) {
     return null;
   }
 
-  return json.data?.list || [];
+  const rows = json.data?.list || [];
+  const totalSpend = rows.reduce((s, r) => s + parseFloat(r.metrics?.spend || 0), 0);
+  console.log(`[TikTok classic] fetched ${rows.length} rows ${start}→${end} (adv ${advertiserId}) total_spend=${totalSpend.toFixed(2)}`);
+  return rows;
 }
 
 // GMV Max — campagnes TikTok Shop (endpoint dédié, metrics distincts).
@@ -734,7 +740,7 @@ async function fetchTikTokGmvMaxData(start, end) {
     return [];
   }
 
-  return (j.data?.list || []).map(row => {
+  const converted = (j.data?.list || []).map(row => {
     const orders = parseFloat(row.metrics?.orders || 0);
     const gross = parseFloat(row.metrics?.gross_revenue || 0);
     return {
@@ -748,6 +754,9 @@ async function fetchTikTokGmvMaxData(start, end) {
       },
     };
   });
+  const totalCost = converted.reduce((s, r) => s + parseFloat(r.metrics?.spend || 0), 0);
+  console.log(`[TikTok GMV Max] fetched ${converted.length} rows ${start}→${end} total_cost=${totalCost.toFixed(2)}`);
+  return converted;
 }
 
 async function fetchTikTokAdsData(start, end) {
