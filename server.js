@@ -4170,7 +4170,7 @@ app.get('/api/tiktok/debug-campaigns', async (req, res) => {
         advertiser_id: advertiserId,
         store_ids: JSON.stringify(storeIds),
         dimensions: JSON.stringify(['campaign_id']),
-        metrics: JSON.stringify(['cost', 'net_cost', 'gross_revenue', 'orders', 'product_impressions', 'product_clicks']),
+        metrics: JSON.stringify(['cost', 'net_cost', 'gross_revenue', 'orders']),
         start_date: date, end_date: date,
         page: '1', page_size: '100',
       });
