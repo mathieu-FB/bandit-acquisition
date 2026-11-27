@@ -23,7 +23,11 @@ const path = require('path');
 const sgMail = require('@sendgrid/mail');
 const cache = require('./cache');
 
-const RULES_PATH = path.join(__dirname, 'data', 'test_rules.json');
+// Sur Railway, /app/data est un volume persistant monté qui écrase le contenu
+// du repo au boot. Le test_rules.json versionné en git n'y arrive donc pas.
+// Fallback: chercher à la racine du projet si le volume ne le contient pas.
+const RULES_PATH_PRIMARY = path.join(__dirname, 'data', 'test_rules.json');
+const RULES_PATH_FALLBACK = path.join(__dirname, 'test_rules.json');
 
 // ------------------------------------------------------------
 // Config
@@ -34,10 +38,13 @@ const RULES_PATH = path.join(__dirname, 'data', 'test_rules.json');
  * de config sont pris en compte sans redéploiement.
  */
 function loadRules() {
-  if (!fs.existsSync(RULES_PATH)) {
-    throw new Error(`test_rules.json introuvable à ${RULES_PATH}`);
+  const rulesPath = fs.existsSync(RULES_PATH_PRIMARY)
+    ? RULES_PATH_PRIMARY
+    : (fs.existsSync(RULES_PATH_FALLBACK) ? RULES_PATH_FALLBACK : null);
+  if (!rulesPath) {
+    throw new Error(`test_rules.json introuvable (ni ${RULES_PATH_PRIMARY} ni ${RULES_PATH_FALLBACK})`);
   }
-  const raw = fs.readFileSync(RULES_PATH, 'utf8');
+  const raw = fs.readFileSync(rulesPath, 'utf8');
   const rules = JSON.parse(raw);
   const required = [
     'campaign_name_match', 'target_cpa', 'kill_spend',

@@ -714,10 +714,12 @@ async function fetchTikTokGmvMaxData(start, end) {
   const storeIds = (storesJson.data?.store_list || []).map(s => s.store_id).filter(Boolean);
   if (!storeIds.length) return [];
 
+  // L'API GMV Max exige 1-3 dimensions "principales" (hors stat_time_day).
+  // On ajoute campaign_id; aggregateTikTokData regroupe ensuite par stat_time_day.
   const params = new URLSearchParams({
     advertiser_id: advertiserId,
     store_ids: JSON.stringify(storeIds),
-    dimensions: JSON.stringify(['stat_time_day']),
+    dimensions: JSON.stringify(['campaign_id', 'stat_time_day']),
     metrics: JSON.stringify(['cost', 'gross_revenue', 'orders']),
     start_date: start, end_date: end,
     page: '1', page_size: '1000',
