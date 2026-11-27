@@ -4188,6 +4188,7 @@ app.get('/api/tiktok/debug-campaigns', async (req, res) => {
       gmv_max_total_spend: Number(gmvMaxTotalSpend.toFixed(2)),
       gmv_max_store_ids: storeIds,
       gmv_max_report: gmvMaxReport ? { ok: gmvMaxReport.ok, code: gmvMaxReport.code, message: gmvMaxReport.message, rows: gmvMaxReport.data?.list || [] } : null,
+      gmv_max_store_list_raw: stores,
       campaigns_count: campaigns.length,
       campaigns_list_total: campaignListRaw.length,
       missing_from_report_count: missingFromReport.length,
