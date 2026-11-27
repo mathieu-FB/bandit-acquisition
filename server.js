@@ -655,9 +655,8 @@ app.get('/api/google-ads/debug', async (req, res) => {
 // TIKTOK ADS API
 // ============================================================
 
-async function fetchTikTokAdsData(start, end) {
+async function fetchTikTokAdvertiserData(start, end, advertiserId) {
   const token = process.env.TIKTOK_ACCESS_TOKEN;
-  const advertiserId = process.env.TIKTOK_ADVERTISER_ID;
   if (!token || !advertiserId) return null;
 
   const url = 'https://business-api.tiktok.com/open_api/v1.3/report/integrated/get/';
@@ -682,17 +681,29 @@ async function fetchTikTokAdsData(start, end) {
   });
 
   if (!res.ok) {
-    console.error(`TikTok Ads error ${res.status}: ${await res.text()}`);
+    console.error(`TikTok Ads error ${res.status} (adv ${advertiserId}): ${await res.text()}`);
     return null;
   }
 
   const json = await res.json();
   if (json.code !== 0) {
-    console.error('TikTok API error:', json.message);
+    console.error(`TikTok API error (adv ${advertiserId}):`, json.message);
     return null;
   }
 
   return json.data?.list || [];
+}
+
+async function fetchTikTokAdsData(start, end) {
+  const advIds = [
+    process.env.TIKTOK_ADVERTISER_ID,
+    process.env.TIKTOK_SHOP_ADVERTISER_ID,
+  ].filter(Boolean);
+  if (!advIds.length) return null;
+  const parts = await Promise.all(advIds.map(id => fetchTikTokAdvertiserData(start, end, id)));
+  const merged = [];
+  parts.forEach(p => { if (p) merged.push(...p); });
+  return merged;
 }
 
 function aggregateTikTokData(rawData) {
@@ -723,7 +734,14 @@ function aggregateTikTokData(rawData) {
     // TikTok returns "2026-04-16 00:00:00" — normalize to "2026-04-16"
     const day = (dims.stat_time_day || '').split(' ')[0];
     if (day) {
-      daily[day] = { spend, impressions, clicks, purchases, revenue };
+      const prev = daily[day] || { spend: 0, impressions: 0, clicks: 0, purchases: 0, revenue: 0 };
+      daily[day] = {
+        spend: prev.spend + spend,
+        impressions: prev.impressions + impressions,
+        clicks: prev.clicks + clicks,
+        purchases: prev.purchases + purchases,
+        revenue: prev.revenue + revenue,
+      };
     }
   });
 
