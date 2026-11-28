@@ -1,0 +1,130 @@
+/* =====================================================================
+   BANDIT UI — design system partagé (dashboard acquisition, stock, SAV)
+   Charte French Bandit : jaune dominant, charbon, blanc, bleu réservé aux
+   boutons d'action, surlignage incliné, Poppins 800 + Lato.
+   ===================================================================== */
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@800&family=Lato:ital,wght@0,400;0,700;1,400&display=swap');
+
+:root {
+  /* marque */
+  --jaune: #FADB7F;
+  --jaune-soft: #FEF3D3;
+  --charbon: #1C1C1C;
+  --blanc: #FFFFFF;
+  --rose: #FCDDF3;
+  --bleu: #0000FF;
+  /* familles produits */
+  --fam-hightech: #D0BCE7; --fam-accessoires: #A2D2E4; --fam-maison: #FADA74; --fam-voyage: #C4E8E6; --fam-soins: #FBD4DC;
+  /* sémantique (métier, pas de marque) */
+  --green: #1E8E5A; --green-bg: #E3F4EA;
+  --red: #E32C2B; --red-bg: #FDE7E7;
+  --amber: #B45309; --amber-bg: #FEF3C7;
+  --info: #1E40AF; --info-bg: #DBEAFE;
+  /* surfaces */
+  --bg: #FAFAF7;
+  --card: #FFFFFF; --card-bg: #FFFFFF;
+  --paper: #F4F4F0;
+  --border: rgba(28, 28, 28, .14);
+  --border-strong: #1C1C1C;
+  --text: #1C1C1C;
+  --text-secondary: #4A4A4A;
+  --text-muted: #7A7A7A;
+  --muted: #7A7A7A;
+  /* typo */
+  --display: 'Poppins', 'Arial Black', sans-serif;
+  --body: 'Lato', Arial, sans-serif;
+  --mono: ui-monospace, Menlo, Consolas, monospace;
+  --font: var(--body);
+  /* formes */
+  --radius: 0;
+  --shadow: none;
+  --shadow-hover: 4px 4px 0 var(--charbon);
+  --ease: cubic-bezier(.2, .8, .2, 1);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 400 14px/1.5 var(--body); }
+img { max-width: 100%; }
+a { color: inherit; }
+button, input, select, textarea { font: inherit; color: inherit; }
+h1, h2, h3, h4 { margin: 0; font-family: var(--display); font-weight: 800; letter-spacing: -.02em; line-height: 1.05; }
+::selection { background: var(--jaune); color: var(--charbon); }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+/* ---------- Surlignage ---------- */
+.hl { position: relative; display: inline-block; white-space: nowrap; padding: 0 .1em; background: none; color: inherit; z-index: 0; }
+.hl::before { content: ''; position: absolute; inset: .04em -.08em; background: var(--jaune); transform: rotate(-1.5deg); z-index: -1; }
+.hl--blanc::before { background: var(--blanc); }
+
+/* ---------- Titres de section ---------- */
+.ui-title { font: 800 18px/1.1 var(--display); text-transform: uppercase; letter-spacing: -.01em; display: inline-block; position: relative; z-index: 0; padding: 2px 6px; margin: 0 0 14px -6px; }
+.ui-title::before { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 55%; background: var(--jaune); transform: rotate(-1.5deg); z-index: -1; }
+.ui-kicker { font: 800 11px/1 var(--display); text-transform: uppercase; letter-spacing: .14em; color: var(--text-muted); }
+.ui-label { font: 700 11px/1 var(--body); text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); }
+
+/* ---------- Boutons ---------- */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border-radius: 0; border: 2px solid var(--charbon); background: transparent; color: var(--charbon); font: 800 12px/1 var(--display); text-transform: uppercase; letter-spacing: .03em; padding: 10px 14px; cursor: pointer; text-decoration: none; white-space: nowrap; transition: transform .15s var(--ease), box-shadow .15s, background .15s, color .15s; }
+.btn:hover { transform: translate(-1px, -1px); box-shadow: 3px 3px 0 var(--jaune); }
+.btn:active { transform: none; box-shadow: none; }
+.btn:disabled { opacity: .5; cursor: not-allowed; transform: none; box-shadow: none; }
+.btn-primary { background: var(--bleu); border-color: var(--bleu); color: #fff; }
+.btn-primary:hover { box-shadow: 3px 3px 0 var(--charbon); }
+.btn-ghost, .btn-outline { background: transparent; }
+.btn-ghost.active, .btn-outline.active, .btn.active { background: var(--charbon); color: #fff; border-color: var(--charbon); }
+.btn-ghost.active:hover { box-shadow: 3px 3px 0 var(--jaune); }
+.btn-sm { padding: 7px 10px; font-size: 11px; }
+.btn-danger { background: var(--red); border-color: var(--red); color: #fff; }
+.btn-icon { padding: 8px; width: 36px; height: 36px; }
+.btn-icon svg { width: 16px; height: 16px; }
+
+/* ---------- Champs ---------- */
+.input, .date-input, .meta-date-input, .spark-input, .li-input, .li-textarea, .login-input,
+input[type="date"], input[type="text"], input[type="number"], input[type="search"], input[type="email"], input[type="password"], select, textarea {
+  border: 1.5px solid var(--charbon); background: #fff; border-radius: 0; padding: 8px 10px; font: 400 13px var(--body); color: var(--text); outline: none; min-height: 36px;
+}
+input:focus, select:focus, textarea:focus { box-shadow: 3px 3px 0 var(--jaune); }
+input[type="checkbox"], input[type="radio"], input[type="file"] { border: 0; min-height: 0; padding: 0; box-shadow: none; }
+textarea { min-height: 72px; resize: vertical; line-height: 1.5; }
+select { appearance: none; -webkit-appearance: none; background: #fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%231C1C1C'/%3E%3C/svg%3E") no-repeat right 10px center; padding-right: 28px; }
+label { font: 700 11px/1.3 var(--body); text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); }
+
+/* ---------- Cartes ---------- */
+.card, .kpi, .group, .b2b-kpi-card, .b2b-chart-card, .b2b-table-card, .meta-kpi-card, .meta-ad-card, .meta-adset-card, .meta-chart-card, .product-cat-card, .focus-card, .li-idea-card, .spark-post-card, .obj-card { background: var(--card); border: 1px solid var(--border); border-radius: 0; }
+
+/* ---------- Badges ---------- */
+.badge { display: inline-block; padding: 3px 8px; border-radius: 0; font: 800 10px/1.2 var(--display); text-transform: uppercase; letter-spacing: .06em; background: var(--charbon); color: #fff; }
+.badge.info, .badge.acmd { background: var(--info-bg); color: var(--info); }
+.badge.warn, .badge.critique { background: var(--amber-bg); color: var(--amber); }
+.badge.err, .badge.rupture, .badge.urgent { background: var(--red-bg); color: var(--red); }
+.badge.ok, .badge.success { background: var(--green-bg); color: var(--green); }
+.badge.dm, .badge.muted { background: var(--paper); color: var(--text-muted); }
+
+/* ---------- Tables ---------- */
+.ui-table, .b2b-clients-table, .product-types-table table, .amazon-products-table table, .forecast-table, .group table, .filters + table, main table { width: 100%; border-collapse: collapse; font-size: 13px; background: #fff; }
+.ui-table th, .b2b-clients-table th, .product-types-table th, .amazon-products-table th, .group table th, main table th { text-align: left; padding: 10px 12px; font: 700 10.5px/1 var(--body); text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); border-bottom: 2px solid var(--charbon); background: #fff; }
+.ui-table td, .b2b-clients-table td, .product-types-table td, .amazon-products-table td, .group table td, main table td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.ui-table tbody tr:hover, .b2b-clients-table tbody tr:hover, .product-types-table tbody tr:hover, .group table tbody tr:hover, main table tbody tr:hover { background: var(--jaune-soft); }
+.num, .qty-cell, .stock { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* ---------- Spinner ---------- */
+.spinner { width: 34px; height: 34px; border: 4px solid var(--jaune); border-top-color: var(--charbon); border-radius: 50%; animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---------- Modal ---------- */
+.modal-overlay { position: fixed; inset: 0; background: rgba(28,28,28,.55); display: none; align-items: center; justify-content: center; z-index: 100; padding: 24px; }
+.modal-overlay.active { display: flex; }
+.modal { background: #fff; border: 2px solid var(--charbon); box-shadow: 8px 8px 0 var(--jaune); max-width: 960px; width: 100%; max-height: 90vh; overflow: auto; }
+.modal-header { padding: 14px 20px; border-bottom: 2px solid var(--charbon); display: flex; align-items: center; justify-content: space-between; position: sticky; top: 0; background: #fff; z-index: 2; }
+.modal-header h3 { font-size: 16px; text-transform: uppercase; }
+.modal-close { background: none; border: 0; font-size: 24px; line-height: 1; cursor: pointer; color: var(--text-muted); }
+.modal-close:hover { color: var(--charbon); }
+.modal-body { padding: 20px; }
+
+/* ---------- Divers ---------- */
+.empty-state, .placeholder-section { padding: 32px; text-align: center; color: var(--text-muted); background: #fff; border: 1px dashed var(--border-strong); }
+.loading { padding: 32px; text-align: center; color: var(--text-muted); }
+.muted { color: var(--text-muted); font-size: 12px; }
+code { font-family: var(--mono); font-size: .92em; background: var(--paper); padding: 1px 5px; }
+pre { font-family: var(--mono); }
+.out, .modal-body pre { background: var(--charbon); color: var(--jaune); font-family: var(--mono); font-size: 12px; padding: 14px; overflow: auto; white-space: pre-wrap; word-break: break-word; }

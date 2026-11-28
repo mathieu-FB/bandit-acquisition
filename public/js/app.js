@@ -5,8 +5,15 @@
 const CHANNEL_COLORS = {
   meta: '#1877f2',
   google: '#ea4335',
-  tiktok: '#000000',
+  tiktok: '#1C1C1C',
 };
+
+// Charte Bandit : police et couleurs neutres des graphiques
+if (window.Chart) {
+  Chart.defaults.font.family = "'Lato', Arial, sans-serif";
+  Chart.defaults.color = '#7A7A7A';
+}
+const BRAND = { charbon: '#1C1C1C', jaune: '#FADB7F', jauneFonce: '#E8B93A', rose: '#FCDDF3', green: '#1E8E5A', red: '#E32C2B' };
 const CHANNEL_LABELS = { meta: 'Meta', google: 'Google', tiktok: 'TikTok' };
 
 let chartInstances = {};
@@ -131,11 +138,11 @@ function computeChange(current, previous) {
 // ============================================================
 
 const TOOLTIP_CONFIG = {
-  backgroundColor: '#1a1d26',
-  titleFont: { size: 12, family: 'Inter', weight: '600' },
-  bodyFont: { size: 11, family: 'Inter' },
+  backgroundColor: '#1C1C1C',
+  titleFont: { size: 12, family: 'Poppins', weight: '800' },
+  bodyFont: { size: 11, family: 'Lato' },
   padding: 12,
-  cornerRadius: 8,
+  cornerRadius: 0,
   displayColors: true,
   boxPadding: 4,
 };
@@ -157,7 +164,7 @@ function renderKPI(id, current, previous, formatter, invertColors) {
     const sign = change >= 0 ? '+' : '';
 
     compEl.innerHTML = `
-      <span class="comp-previous">From ${formatter(previous)}</span>
+      <span class="comp-previous">vs ${formatter(previous)}</span>
       <span class="comp-change ${isPositive ? 'positive' : 'negative'}">
         <span class="arrow">${arrow}</span>
         ${sign}${change.toFixed(2)}%
@@ -188,16 +195,16 @@ function createSparkline(canvasId, dailyData, color, formatter) {
       labels,
       datasets: [{
         data: values,
-        borderColor: color || '#1a1a1a',
+        borderColor: color || '#1C1C1C',
         borderWidth: 2,
         fill: {
           target: 'origin',
-          above: (color || '#1a1a1a') + '15',
+          above: (color || '#1C1C1C') + '15',
         },
         tension: 0.4,
         pointRadius: 0,
         pointHoverRadius: 4,
-        pointHoverBackgroundColor: color || '#1a1a1a',
+        pointHoverBackgroundColor: color || '#1C1C1C',
         pointHitRadius: 20,
       }],
     },
@@ -285,13 +292,13 @@ function createChannelLineChart(canvasId, legendId, dailyData, channelTotals, fo
       scales: {
         x: {
           grid: { display: false },
-          ticks: { font: { size: 10, family: 'Inter' }, color: '#9ca3af', maxTicksLimit: 7 },
+          ticks: { font: { size: 10, family: 'Lato' }, color: '#7A7A7A', maxTicksLimit: 7 },
         },
         y: {
-          grid: { color: '#f0f0f0' },
+          grid: { color: 'rgba(28,28,28,.08)' },
           ticks: {
-            font: { size: 10, family: 'Inter' },
-            color: '#9ca3af',
+            font: { size: 10, family: 'Lato' },
+            color: '#7A7A7A',
             callback: function(val) { return formatter(val); },
             maxTicksLimit: 5,
           },
@@ -347,8 +354,8 @@ function createBarChart(canvasId, dailyData, color) {
       labels,
       datasets: [{
         data: values,
-        backgroundColor: color || '#1a1a1a',
-        borderRadius: 4,
+        backgroundColor: color || '#1C1C1C',
+        borderRadius: 0,
         borderSkipped: false,
       }],
     },
@@ -369,14 +376,14 @@ function createBarChart(canvasId, dailyData, color) {
       scales: {
         x: {
           grid: { display: false },
-          ticks: { font: { size: 10, family: 'Inter' }, color: '#9ca3af', maxTicksLimit: 7 },
+          ticks: { font: { size: 10, family: 'Lato' }, color: '#7A7A7A', maxTicksLimit: 7 },
         },
         y: {
-          grid: { color: '#f0f0f0' },
+          grid: { color: 'rgba(28,28,28,.08)' },
           suggestedMin: suggestedMin,
           ticks: {
-            font: { size: 10, family: 'Inter' },
-            color: '#9ca3af',
+            font: { size: 10, family: 'Lato' },
+            color: '#7A7A7A',
             callback: function(val) { return fmtCurrency(val); },
             maxTicksLimit: 5,
           },
@@ -407,7 +414,7 @@ function createCountryPieChart(canvasId, legendId, countryData) {
   });
   if (autresCount > 0) { labels.push('Autres'); values.push(autresCount); }
 
-  const colors = ['#1a1a1a', '#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#6366f1', '#14b8a6', '#f97316', '#9ca3af'];
+  const colors = ['#1C1C1C', '#FADB7F', '#A2D2E4', '#FBD4DC', '#D0BCE7', '#C4E8E6', '#E8B93A', '#7EB7CC', '#B45309', '#1E8E5A', '#9ca3af'];
 
   chartInstances[canvasId] = new Chart(ctx, {
     type: 'doughnut',
@@ -475,7 +482,7 @@ function renderObjectivePeriod(prefix, data) {
   // % badge
   const pctBadge = document.getElementById(`obj-${prefix}-ca-pct`);
   pctBadge.textContent = data.progressCA.toFixed(0) + '%';
-  pctBadge.style.color = data.progressCA >= 100 ? '#00c48c' : data.progressCA >= (data.daysElapsed / data.daysTotal * 100) * 0.85 ? 'var(--text-secondary)' : '#ff5a5f';
+  pctBadge.style.color = data.progressCA >= 100 ? BRAND.green : data.progressCA >= (data.daysElapsed / data.daysTotal * 100) * 0.85 ? 'var(--text-secondary)' : BRAND.red;
 
   const projPct = Math.min((data.projectedCA / data.objectiveCA) * 100, 100);
   const projBar = document.getElementById(`obj-${prefix}-ca-proj`);
@@ -484,7 +491,7 @@ function renderObjectivePeriod(prefix, data) {
 
   const projEl = document.getElementById(`obj-${prefix}-ca-proj-val`);
   projEl.textContent = fmtK(data.projectedCA);
-  projEl.style.color = data.projectedCA >= data.objectiveCA ? '#00c48c' : '#ff5a5f';
+  projEl.style.color = data.projectedCA >= data.objectiveCA ? BRAND.green : BRAND.red;
 
   // Ratio
   document.getElementById(`obj-${prefix}-ratio`).textContent = data.currentRatio.toFixed(1) + '%';
@@ -493,14 +500,14 @@ function renderObjectivePeriod(prefix, data) {
   const ratioIndicator = document.getElementById(`obj-${prefix}-ratio-indicator`);
   const ratioPct = Math.min((data.currentRatio / 50) * 100, 100); // scale 0-50%
   ratioIndicator.style.left = ratioPct + '%';
-  ratioIndicator.style.borderColor = data.currentRatio <= data.objectiveRatio ? '#00c48c' : '#ff5a5f';
+  ratioIndicator.style.borderColor = data.currentRatio <= data.objectiveRatio ? BRAND.green : BRAND.red;
 
   const ratioLine = document.getElementById(`obj-${prefix}-ratio-line`);
   ratioLine.style.left = (data.objectiveRatio / 50 * 100) + '%';
 
   const projRatioEl = document.getElementById(`obj-${prefix}-ratio-proj-val`);
   projRatioEl.textContent = data.projectedRatio.toFixed(1) + '%';
-  projRatioEl.style.color = data.projectedRatio <= data.objectiveRatio ? '#00c48c' : '#ff5a5f';
+  projRatioEl.style.color = data.projectedRatio <= data.objectiveRatio ? BRAND.green : BRAND.red;
 }
 
 async function loadObjectives() {
@@ -531,14 +538,14 @@ async function loadObjectives() {
       document.getElementById('obj-day-ca-bar').style.width = dayPct + '%';
       const dayBadge = document.getElementById('obj-day-ca-pct');
       dayBadge.textContent = d.progressCA.toFixed(0) + '%';
-      dayBadge.style.color = d.progressCA >= 100 ? '#00c48c' : '#ff5a5f';
+      dayBadge.style.color = d.progressCA >= 100 ? BRAND.green : BRAND.red;
 
       document.getElementById('obj-day-ratio').textContent = d.currentRatio.toFixed(1) + '%';
       document.getElementById('obj-day-ratio-target').textContent = d.objectiveRatio + '%';
       const dayRatioIndicator = document.getElementById('obj-day-ratio-indicator');
       const dayRatioPct = Math.min((d.currentRatio / 50) * 100, 100);
       dayRatioIndicator.style.left = dayRatioPct + '%';
-      dayRatioIndicator.style.borderColor = d.currentRatio <= d.objectiveRatio ? '#00c48c' : '#ff5a5f';
+      dayRatioIndicator.style.borderColor = d.currentRatio <= d.objectiveRatio ? BRAND.green : BRAND.red;
       document.getElementById('obj-day-ratio-line').style.left = (d.objectiveRatio / 50 * 100) + '%';
     }
 
@@ -655,9 +662,9 @@ async function loadDashboard() {
     const costData = charts.dailyMarketingCosts.map(d => ({ date: d.date, value: d.total }));
     const pctData = charts.dailyPercentMarketing.map(d => ({ date: d.date, value: d.percent }));
 
-    createSparkline('chart-netSales', salesData, '#1a1a1a', fmtCurrency);
-    createBarChart('chart-marketingCosts', charts.dailyMarketingCosts, '#3b82f6');
-    createSparkline('chart-percentMarketing', pctData, '#ff5a5f', fmtPercent);
+    createSparkline('chart-netSales', salesData, BRAND.charbon, fmtCurrency);
+    createBarChart('chart-marketingCosts', charts.dailyMarketingCosts, BRAND.jauneFonce);
+    createSparkline('chart-percentMarketing', pctData, BRAND.charbon, fmtPercent);
 
     // Channel charts — always show all 3 channels
     createChannelLineChart(
@@ -744,14 +751,14 @@ function renderRechargeTrendChart(dailyTrend) {
         {
           label: 'Nouveaux',
           data: dailyTrend.map(d => d.created),
-          backgroundColor: '#5c6ac4',
-          borderRadius: 4,
+          backgroundColor: '#1C1C1C',
+          borderRadius: 0,
         },
         {
           label: 'Résiliés',
           data: dailyTrend.map(d => -d.cancelled),
-          backgroundColor: '#ef4444',
-          borderRadius: 4,
+          backgroundColor: '#E32C2B',
+          borderRadius: 0,
         },
       ],
     },
@@ -769,7 +776,7 @@ function renderRechargeTrendChart(dailyTrend) {
       },
       scales: {
         x: { stacked: true, grid: { display: false }, ticks: { font: { size: 10 }, maxTicksLimit: 15 } },
-        y: { stacked: true, grid: { color: '#f0f0f0' }, ticks: { font: { size: 10 } } },
+        y: { stacked: true, grid: { color: 'rgba(28,28,28,.08)' }, ticks: { font: { size: 10 } } },
       },
     },
   });
@@ -780,7 +787,7 @@ function renderRechargeByProductChart(byProduct) {
   if (!ctx || !byProduct?.length) return;
   if (chartInstances['chart-rechargeByProduct']) chartInstances['chart-rechargeByProduct'].destroy();
 
-  const colors = ['#5c6ac4', '#3b82f6', '#06b6d4', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#6b7280', '#14b8a6'];
+  const colors = ['#1C1C1C', '#FADB7F', '#A2D2E4', '#FBD4DC', '#D0BCE7', '#C4E8E6', '#E8B93A', '#7EB7CC', '#9ca3af', '#1E8E5A'];
 
   chartInstances['chart-rechargeByProduct'] = new Chart(ctx, {
     type: 'doughnut',
@@ -820,7 +827,7 @@ function renderRechargeByCategoryChart(byCategory) {
   const entries = Object.entries(byCategory).filter(([, v]) => v > 0);
   if (!entries.length) return;
 
-  const catColors = { 'Litière': '#5c6ac4', 'Box Jouet': '#f59e0b', 'Fontaines & Filtres': '#0ea5e9', 'APE (antiparasitaires)': '#10b981', 'Autre': '#6b7280' };
+  const catColors = { 'Litière': '#1C1C1C', 'Box Jouet': '#FADB7F', 'Fontaines & Filtres': '#A2D2E4', 'APE (antiparasitaires)': '#D0BCE7', 'Autre': '#9ca3af' };
 
   chartInstances['chart-rechargeByCategory'] = new Chart(ctx, {
     type: 'doughnut',
@@ -1210,11 +1217,11 @@ async function loadProductBreakdown(period) {
                   <div class="obj-progress-fill" style="width:${pct}%"></div>
                   <div class="obj-progress-projected" style="width:${projPct}%;opacity:0.25"></div>
                 </div>
-                <span class="obj-pct" style="color:${c.progressCA >= 100 ? '#00c48c' : onTrack ? 'var(--text-secondary)' : '#ff5a5f'}">${c.progressCA.toFixed(0)}%</span>
+                <span class="obj-pct" style="color:${c.progressCA >= 100 ? BRAND.green : onTrack ? 'var(--text-secondary)' : BRAND.red}">${c.progressCA.toFixed(0)}%</span>
               </div>
               <div class="product-cat-obj-details">
                 <span>Objectif : ${fmtK(c.objectiveCA)}</span>
-                <span>Projection : <strong style="color:${c.projectedCA >= c.objectiveCA ? '#00c48c' : '#ff5a5f'}">${fmtK(c.projectedCA)}</strong></span>
+                <span>Projection : <strong style="color:${c.projectedCA >= c.objectiveCA ? BRAND.green : BRAND.red}">${fmtK(c.projectedCA)}</strong></span>
               </div>
             </div>
           ` : ''}
@@ -1280,10 +1287,10 @@ function renderMetaCpaTrendChart(dailyTrend) {
     data: {
       labels,
       datasets: [
-        { label: 'CPA (€)', data: dailyTrend.map(d => d.cpa), borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,0.08)', fill: true, tension: 0.3, pointRadius: 3, yAxisID: 'y' },
-        { label: 'CPM (€)', data: dailyTrend.map(d => d.cpm), borderColor: '#f59e0b', borderDash: [4, 3], fill: false, tension: 0.3, pointRadius: 2, yAxisID: 'y' },
-        { label: 'ROAS', data: dailyTrend.map(d => d.roas), borderColor: '#3b82f6', fill: false, tension: 0.3, pointRadius: 3, yAxisID: 'y1' },
-        { label: 'CTR Link (%)', data: dailyTrend.map(d => d.ctrLink), borderColor: '#10b981', borderDash: [6, 3], fill: false, tension: 0.3, pointRadius: 2, yAxisID: 'y2' },
+        { label: 'CPA (€)', data: dailyTrend.map(d => d.cpa), borderColor: '#E32C2B', backgroundColor: 'rgba(227,44,43,0.08)', fill: true, tension: 0.3, pointRadius: 3, yAxisID: 'y' },
+        { label: 'CPM (€)', data: dailyTrend.map(d => d.cpm), borderColor: '#E8B93A', borderDash: [4, 3], fill: false, tension: 0.3, pointRadius: 2, yAxisID: 'y' },
+        { label: 'ROAS', data: dailyTrend.map(d => d.roas), borderColor: '#1C1C1C', fill: false, tension: 0.3, pointRadius: 3, yAxisID: 'y1' },
+        { label: 'CTR Link (%)', data: dailyTrend.map(d => d.ctrLink), borderColor: '#1E8E5A', borderDash: [6, 3], fill: false, tension: 0.3, pointRadius: 2, yAxisID: 'y2' },
       ],
     },
     options: {
@@ -1292,7 +1299,7 @@ function renderMetaCpaTrendChart(dailyTrend) {
       plugins: { legend: { display: true, position: 'top', labels: { font: { size: 11 }, usePointStyle: true } }, tooltip: { ...TOOLTIP_CONFIG } },
       scales: {
         x: { grid: { display: false }, ticks: { font: { size: 10 }, maxTicksLimit: 10 } },
-        y: { position: 'left', grid: { color: '#f0f0f0' }, title: { display: true, text: 'CPA / CPM (€)', font: { size: 10 } }, ticks: { font: { size: 10 }, callback: v => v.toFixed(0) + '€' } },
+        y: { position: 'left', grid: { color: 'rgba(28,28,28,.08)' }, title: { display: true, text: 'CPA / CPM (€)', font: { size: 10 } }, ticks: { font: { size: 10 }, callback: v => v.toFixed(0) + '€' } },
         y1: { position: 'right', grid: { display: false }, title: { display: true, text: 'ROAS', font: { size: 10 } }, ticks: { font: { size: 10 }, callback: v => v.toFixed(1) + 'x' } },
         y2: { position: 'right', grid: { display: false }, title: { display: true, text: 'CTR Link', font: { size: 10 } }, ticks: { font: { size: 10 }, callback: v => v.toFixed(1) + '%' } },
       },
@@ -1305,7 +1312,7 @@ function renderMetaCampaignPieChart(campaigns) {
   if (!ctx || !campaigns?.length) return;
   if (chartInstances['chart-metaCampaignSpend']) chartInstances['chart-metaCampaignSpend'].destroy();
 
-  const colors = ['#1a1a1a', '#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#6366f1', '#14b8a6', '#f97316'];
+  const colors = ['#1C1C1C', '#FADB7F', '#A2D2E4', '#FBD4DC', '#D0BCE7', '#C4E8E6', '#E8B93A', '#7EB7CC', '#B45309', '#1E8E5A'];
   const total = campaigns.reduce((s, c) => s + c.spend, 0);
   // Group small campaigns into "Autres"
   const labels = [], values = [];
@@ -1352,7 +1359,7 @@ function renderMetaAdCards(ads) {
       </div>
       <div class="meta-ad-info">
         <h4 class="meta-ad-name">${ad.name}</h4>
-        <div class="meta-ad-campaign">${ad.campaignName}${ad.isVideo ? ' <span style="color:#3b82f6;font-size:10px;">VIDEO</span>' : ''}</div>
+        <div class="meta-ad-campaign">${ad.campaignName}${ad.isVideo ? ' <span class="meta-ad-tag">VIDEO</span>' : ''}</div>
         <a class="meta-ad-link" href="${ad.adsManagerUrl || '#'}" target="_blank" rel="noopener">Voir dans Ads Manager &#8599;</a>
         <div class="meta-ad-metrics">
           <div class="meta-metric"><span class="meta-metric-val">${ad.roas.toFixed(2)}x</span><span class="meta-metric-label">ROAS</span></div>
@@ -1393,7 +1400,7 @@ function filterMetaAds(type) {
 async function loadTestMonitor(triggerSend) {
   const container = document.getElementById('testMonitorContent');
   if (!container) return;
-  container.innerHTML = '<div style="color:#6b7280;padding:12px;font-size:12px;">Chargement…</div>';
+  container.innerHTML = '<div style="color:#7A7A7A;padding:12px;font-size:12px;">Chargement…</div>';
   const url = triggerSend ? '/api/meta/test-monitor?send=1' : '/api/meta/test-monitor';
   try {
     const res = await fetch(url, { credentials: 'same-origin' });
@@ -1413,7 +1420,7 @@ async function loadTestMonitor(triggerSend) {
       alert(msg);
     }
   } catch (err) {
-    container.innerHTML = `<div style="color:#991b1b;padding:12px;font-size:12px;">Erreur : ${err.message}</div>`;
+    container.innerHTML = `<div style="color:#E32C2B;padding:12px;font-size:12px;">Erreur : ${err.message}</div>`;
   }
 }
 
@@ -1421,28 +1428,28 @@ function renderTestMonitor(data) {
   const container = document.getElementById('testMonitorContent');
   if (!container) return;
   if (!data || !data.items || data.items.length === 0) {
-    container.innerHTML = `<div style="color:#6b7280;padding:14px;font-size:12px;background:#fafbfc;border-radius:6px;border:1px dashed #e5e7eb;">Aucun ad de test trouvé (campagnes contenant "${data && data.rules ? data.rules.campaign_name_match : 'TEST'}"). Vérifie que meta_ad_daily est bien peuplé et que les campagnes de test portent ce mot-clé dans leur nom.</div>`;
+    container.innerHTML = `<div style="color:#7A7A7A;padding:14px;font-size:12px;background:#F4F4F0;border:1px dashed #1C1C1C;">Aucun ad de test trouvé (campagnes contenant "${data && data.rules ? data.rules.campaign_name_match : 'TEST'}"). Vérifie que meta_ad_daily est bien peuplé et que les campagnes de test portent ce mot-clé dans leur nom.</div>`;
     return;
   }
   const bv = data.byVerdict;
   const kpiCards = [
-    { label: 'KILL', value: bv.KILL, bg: '#fee2e2', fg: '#991b1b' },
-    { label: 'KILL_EXTENDED', value: bv.KILL_EXTENDED, bg: '#fef3c7', fg: '#92400e' },
-    { label: 'GRADUATE', value: bv.GRADUATE, bg: '#d1fae5', fg: '#065f46' },
-    { label: 'CONTINUE', value: bv.CONTINUE, bg: '#f3f4f6', fg: '#374151' },
+    { label: 'KILL', value: bv.KILL, bg: '#FDE7E7', fg: '#E32C2B' },
+    { label: 'KILL_EXTENDED', value: bv.KILL_EXTENDED, bg: '#FEF3C7', fg: '#B45309' },
+    { label: 'GRADUATE', value: bv.GRADUATE, bg: '#E3F4EA', fg: '#1E8E5A' },
+    { label: 'CONTINUE', value: bv.CONTINUE, bg: '#F4F4F0', fg: '#1C1C1C' },
   ];
   const kpisHtml = kpiCards.map(k => `
-    <div style="background:${k.bg};padding:10px 12px;border-radius:8px;flex:1;min-width:110px;">
+    <div style="background:${k.bg};padding:10px 12px;flex:1;min-width:110px;">
       <div style="font-size:10px;text-transform:uppercase;font-weight:600;color:${k.fg};letter-spacing:0.05em;">${k.label}</div>
       <div style="font-size:22px;font-weight:700;color:${k.fg};">${k.value}</div>
     </div>
   `).join('');
 
   const verdictColors = {
-    KILL: { bg: '#fee2e2', fg: '#991b1b' },
-    KILL_EXTENDED: { bg: '#fef3c7', fg: '#92400e' },
-    GRADUATE: { bg: '#d1fae5', fg: '#065f46' },
-    CONTINUE: { bg: '#f3f4f6', fg: '#374151' },
+    KILL: { bg: '#FDE7E7', fg: '#E32C2B' },
+    KILL_EXTENDED: { bg: '#FEF3C7', fg: '#B45309' },
+    GRADUATE: { bg: '#E3F4EA', fg: '#1E8E5A' },
+    CONTINUE: { bg: '#F4F4F0', fg: '#1C1C1C' },
   };
   const order = { KILL: 0, KILL_EXTENDED: 1, GRADUATE: 2, CONTINUE: 3 };
   const sorted = [...data.items].sort((a, b) => (order[a.verdict] - order[b.verdict]) || (b.spend - a.spend));
@@ -1454,10 +1461,10 @@ function renderTestMonitor(data) {
   const rows = sorted.map(i => {
     const c = verdictColors[i.verdict] || verdictColors.CONTINUE;
     return `
-      <tr style="border-bottom:1px solid #e5e7eb;">
-        <td style="padding:6px 8px;"><span style="display:inline-block;padding:2px 8px;border-radius:6px;background:${c.bg};color:${c.fg};font-weight:600;font-size:10px;letter-spacing:0.03em;">${i.verdict}</span></td>
+      <tr style="border-bottom:1px solid rgba(28,28,28,.14);">
+        <td style="padding:6px 8px;"><span style="display:inline-block;padding:2px 8px;background:${c.bg};color:${c.fg};font-weight:600;font-size:10px;letter-spacing:0.03em;">${i.verdict}</span></td>
         <td style="padding:6px 8px;font-family:monospace;font-size:11px;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(i.ad_name || '')}">${escapeHtml(i.ad_name || i.ad_id)}</td>
-        <td style="padding:6px 8px;font-size:11px;color:#6b7280;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(i.adset_name || '')}">${escapeHtml(i.adset_name || '')}</td>
+        <td style="padding:6px 8px;font-size:11px;color:#7A7A7A;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(i.adset_name || '')}">${escapeHtml(i.adset_name || '')}</td>
         <td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums;font-size:11px;">${i.days_active}j</td>
         <td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums;font-size:11px;">${fmtEur(i.spend)}</td>
         <td style="padding:6px 8px;text-align:right;font-variant-numeric:tabular-nums;font-size:11px;">${i.purchases}</td>
@@ -1471,21 +1478,21 @@ function renderTestMonitor(data) {
 
   container.innerHTML = `
     <div style="display:flex;gap:10px;margin-bottom:12px;flex-wrap:wrap;">${kpisHtml}</div>
-    <div style="font-size:11px;color:#6b7280;margin-bottom:8px;">${data.total} ads évalués · règles chargées depuis <code>data/test_rules.json</code> · kill_spend ${data.rules.kill_spend} € · extend_spend ${data.rules.extend_spend} € · graduate ≥ ${data.rules.graduate_min_purchases} achats à CPA ≤ ${data.rules.graduate_cpa_max} €</div>
+    <div style="font-size:11px;color:#7A7A7A;margin-bottom:8px;">${data.total} ads évalués · règles chargées depuis <code>data/test_rules.json</code> · kill_spend ${data.rules.kill_spend} € · extend_spend ${data.rules.extend_spend} € · graduate ≥ ${data.rules.graduate_min_purchases} achats à CPA ≤ ${data.rules.graduate_cpa_max} €</div>
     <div style="overflow-x:auto;">
       <table style="width:100%;border-collapse:collapse;font-size:12px;">
         <thead>
-          <tr style="background:#fafbfc;text-align:left;">
-            <th style="padding:8px;font-size:10px;text-transform:uppercase;color:#6b7280;">Verdict</th>
-            <th style="padding:8px;font-size:10px;text-transform:uppercase;color:#6b7280;">Ad</th>
-            <th style="padding:8px;font-size:10px;text-transform:uppercase;color:#6b7280;">Adset</th>
-            <th style="padding:8px;font-size:10px;text-transform:uppercase;color:#6b7280;text-align:right;">Jours</th>
-            <th style="padding:8px;font-size:10px;text-transform:uppercase;color:#6b7280;text-align:right;">Spend</th>
-            <th style="padding:8px;font-size:10px;text-transform:uppercase;color:#6b7280;text-align:right;">Achats</th>
-            <th style="padding:8px;font-size:10px;text-transform:uppercase;color:#6b7280;text-align:right;">CPA</th>
-            <th style="padding:8px;font-size:10px;text-transform:uppercase;color:#6b7280;text-align:right;">CTR link</th>
-            <th style="padding:8px;font-size:10px;text-transform:uppercase;color:#6b7280;text-align:right;">Hook</th>
-            <th style="padding:8px;font-size:10px;text-transform:uppercase;color:#6b7280;">Raison</th>
+          <tr style="text-align:left;">
+            <th style="padding:8px;font-size:10px;text-transform:uppercase;color:#7A7A7A;">Verdict</th>
+            <th style="padding:8px;font-size:10px;text-transform:uppercase;color:#7A7A7A;">Ad</th>
+            <th style="padding:8px;font-size:10px;text-transform:uppercase;color:#7A7A7A;">Adset</th>
+            <th style="padding:8px;font-size:10px;text-transform:uppercase;color:#7A7A7A;text-align:right;">Jours</th>
+            <th style="padding:8px;font-size:10px;text-transform:uppercase;color:#7A7A7A;text-align:right;">Spend</th>
+            <th style="padding:8px;font-size:10px;text-transform:uppercase;color:#7A7A7A;text-align:right;">Achats</th>
+            <th style="padding:8px;font-size:10px;text-transform:uppercase;color:#7A7A7A;text-align:right;">CPA</th>
+            <th style="padding:8px;font-size:10px;text-transform:uppercase;color:#7A7A7A;text-align:right;">CTR link</th>
+            <th style="padding:8px;font-size:10px;text-transform:uppercase;color:#7A7A7A;text-align:right;">Hook</th>
+            <th style="padding:8px;font-size:10px;text-transform:uppercase;color:#7A7A7A;">Raison</th>
           </tr>
         </thead>
         <tbody>${rows}</tbody>
@@ -1548,8 +1555,13 @@ async function loadMetaAnalysis(forceDays, forceRefresh) {
     _metaAllTopAds = data.topAds;
     filterMetaAds('all');
 
-    // Analysis for top ads
+    // Analysis for top ads (bug corrigé : topAdsEl n'était pas défini ici → "Erreur de chargement")
     if (data.analysis.topAdsAnalysis) {
+      const topAdsEl = document.getElementById('metaTopAds');
+      const existingAnalysis = topAdsEl.nextElementSibling;
+      if (existingAnalysis && existingAnalysis.classList.contains('meta-analysis-content') && !existingAnalysis.id) {
+        existingAnalysis.remove();
+      }
       const analysisDiv = document.createElement('div');
       analysisDiv.className = 'meta-analysis-content';
       analysisDiv.innerHTML = renderMarkdown(data.analysis.topAdsAnalysis);
@@ -2063,14 +2075,14 @@ async function loadAmazonDashboard(force, days) {
         document.getElementById('amz-obj-day-ca-bar').style.width = dayPct + '%';
         const dayBadge = document.getElementById('amz-obj-day-ca-pct');
         dayBadge.textContent = d.progressCA.toFixed(0) + '%';
-        dayBadge.style.color = d.progressCA >= 100 ? '#00c48c' : '#ff5a5f';
+        dayBadge.style.color = d.progressCA >= 100 ? BRAND.green : BRAND.red;
 
         document.getElementById('amz-obj-day-tacos').textContent = d.tacos.toFixed(1) + '%';
         document.getElementById('amz-obj-day-tacos-target').textContent = d.tacosTarget + '%';
         const dayTacosIndicator = document.getElementById('amz-obj-day-tacos-indicator');
         const dayTacosPct = Math.min((d.tacos / 50) * 100, 100);
         dayTacosIndicator.style.left = dayTacosPct + '%';
-        dayTacosIndicator.style.borderColor = d.tacos <= d.tacosTarget ? '#00c48c' : '#ff5a5f';
+        dayTacosIndicator.style.borderColor = d.tacos <= d.tacosTarget ? BRAND.green : BRAND.red;
         document.getElementById('amz-obj-day-tacos-line').style.left = (d.tacosTarget / 50 * 100) + '%';
       }
 
@@ -2148,7 +2160,7 @@ function renderAmzObjectivePeriod(prefix, data) {
 
   const pctBadge = document.getElementById(`amz-obj-${prefix}-ca-pct`);
   pctBadge.textContent = data.progressCA.toFixed(0) + '%';
-  pctBadge.style.color = data.progressCA >= 100 ? '#00c48c' : data.progressCA >= (data.daysElapsed / data.daysTotal * 100) * 0.85 ? 'var(--text-secondary)' : '#ff5a5f';
+  pctBadge.style.color = data.progressCA >= 100 ? BRAND.green : data.progressCA >= (data.daysElapsed / data.daysTotal * 100) * 0.85 ? 'var(--text-secondary)' : BRAND.red;
 
   const projPct = Math.min((data.projectedCA / data.objectiveCA) * 100, 100);
   const projBar = document.getElementById(`amz-obj-${prefix}-ca-proj`);
@@ -2157,7 +2169,7 @@ function renderAmzObjectivePeriod(prefix, data) {
 
   const projEl = document.getElementById(`amz-obj-${prefix}-ca-proj-val`);
   projEl.textContent = fmtK(data.projectedCA);
-  projEl.style.color = data.projectedCA >= data.objectiveCA ? '#00c48c' : '#ff5a5f';
+  projEl.style.color = data.projectedCA >= data.objectiveCA ? BRAND.green : BRAND.red;
 
   // TACOS
   document.getElementById(`amz-obj-${prefix}-tacos`).textContent = data.tacos.toFixed(1) + '%';
@@ -2166,14 +2178,14 @@ function renderAmzObjectivePeriod(prefix, data) {
   const tacosIndicator = document.getElementById(`amz-obj-${prefix}-tacos-indicator`);
   const tacosPct = Math.min((data.tacos / 50) * 100, 100);
   tacosIndicator.style.left = tacosPct + '%';
-  tacosIndicator.style.borderColor = data.tacos <= data.tacosTarget ? '#00c48c' : '#ff5a5f';
+  tacosIndicator.style.borderColor = data.tacos <= data.tacosTarget ? BRAND.green : BRAND.red;
 
   const tacosLine = document.getElementById(`amz-obj-${prefix}-tacos-line`);
   tacosLine.style.left = (data.tacosTarget / 50 * 100) + '%';
 
   const projTacosEl = document.getElementById(`amz-obj-${prefix}-tacos-proj-val`);
   projTacosEl.textContent = data.projectedTacos.toFixed(1) + '%';
-  projTacosEl.style.color = data.projectedTacos <= data.tacosTarget ? '#00c48c' : '#ff5a5f';
+  projTacosEl.style.color = data.projectedTacos <= data.tacosTarget ? BRAND.green : BRAND.red;
 }
 
 // ============================================================
@@ -2370,7 +2382,7 @@ function renderB2BObjectives(ca, objectives) {
   container.innerHTML = cards.join('');
 }
 
-const B2B_COLORS = ['#1a1a1a', '#2d9d5c', '#d94040', '#0984e3', '#f39c12', '#8b5cf6', '#00b894', '#e17055', '#636e72'];
+const B2B_COLORS = ['#1C1C1C', '#FADB7F', '#A2D2E4', '#FBD4DC', '#D0BCE7', '#C4E8E6', '#E8B93A', '#7EB7CC', '#7A7A7A'];
 
 function renderB2BSourceChart(sources, fullData) {
   const ctx = document.getElementById('b2bSourceChart').getContext('2d');

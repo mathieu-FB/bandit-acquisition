@@ -4,35 +4,55 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Bandit Acquisition — Dashboard</title>
-  <link rel="stylesheet" href="css/style.css">
+  <link rel="icon" href="img/bandit-logo-noir.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@800&family=Lato:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/bandit-ui.css">
+  <link rel="stylesheet" href="css/style.css">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 </head>
 <body>
-  <!-- HEADER -->
-  <header class="header">
-    <div class="header-left">
-      <img src="img/logo-bandit.png" alt="Bandit" class="logo-img" />
-      <span class="logo-subtitle">Acquisition</span>
-      <h1 class="logo-text">Bandit <span>Acquisition</span></h1>
-    </div>
-    <div class="header-right">
+  <!-- RAIL DE NAVIGATION -->
+  <aside class="rail" id="rail">
+    <a class="rail__brand" href="/">
+      <img src="img/bandit-logo-noir.svg" alt="French Bandit" width="150" height="58">
+      <span>Acquisition</span>
+    </a>
+    <nav class="tab-nav rail__nav" aria-label="Sections">
+      <button class="tab-btn active" data-tab="ecommerce"><i>01</i>E-commerce</button>
+      <button class="tab-btn" data-tab="amazon"><i>02</i>Amazon</button>
+      <button class="tab-btn" data-tab="b2b"><i>03</i>B2B</button>
+      <button class="tab-btn" data-tab="linkedin"><i>04</i>LinkedIn</button>
+      <a class="tab-btn tab-btn--link" href="/stock.html"><i>05</i>Stock &amp; Réappro</a>
+    </nav>
+    <div class="rail__foot">
       <div class="status-dots" id="statusDots"></div>
-      <button class="btn btn-ghost" id="btnLogout" onclick="logout()" title="Déconnexion" style="display:none;margin-left:12px;">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      <button class="btn btn-ghost btn-sm rail__logout" id="btnLogout" onclick="logout()" title="Déconnexion" style="display:none;">Déconnexion</button>
+    </div>
+  </aside>
+
+  <div class="page">
+  <!-- BARRE HAUTE -->
+  <header class="topbar">
+    <button class="topbar__menu" id="railToggle" aria-label="Menu" aria-expanded="false"><span></span><span></span></button>
+    <a class="topbar__brand" href="/"><img src="img/bandit-logo-noir.svg" alt="French Bandit" width="92" height="36"></a>
+    <div class="topbar__title"><span class="ui-kicker">Dashboard</span><h1>Bandit <mark class="hl">Acquisition</mark></h1></div>
+    <div class="topbar__right">
+      <button class="btn btn-ghost btn-icon" id="btnRefresh" title="Rafraîchir les données de l'onglet courant">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6M3 22v-6h6M3 12a9 9 0 0115.36-6.36L21 8M21 12a9 9 0 01-15.36 6.36L3 16"/></svg>
       </button>
     </div>
   </header>
 
-  <!-- TOOLBAR -->
+  <!-- TOOLBAR PÉRIODE (reporting e-commerce) -->
   <div class="toolbar">
     <div class="toolbar-left">
       <div class="date-group">
         <label class="date-label">Période</label>
         <div class="date-picker-wrap">
           <input type="date" id="dateStart" class="date-input">
-          <span class="date-separator">—</span>
+          <span class="date-separator">→</span>
           <input type="date" id="dateEnd" class="date-input">
         </div>
       </div>
@@ -40,11 +60,13 @@
         <label class="date-label">Comparaison</label>
         <div class="date-picker-wrap">
           <input type="date" id="compStart" class="date-input">
-          <span class="date-separator">—</span>
+          <span class="date-separator">→</span>
           <input type="date" id="compEnd" class="date-input">
         </div>
       </div>
       <button class="btn btn-primary" id="btnApply">Appliquer</button>
+    </div>
+    <div class="toolbar-right">
       <div class="quick-ranges">
         <button class="btn btn-ghost" data-range="yesterday">Hier</button>
         <button class="btn btn-ghost" data-range="7">7J</button>
@@ -53,21 +75,7 @@
         <button class="btn btn-ghost" data-range="ytd">YTD</button>
       </div>
     </div>
-    <div class="toolbar-right">
-      <button class="btn btn-ghost" id="btnRefresh" title="Rafraîchir">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 2v6h-6M3 22v-6h6M3 12a9 9 0 0115.36-6.36L21 8M21 12a9 9 0 01-15.36 6.36L3 16"/></svg>
-      </button>
-    </div>
   </div>
-
-  <!-- TAB NAVIGATION (Rank 1) -->
-  <nav class="tab-nav">
-    <button class="tab-btn active" data-tab="ecommerce">E-commerce</button>
-    <button class="tab-btn" data-tab="amazon">Amazon</button>
-    <button class="tab-btn" data-tab="b2b">B2B</button>
-    <button class="tab-btn" data-tab="linkedin">LinkedIn</button>
-    <a class="tab-btn" href="/stock.html" style="text-decoration:none;">Stock &amp; Réappro</a>
-  </nav>
 
   <!-- LOADING OVERLAY -->
   <div class="loading-overlay" id="loadingOverlay">
@@ -218,7 +226,7 @@
   <main class="dashboard">
     <!-- ROW 1: Main KPIs -->
     <section class="grid grid-3">
-      <div class="card" id="card-netSales">
+      <div class="card card--hero" id="card-netSales">
         <div class="card-header">
           <h3>CA HT</h3>
           <div class="card-info" title="Chiffre d'affaires HT (ventes nettes + transport, hors taxes, après remboursements)">i</div>
@@ -231,7 +239,7 @@
 
       <div class="card" id="card-marketingCosts">
         <div class="card-header">
-          <h3>Marketing costs</h3>
+          <h3>Dépenses marketing</h3>
           <div class="card-info" title="Dépenses publicitaires totales (Meta + Google + TikTok)">i</div>
         </div>
         <div class="card-value" id="val-marketingCosts">—</div>
@@ -261,7 +269,7 @@
     <section class="grid grid-3">
       <div class="card card-chart">
         <div class="card-header">
-          <h3>Marketing spend by channel</h3>
+          <h3>Dépenses par canal</h3>
           <div class="card-info" title="Dépenses par canal publicitaire">i</div>
         </div>
         <div class="card-chart-area"><canvas id="chart-spendByChannel"></canvas></div>
@@ -270,7 +278,7 @@
 
       <div class="card card-chart">
         <div class="card-header">
-          <h3>ROAS by channel</h3>
+          <h3>ROAS par canal</h3>
           <div class="card-info" title="Return on Ad Spend par canal">i</div>
         </div>
         <div class="card-chart-area"><canvas id="chart-roasByChannel"></canvas></div>
@@ -279,7 +287,7 @@
 
       <div class="card" id="card-blendedCac">
         <div class="card-header">
-          <h3>Blended CAC</h3>
+          <h3>CAC blended</h3>
           <div class="card-info" title="Coût d'acquisition client moyen (Marketing costs / Nb commandes)">i</div>
         </div>
         <div class="card-value" id="val-blendedCac">—</div>
@@ -292,7 +300,7 @@
     <section class="grid grid-4">
       <div class="card" id="card-aov">
         <div class="card-header">
-          <h3>AOV</h3>
+          <h3>Panier moyen</h3>
           <div class="card-info" title="Average Order Value (Panier moyen)">i</div>
         </div>
         <div class="card-value" id="val-aov">—</div>
@@ -302,7 +310,7 @@
 
       <div class="card" id="card-discountCodes">
         <div class="card-header">
-          <h3>Discount codes</h3>
+          <h3>Codes promo</h3>
           <div class="card-info" title="Total des réductions utilisées">i</div>
         </div>
         <div class="card-value" id="val-discountCodes">—</div>
@@ -323,7 +331,7 @@
 
       <div class="card card-chart">
         <div class="card-header">
-          <h3>CPM by channel</h3>
+          <h3>CPM par canal</h3>
           <div class="card-info" title="Coût pour 1000 impressions par canal">i</div>
         </div>
         <div class="card-chart-area"><canvas id="chart-cpmByChannel"></canvas></div>
@@ -355,7 +363,7 @@
 
       <div class="card" id="card-repeatNetSales">
         <div class="card-header">
-          <h3>Repeat customers net sales</h3>
+          <h3>CA clients récurrents</h3>
           <div class="card-info" title="CA généré par les clients récurrents">i</div>
         </div>
         <div class="card-value" id="val-repeatNetSales">—</div>
@@ -372,7 +380,7 @@
           <div class="card-info" title="Nombre d'abonnements actifs sur Recharge">i</div>
         </div>
         <div class="card-value" id="val-rechargeActive">—</div>
-        <div class="card-source"><span class="source-badge" style="background:#5c6ac4;color:#fff;">R</span> Recharge</div>
+        <div class="card-source"><span class="source-badge recharge">R</span> Recharge</div>
       </div>
 
       <div class="card" id="card-rechargeNew">
@@ -381,7 +389,7 @@
           <div class="card-info" title="Nouveaux abonnements créés sur les 30 derniers jours">i</div>
         </div>
         <div class="card-value" id="val-rechargeNew">—</div>
-        <div class="card-source"><span class="source-badge" style="background:#5c6ac4;color:#fff;">R</span> Recharge</div>
+        <div class="card-source"><span class="source-badge recharge">R</span> Recharge</div>
       </div>
 
       <div class="card" id="card-rechargeCancelled">
@@ -390,7 +398,7 @@
           <div class="card-info" title="Nombre total d'abonnements résiliés">i</div>
         </div>
         <div class="card-value" id="val-rechargeCancelled">—</div>
-        <div class="card-source"><span class="source-badge" style="background:#5c6ac4;color:#fff;">R</span> Recharge</div>
+        <div class="card-source"><span class="source-badge recharge">R</span> Recharge</div>
       </div>
     </section>
 
@@ -408,14 +416,14 @@
           <h3>Abonnés par produit</h3>
           <div class="card-info" title="Répartition des abonnements actifs par produit">i</div>
         </div>
-        <div class="card-chart-area" style="max-width:350px;margin:0 auto;"><canvas id="chart-rechargeByProduct"></canvas></div>
+        <div class="card-chart-area card-chart-area--pie"><canvas id="chart-rechargeByProduct"></canvas></div>
       </div>
       <div class="card card-chart">
         <div class="card-header">
           <h3>Par catégorie</h3>
           <div class="card-info" title="Abonnements actifs groupés : Litière, Box Jouet, Fontaines & Filtres, APE (antiparasitaires), Autre">i</div>
         </div>
-        <div class="card-chart-area" style="max-width:350px;margin:0 auto;"><canvas id="chart-rechargeByCategory"></canvas></div>
+        <div class="card-chart-area card-chart-area--pie"><canvas id="chart-rechargeByCategory"></canvas></div>
       </div>
     </section>
 
@@ -426,7 +434,7 @@
           <h3>Commandes par pays</h3>
           <div class="card-info" title="Répartition des commandes par pays de livraison">i</div>
         </div>
-        <div class="card-chart-area" style="max-width:400px;margin:0 auto;"><canvas id="chart-ordersByCountry"></canvas></div>
+        <div class="card-chart-area card-chart-area--pie"><canvas id="chart-ordersByCountry"></canvas></div>
         <div class="card-legend" id="legend-countries"></div>
       </div>
     </section>
@@ -612,10 +620,10 @@
 
         <!-- Test créas monitor (indépendant de la période — évalué depuis 1er jour de spend par ad) -->
         <section class="meta-section" id="testMonitorSection">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+          <div class="meta-top-header">
             <div>
-              <h2 class="meta-section-title" style="margin:0;">Test créas — verdicts</h2>
-              <div style="font-size:11px;color:#6b7280;margin-top:2px;" id="testMonitorMeta">
+              <h2 class="meta-section-title">Test créas — verdicts</h2>
+              <div class="meta-section-hint" id="testMonitorMeta">
                 Le nom de la campagne Meta doit <strong>commencer exactement par</strong> <code id="testMonitorMatch">[TC]</code> (préfixe sensible à la casse, crochets inclus).
                 Évaluation depuis le premier jour de spend par ad, pas de fenêtre glissante.
               </div>
@@ -625,7 +633,7 @@
               <button class="btn btn-ghost btn-sm" id="testMonitorSendBtn" title="Envoyer l'email de verdicts maintenant (idempotent, uniquement si actionnable)">Envoyer mail</button>
             </div>
           </div>
-          <div id="testMonitorContent"><div style="color:#6b7280;padding:12px;font-size:12px;">Chargement…</div></div>
+          <div id="testMonitorContent"><div class="muted" style="padding:12px;">Chargement…</div></div>
         </section>
 
         <!-- META LOADING -->
@@ -657,7 +665,7 @@
 
           <section class="meta-section">
             <div class="meta-top-header">
-              <h2 class="meta-section-title">Top 50 Ads — Performers</h2>
+              <h2 class="meta-section-title">Top 50 ads</h2>
               <div class="meta-ad-filters">
                 <button class="btn btn-ghost active" data-ad-filter="all">Tout</button>
                 <button class="btn btn-ghost" data-ad-filter="video">Videos</button>
@@ -694,7 +702,7 @@
             <div class="meta-analysis-content" id="metaScalingAnalysis"></div>
           </section>
           <section class="meta-section">
-            <h2 class="meta-section-title">Worst Performing Adsets</h2>
+            <h2 class="meta-section-title">Adsets à revoir</h2>
             <div class="meta-adsets-grid" id="metaWorstAdsets"></div>
           </section>
           <section class="meta-section">
@@ -727,7 +735,7 @@
 
           <!-- Section 1: Top 5 Ads -->
           <section class="meta-section">
-            <h2 class="meta-section-title">Top 5 Ads — Performers</h2>
+            <h2 class="meta-section-title">Top 5 ads</h2>
             <div class="meta-ads-grid" id="tiktokTopAds"></div>
           </section>
 
@@ -746,7 +754,7 @@
 
           <!-- Section 4: Worst Adgroups -->
           <section class="meta-section">
-            <h2 class="meta-section-title">Worst Performing Adgroups</h2>
+            <h2 class="meta-section-title">Adgroups à revoir</h2>
             <div class="meta-adsets-grid" id="tiktokWorstAdgroups"></div>
           </section>
 
@@ -827,9 +835,9 @@
 
       <!-- AMAZON NOT CONFIGURED -->
       <div class="amazon-not-configured" id="amazonNotConfigured" style="display:none;">
-        <div class="card" style="text-align:center;padding:40px;">
-          <h3 style="margin-bottom:8px;">Amazon non configuré</h3>
-          <p style="color:var(--text-muted);font-size:14px;">Ajoute les variables SP-API et Amazon Ads dans les variables d'environnement pour activer cet onglet.</p>
+        <div class="card empty-card">
+          <h3>Amazon non configuré</h3>
+          <p class="muted">Ajoute les variables SP-API et Amazon Ads dans les variables d'environnement pour activer cet onglet.</p>
         </div>
       </div>
 
@@ -842,7 +850,7 @@
       <div class="amazon-results" id="amazonResults" style="display:none;">
 
         <!-- OBJECTIVES -->
-        <section class="objectives" style="background:transparent;padding:0;border:none;margin-bottom:24px;">
+        <section class="objectives">
           <div class="objectives-inner">
             <!-- DAY -->
             <div class="obj-card obj-card-day" id="amz-obj-day">
@@ -957,7 +965,7 @@
         </section>
 
         <!-- KPIs ROW -->
-        <div class="product-toolbar" style="max-width:1400px;margin:0 auto 12px;">
+        <div class="product-toolbar">
           <div class="product-period-btns">
             <button class="btn btn-ghost" data-amz-quick="today">Aujourd'hui</button>
             <button class="btn btn-ghost" data-amz-quick="yesterday">Hier</button>
@@ -977,7 +985,7 @@
             <button class="btn btn-ghost btn-sm" id="exportAmazonBtn" title="Export CSV Fontaines & Distributeurs — Amazon">⤓ Export F+D</button>
           </div>
         </div>
-        <section class="grid grid-3" style="max-width:1400px;margin:0 auto 20px;">
+        <section class="grid grid-3 amazon-kpis">
           <div class="card">
             <div class="card-header"><h3>CA Amazon</h3></div>
             <div class="card-value" id="amz-val-ca">—</div>
@@ -996,7 +1004,7 @@
         </section>
 
         <!-- TOP 5 PRODUCTS -->
-        <section style="max-width:1400px;margin:0 auto;">
+        <section class="meta-section">
           <h2 class="meta-section-title">Top 5 Produits</h2>
           <div class="amazon-products-table" id="amzTopProducts"></div>
         </section>
@@ -1033,9 +1041,9 @@
             <button class="btn btn-outline" data-b2b-range="qtd">QTD</button>
             <button class="btn btn-outline" data-b2b-range="ytd">YTD</button>
           </div>
-          <div class="b2b-source-filter" style="display:flex;align-items:center;gap:8px;">
-            <label for="b2bSourceFilter" style="font-size:12px;color:var(--text-muted);">Source</label>
-            <select id="b2bSourceFilter" class="date-input" style="min-width:180px;">
+          <div class="b2b-source-filter">
+            <label for="b2bSourceFilter">Source</label>
+            <select id="b2bSourceFilter" class="date-input">
               <option value="">Toutes les sources</option>
             </select>
           </div>
@@ -1101,10 +1109,10 @@
 
         <!-- Detail table: shown when a doughnut slice is clicked. Lists all
              deals of the selected source with links to Pipedrive. -->
-        <div class="b2b-table-card" id="b2bDetailWrap" style="display:none;margin-top:16px;">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-            <h3 class="b2b-section-title" style="margin:0;">Commandes de la source : <span id="b2bDetailSource" style="color:var(--text-muted);"></span></h3>
-            <button class="btn btn-outline" id="b2bDetailClose" style="padding:4px 10px;font-size:12px;">Fermer</button>
+        <div class="b2b-table-card b2b-detail" id="b2bDetailWrap" style="display:none;">
+          <div class="b2b-detail-head">
+            <h3 class="b2b-section-title">Commandes de la source : <span id="b2bDetailSource" class="muted"></span></h3>
+            <button class="btn btn-outline btn-sm" id="b2bDetailClose">Fermer</button>
           </div>
           <table class="b2b-clients-table" id="b2bDetailTable">
             <thead>
@@ -1112,7 +1120,7 @@
                 <th>Date</th>
                 <th>Client</th>
                 <th>Deal</th>
-                <th style="text-align:right;">Valeur</th>
+                <th class="num">Valeur</th>
               </tr>
             </thead>
             <tbody id="b2bDetailBody"></tbody>
@@ -1237,7 +1245,19 @@
 
     </div>
   </div><!-- /tab-linkedin -->
+  </div><!-- /page -->
 
+  <script>
+    // Navigation mobile : ouverture / fermeture du rail
+    (function () {
+      var rail = document.getElementById('rail'), btn = document.getElementById('railToggle');
+      if (!rail || !btn) return;
+      var set = function (open) { rail.classList.toggle('is-open', open); btn.setAttribute('aria-expanded', open); };
+      btn.addEventListener('click', function () { set(!rail.classList.contains('is-open')); });
+      rail.addEventListener('click', function (e) { if (e.target.closest('.tab-btn')) set(false); });
+      document.addEventListener('keydown', function (e) { if (e.key === 'Escape') set(false); });
+    })();
+  </script>
   <script src="js/app.js"></script>
 </body>
 </html>

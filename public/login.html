@@ -3,58 +3,36 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Bandit — Connexion</title>
-  <link rel="stylesheet" href="/css/style.css">
+  <title>Bandit Acquisition · Connexion</title>
+  <link rel="icon" href="/img/bandit-logo-noir.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/css/bandit-ui.css">
   <style>
-    body { background: var(--bg); display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
-    .login-card {
-      background: var(--card);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 40px;
-      width: 100%;
-      max-width: 380px;
-      box-shadow: 0 2px 12px rgba(0,0,0,0.06);
-    }
-    .login-card h1 { font-size: 20px; font-weight: 700; margin: 0 0 8px; color: var(--text); }
-    .login-card p { font-size: 13px; color: var(--text-muted); margin: 0 0 24px; }
-    .login-input {
-      width: 100%;
-      padding: 10px 14px;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      font-size: 14px;
-      font-family: 'Inter', sans-serif;
-      margin-bottom: 16px;
-      box-sizing: border-box;
-    }
-    .login-input:focus { outline: none; border-color: var(--text); }
-    .login-btn {
-      width: 100%;
-      padding: 10px;
-      background: var(--text);
-      color: var(--card);
-      border: none;
-      border-radius: 8px;
-      font-size: 14px;
-      font-weight: 600;
-      cursor: pointer;
-      font-family: 'Inter', sans-serif;
-    }
-    .login-btn:hover { opacity: 0.9; }
-    .login-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-    .login-error { color: var(--red); font-size: 13px; margin-top: 12px; display: none; }
+    html, body { height: 100%; }
+    body { background: var(--jaune); display: flex; align-items: center; justify-content: center; padding: 24px; margin: 0; }
+    .login-card { width: 100%; max-width: 420px; background: #fff; border: 2px solid var(--charbon); box-shadow: 10px 10px 0 var(--charbon); padding: 40px 36px 32px; animation: up .6s var(--ease) both; }
+    @keyframes up { from { opacity: 0; transform: translateY(16px); } }
+    .login-card .logo { width: 170px; display: block; margin: 0 auto 8px; }
+    .login-card .kicker { text-align: center; font: 800 11px/1 var(--display); text-transform: uppercase; letter-spacing: .2em; margin: 0 0 28px; }
+    .login-card h1 { font-size: 26px; margin: 0 0 6px; }
+    .login-card p { margin: 0 0 22px; font-size: 14px; color: var(--text-secondary); }
+    .login-input { width: 100%; margin-bottom: 14px; font-size: 16px; padding: 12px 14px; }
+    .login-btn { width: 100%; padding: 15px; font-size: 14px; }
+    .login-error { display: none; margin-top: 14px; padding: 10px 12px; border: 2px solid var(--red); color: var(--red); font-weight: 700; font-size: 13px; }
+    .foot { margin: 26px 0 0; text-align: center; font-size: 12px; color: var(--text-muted); }
   </style>
 </head>
 <body>
   <div class="login-card">
-    <h1>Bandit Dashboard</h1>
-    <p>Connectez-vous pour accéder au dashboard.</p>
+    <img class="logo" src="/img/bandit-logo-noir.svg" alt="French Bandit">
+    <p class="kicker">Acquisition</p>
+    <h1>Tableau de <mark class="hl">bord</mark></h1>
+    <p>E-commerce, Amazon, B2B, LinkedIn, stock. Entre le mot de passe pour continuer.</p>
     <form id="loginForm">
       <input type="password" class="login-input" id="loginPassword" placeholder="Mot de passe" autocomplete="current-password" autofocus>
-      <button type="submit" class="login-btn" id="loginBtn">Se connecter</button>
+      <button type="submit" class="btn btn-primary login-btn" id="loginBtn">Se connecter</button>
     </form>
     <div class="login-error" id="loginError"></div>
+    <p class="foot">Accès réservé à l'équipe French Bandit.</p>
   </div>
   <script>
     document.getElementById('loginForm').addEventListener('submit', async (e) => {
