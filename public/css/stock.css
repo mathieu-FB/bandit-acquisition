@@ -8,17 +8,7 @@
 body { font-size: 14px; }
 #alertesContent.loading, #catalogueContent.loading, #bdcEnCoursContent.loading, #bdcHistoContent.loading, #cdContent.loading, #assignContent.loading { padding: 0; text-align: left; color: inherit; }
 #alertesContent.loading > .loading, #catalogueContent.loading > .loading { padding: 32px; text-align: center; color: var(--text-muted); }
-header.stock-header { background: #fff; border-bottom: 1px solid var(--border); padding: 0 24px; display: flex; align-items: center; gap: 24px; flex-wrap: wrap; position: sticky; top: 0; z-index: 30; }
-.stock-header .brand { display: flex; align-items: center; gap: 14px; padding: 12px 0; text-decoration: none; }
-.stock-header .brand img { width: 96px; height: auto; display: block; }
-.stock-header .brand .kicker { font: 800 11px/1 var(--display); text-transform: uppercase; letter-spacing: .18em; }
-.stock-header .brand .back { font: 700 11px var(--body); text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); text-decoration: none; }
-.stock-header .brand .back:hover { color: var(--charbon); }
-nav.tabs { display: flex; gap: 0; margin-left: auto; overflow-x: auto; }
-nav.tabs button, nav.tabs a { background: none; border: 0; border-bottom: 3px solid transparent; margin-bottom: -1px; padding: 20px 14px; font: 800 12px/1 var(--display); text-transform: uppercase; letter-spacing: .04em; color: var(--text-muted); cursor: pointer; text-decoration: none; white-space: nowrap; }
-nav.tabs button:hover, nav.tabs a:hover { color: var(--charbon); }
-nav.tabs button.active { color: var(--charbon); border-bottom-color: var(--charbon); }
-main { padding: 20px 24px 48px; max-width: 1480px; margin: 0 auto; }
+main { padding: 20px var(--gutter) 48px; max-width: calc(var(--max) + 2 * var(--gutter)); }
 
 /* KPI */
 .kpi-row { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-bottom: 18px; }
@@ -117,8 +107,4 @@ label input, label select { display: block; width: 100%; margin-top: 4px; }
 .bulk-bar { background: var(--charbon); color: #fff; padding: 12px 18px; margin-bottom: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
 .bulk-bar select { border-color: #fff; }
 .sync-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; flex-wrap: wrap; gap: 8px; background: #fff; border: 1px solid var(--border); padding: 10px 14px; }
-@media (max-width: 760px) {
-  main { padding: 12px; }
-  nav.tabs { margin-left: 0; width: 100%; }
-  nav.tabs button, nav.tabs a { padding: 14px 10px; }
-}
+@media (max-width: 760px) { main { padding: 12px; } }

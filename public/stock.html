@@ -7,22 +7,37 @@
   <link rel="icon" href="/img/bandit-logo-noir.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/css/bandit-ui.css">
   <link rel="stylesheet" href="/css/stock.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 </head>
 <body>
-  <header class="stock-header">
-    <div class="brand">
-      <a href="/"><img src="/img/bandit-logo-noir.svg" alt="French Bandit"></a>
-      <span class="kicker">Stock &amp; Réappro</span>
-      <a class="back" href="/">← Dashboard</a>
-    </div>
-    <nav class="tabs">
-      <button data-tab="alertes" class="active">Alertes</button>
-      <button data-tab="catalogue">Catalogue</button>
-      <button data-tab="previsionnel">Prévisionnel</button>
-      <button data-tab="bdc">Commandes fournisseur</button>
-      <button data-tab="parametres">Paramètres</button>
-      <a href="/stock-admin.html">Admin</a>
+  <aside class="rail" id="rail">
+    <a class="rail__brand" href="/">
+      <img src="/img/bandit-logo-noir.svg" alt="French Bandit" width="150" height="58">
+      <span>Acquisition</span>
+    </a>
+    <nav class="rail__nav" aria-label="Sections">
+      <a class="tab-btn" href="/#ecommerce"><i>01</i>E-commerce</a>
+      <a class="tab-btn" href="/#amazon"><i>02</i>Amazon</a>
+      <a class="tab-btn" href="/#b2b"><i>03</i>B2B</a>
+      <a class="tab-btn" href="/#linkedin"><i>04</i>LinkedIn</a>
+      <a class="tab-btn active" href="/stock.html"><i>05</i>Stock &amp; Réappro</a>
+      <nav class="tabs rail__sub" aria-label="Stock">
+        <button data-tab="alertes" class="active">Alertes</button>
+        <button data-tab="catalogue">Catalogue</button>
+        <button data-tab="previsionnel">Prévisionnel</button>
+        <button data-tab="bdc">Commandes fournisseur</button>
+        <button data-tab="parametres">Paramètres</button>
+        <a href="/stock-admin.html">Admin ↗</a>
+      </nav>
     </nav>
+  </aside>
+
+  <div class="page">
+  <header class="topbar">
+    <button class="topbar__menu" id="railToggle" aria-label="Menu" aria-expanded="false"><span></span><span></span></button>
+    <a class="topbar__brand" href="/"><img src="/img/bandit-logo-noir.svg" alt="French Bandit" width="92" height="36"></a>
+    <div class="topbar__title"><span class="ui-kicker">Dashboard</span><h1>Stock &amp; <mark class="hl">Réappro</mark></h1></div>
   </header>
 
   <main>
@@ -373,6 +388,7 @@
       </div>
     </section>
   </main>
+  </div><!-- /page -->
 
   <!-- Modal détail SKU -->
   <div id="modal" class="modal-overlay">
@@ -3111,5 +3127,6 @@
       }
     }
   </script>
+  <script src="/js/bandit-ui.js"></script>
 </body>
 </html>

@@ -1247,17 +1247,14 @@
   </div><!-- /tab-linkedin -->
   </div><!-- /page -->
 
-  <script>
-    // Navigation mobile : ouverture / fermeture du rail
-    (function () {
-      var rail = document.getElementById('rail'), btn = document.getElementById('railToggle');
-      if (!rail || !btn) return;
-      var set = function (open) { rail.classList.toggle('is-open', open); btn.setAttribute('aria-expanded', open); };
-      btn.addEventListener('click', function () { set(!rail.classList.contains('is-open')); });
-      rail.addEventListener('click', function (e) { if (e.target.closest('.tab-btn')) set(false); });
-      document.addEventListener('keydown', function (e) { if (e.key === 'Escape') set(false); });
-    })();
-  </script>
+  <script src="js/bandit-ui.js"></script>
   <script src="js/app.js"></script>
+  <script>
+    // Lien profond : /#amazon, /#b2b, /#linkedin (utilisé par le rail de la page Stock)
+    window.addEventListener('load', function () {
+      var t = (location.hash || '').slice(1);
+      if (['ecommerce', 'amazon', 'b2b', 'linkedin'].indexOf(t) >= 0 && typeof switchTab === 'function') setTimeout(function () { switchTab(t); }, 50);
+    });
+  </script>
 </body>
 </html>

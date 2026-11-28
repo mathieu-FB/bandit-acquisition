@@ -128,3 +128,48 @@ label { font: 700 11px/1.3 var(--body); text-transform: uppercase; letter-spacin
 code { font-family: var(--mono); font-size: .92em; background: var(--paper); padding: 1px 5px; }
 pre { font-family: var(--mono); }
 .out, .modal-body pre { background: var(--charbon); color: var(--jaune); font-family: var(--mono); font-size: 12px; padding: 14px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+
+/* ---------- Coquille applicative : rail + barre haute (dashboard et stock) ---------- */
+:root { --rail: 236px; --gutter: clamp(16px, 2.4vw, 32px); --max: 1480px; }
+.page { margin-left: var(--rail); min-height: 100vh; display: flex; flex-direction: column; }
+.rail { position: fixed; inset: 0 auto 0 0; width: var(--rail); background: #fff; border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 28px 22px 22px; z-index: 50; overflow-y: auto; }
+.rail__brand { text-decoration: none; display: block; }
+.rail__brand img { width: 150px; height: auto; display: block; }
+.rail__brand span { display: block; margin-top: 8px; font: 800 11px/1 var(--display); text-transform: uppercase; letter-spacing: .18em; }
+.rail__nav { margin-top: 36px; display: flex; flex-direction: column; }
+.rail__nav .tab-btn { display: flex; align-items: baseline; gap: 12px; width: 100%; text-align: left; background: none; border: 0; border-top: 1px solid var(--border); padding: 13px 10px; font: 800 13px/1 var(--display); text-transform: uppercase; letter-spacing: .02em; color: var(--charbon); cursor: pointer; text-decoration: none; position: relative; z-index: 0; transition: padding-left .2s var(--ease); }
+.rail__nav > :last-child { border-bottom: 1px solid var(--border); }
+.rail__nav .tab-btn i { font-style: normal; font-size: 10px; color: var(--text-muted); width: 18px; letter-spacing: 0; }
+.rail__nav .tab-btn::before { content: ''; position: absolute; left: 0; top: 6px; bottom: 6px; width: 0; background: var(--jaune); transform: rotate(-1.5deg); z-index: -1; }
+.rail__nav .tab-btn:hover { padding-left: 16px; }
+.rail__nav .tab-btn.active::before { width: 100%; }
+.rail__nav .tab-btn.active i { color: var(--charbon); }
+.rail__nav .tab-btn--link i::after { content: ' ↗'; }
+/* sous-navigation (onglets d'une section) dans le rail */
+.rail__sub { display: flex; flex-direction: column; padding: 4px 0 10px 40px; border-top: 1px solid var(--border); }
+.rail__sub button, .rail__sub a { background: none; border: 0; text-align: left; padding: 7px 0 7px 14px; font: 700 11.5px/1.2 var(--body); text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); cursor: pointer; text-decoration: none; position: relative; }
+.rail__sub button::before, .rail__sub a::before { content: ''; position: absolute; left: 0; top: 50%; width: 6px; height: 6px; transform: translateY(-50%) rotate(45deg); background: transparent; border: 1.5px solid var(--border-strong); opacity: .35; }
+.rail__sub button:hover, .rail__sub a:hover { color: var(--charbon); }
+.rail__sub button.active { color: var(--charbon); }
+.rail__sub button.active::before { background: var(--jaune); border-color: var(--charbon); opacity: 1; }
+.rail__foot { margin-top: auto; padding-top: 16px; display: flex; flex-direction: column; gap: 14px; }
+.status-dots { display: flex; flex-wrap: wrap; gap: 6px 12px; }
+.status-dot { display: inline-flex; align-items: center; gap: 6px; font: 700 10.5px/1 var(--body); text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); }
+.status-dot .dot { width: 8px; height: 8px; background: var(--border); display: inline-block; }
+.status-dot.active { color: var(--charbon); }
+.status-dot.active .dot { background: var(--green); }
+.rail__logout { align-self: flex-start; }
+.topbar { position: sticky; top: 0; z-index: 40; background: rgba(255,255,255,.92); backdrop-filter: blur(6px); border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 16px; padding: 12px var(--gutter); min-height: 64px; }
+.topbar__menu, .topbar__brand { display: none; }
+.topbar__title h1 { font-size: 20px; margin-top: 2px; }
+.topbar__right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+@media (max-width: 1024px) {
+  :root { --rail: 0px; }
+  .page { margin-left: 0; }
+  .rail { width: min(300px, 85vw); transform: translateX(-100%); transition: transform .3s var(--ease); box-shadow: 0 0 0 100vw rgba(28,28,28,0); }
+  .rail.is-open { transform: none; box-shadow: 0 0 0 100vw rgba(28,28,28,.45); }
+  .topbar__menu { display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 5px; width: 38px; height: 38px; border: 2px solid var(--charbon); background: #fff; cursor: pointer; flex: none; }
+  .topbar__menu span { width: 16px; height: 2px; background: var(--charbon); }
+  .topbar__brand { display: block; }
+  .topbar__title .ui-kicker { display: none; }
+}
